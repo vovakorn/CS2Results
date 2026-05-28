@@ -33,4 +33,4 @@ jobs:
         run: python -m compileall cs2bot
 
       - name: Run tests
-        run: pytest -q
+        run: python -m pytest -q
