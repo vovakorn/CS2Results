@@ -1,4 +1,8 @@
-"""Utilities for fetching match results from the community HLTV API."""
+"""Deprecated legacy HLTV API adapter.
+
+New code should use ``cs2bot.match_sources``. This module is kept only for
+backward compatibility with older experiments.
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List
