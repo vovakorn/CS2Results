@@ -83,10 +83,21 @@ def _normalize_item(item: dict) -> MatchNormalized | None:
         score1=score1,
         score2=score2,
         maps=[],
-        date=_first_present(item, [("date",), ("finished_at",), ("start_time",)]),
+        date=_first_present(
+            item,
+            [("date",), ("finished_at",), ("end_date",), ("start_date",), ("start_time",)],
+        ),
         is_lan=_first_present(item, [("is_lan",), ("event", "is_lan")]),
         location=_first_present(item, [("location",), ("event", "location")]),
-        prize_pool_usd=_first_present(item, [("prize_pool_usd",), ("event", "prize_pool_usd")]),
+        prize_pool_usd=_first_present(
+            item,
+            [
+                ("prize_pool_usd",),
+                ("event", "prize_pool_usd"),
+                ("tournament", "prize_pool_usd"),
+                ("tournament", "prize"),
+            ],
+        ),
         operator=_first_present(item, [("operator",), ("event", "operator")]),
     )
 

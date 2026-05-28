@@ -21,6 +21,7 @@ DEFAULT_TIER1_TOURNAMENT_PATTERNS = [
     "BLAST Rivals",
     "Esports World Cup",
     "FISSURE Playground",
+    "CS Asia Championships",
     "Major",
 ]
 

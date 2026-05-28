@@ -27,6 +27,16 @@ def test_format_match_uses_normalized_fields():
     assert "Match ID: 1" in text
 
 
+def test_format_match_uses_display_timezone(monkeypatch):
+    monkeypatch.setattr(main, "DISPLAY_TIMEZONE", "Europe/Berlin")
+    match = _match()
+    match.date = "2026-02-17T10:30:00Z"
+
+    text = main.format_match(match)
+
+    assert "Date: 2026-02-17 11:30 CET" in text
+
+
 def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
     sent = []
     marked = []
@@ -147,3 +157,42 @@ def test_handler_does_not_mark_when_send_fails(monkeypatch):
 
     assert response["statusCode"] == 502
     assert marked == []
+
+
+def test_handler_marks_successful_channel_before_later_channel_fails(monkeypatch):
+    sent = []
+    marked = []
+
+    async def fake_get_new_finished_matches(**kwargs):
+        return [_match()]
+
+    def fake_send(chat_id, text, timeout=7):
+        sent.append(chat_id)
+        if chat_id == "chat-b":
+            raise RuntimeError("telegram failed")
+        return {"ok": True}
+
+    async def fake_is_processed(match_uid):
+        return False
+
+    async def fake_mark(match, channel_name):
+        marked.append((match.match_uid, channel_name))
+
+    monkeypatch.setattr(
+        main,
+        "CHANNELS",
+        [
+            {"name": "a", "chat_id": "chat-a", "teams": None},
+            {"name": "b", "chat_id": "chat-b", "teams": None},
+        ],
+    )
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "send_to_telegram", fake_send)
+    monkeypatch.setattr(main, "is_processed", fake_is_processed)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 502
+    assert sent == ["chat-a", "chat-b"]
+    assert marked == [("cs2api_1", "a")]

@@ -7,9 +7,10 @@ import logging
 import os
 from typing import Literal
 
+from . import config as source_config
 from .filters import is_tier1_lan, is_valid_match
 from .models import MatchNormalized, SourceUnavailableError
-from .storage import is_processed, mark_processed
+from .storage import channel_match_uid, is_processed, mark_channel_processed
 
 SourceName = Literal["auto", "cs2api", "hltv"]
 
@@ -37,8 +38,14 @@ async def _choose_source(source: SourceName, limit: int) -> tuple[str, list[Matc
         logger.info("source=cs2api fetched=%s", len(matches))
         if matches:
             return "cs2api", matches
+        if not source_config.ENABLE_HLTV_FALLBACK:
+            logger.warning("source=cs2api status=empty fallback=disabled")
+            return "cs2api", []
         logger.warning("source=cs2api status=empty fallback=hltv")
     except SourceUnavailableError as exc:
+        if not source_config.ENABLE_HLTV_FALLBACK:
+            logger.warning("source=cs2api status=unavailable fallback=disabled error=%s", exc)
+            raise
         logger.warning("source=cs2api status=unavailable fallback=hltv error=%s", exc)
 
     matches = await _fetch_from_source("hltv", limit)
@@ -113,6 +120,20 @@ def _json_default(value):
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
+async def _filter_unprocessed_for_channels(
+    matches: list[MatchNormalized],
+    channel_names: list[str],
+) -> list[MatchNormalized]:
+    new_matches: list[MatchNormalized] = []
+    for match in matches:
+        for channel_name in channel_names:
+            uid = channel_match_uid(match, channel_name)
+            if not await is_processed(uid):
+                new_matches.append(match)
+                break
+    return new_matches
+
+
 async def _main_async(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     try:
@@ -121,21 +142,31 @@ async def _main_async(args: argparse.Namespace) -> int:
             source=args.source,
             dry_run=args.dry_run,
             include_filtered=args.include_filtered,
+            check_processed=not args.channels,
         )
     except SourceUnavailableError as exc:
         logger.error("source=%s status=unavailable error=%s", args.source, exc)
         matches = []
+
+    if args.channels and not args.dry_run:
+        matches = await _filter_unprocessed_for_channels(matches, args.channels)
 
     print(json.dumps(matches, default=_json_default, ensure_ascii=False, indent=2))
 
     if args.mark_processed:
         if args.dry_run:
             logger.info("dry_run=true mark_processed=skipped")
+        elif not args.channels:
+            logger.error("--mark-processed requires at least one --channel")
+            return 2
         else:
+            marked = 0
             for match in matches:
                 if match.is_tier1_lan:
-                    await mark_processed(match)
-            logger.info("marked_processed=%s", sum(1 for match in matches if match.is_tier1_lan))
+                    for channel_name in args.channels:
+                        await mark_channel_processed(match, channel_name)
+                        marked += 1
+            logger.info("marked_processed=%s channels=%s", marked, ",".join(args.channels))
     return 0
 
 
@@ -146,6 +177,12 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--include-filtered", action="store_true")
     parser.add_argument("--mark-processed", action="store_true")
+    parser.add_argument(
+        "--channel",
+        action="append",
+        dest="channels",
+        help="Channel name for per-channel Object Storage deduplication. Can be repeated.",
+    )
     args = parser.parse_args()
     return asyncio.run(_main_async(args))
 

@@ -1,0 +1,59 @@
+{
+  "data": [
+    {
+      "id": 984321,
+      "slug": "navi-vs-faze-iem-cologne-2026",
+      "team1_score": 2,
+      "team2_score": 1,
+      "opponents": [
+        {
+          "team": {
+            "name": "NAVI"
+          }
+        },
+        {
+          "team": {
+            "name": "FaZe"
+          }
+        }
+      ],
+      "tournament": {
+        "name": "IEM Cologne 2026",
+        "prize": 1000000
+      },
+      "event": {
+        "location": "Cologne, Germany",
+        "operator": "ESL"
+      },
+      "start_date": "2026-02-17T10:30:00.000+00:00",
+      "end_date": "2026-02-17T12:40:00.000+00:00"
+    },
+    {
+      "id": 984322,
+      "team1_score": 0,
+      "team2_score": 2,
+      "opponents": [
+        {
+          "team": {
+            "name": "Spirit"
+          }
+        },
+        {
+          "team": {
+            "name": "MOUZ"
+          }
+        }
+      ],
+      "tournament": {
+        "name": "PGL Major Singapore 2026",
+        "prize": 1250000
+      },
+      "event": {
+        "location": "Singapore",
+        "operator": "PGL"
+      },
+      "start_date": "2026-02-18T12:00:00.000+00:00",
+      "end_date": "2026-02-18T14:10:00.000+00:00"
+    }
+  ]
+}
