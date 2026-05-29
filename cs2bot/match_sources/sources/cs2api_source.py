@@ -7,7 +7,7 @@ from collections.abc import Iterable
 import aiohttp
 
 from ..config import DEFAULT_USER_AGENT, REQUEST_TIMEOUT_SECONDS
-from ..models import MatchNormalized, SourceUnavailableError
+from ..models import MapResult, MatchNormalized, SourceUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,71 @@ def _team_name(team) -> str | None:
     return None
 
 
+def _map_name(raw_name: str | None) -> str:
+    if not raw_name:
+        return "Unknown"
+    known = {
+        "de_ancient": "Ancient",
+        "de_anubis": "Anubis",
+        "de_cache": "Cache",
+        "de_dust2": "Dust2",
+        "de_inferno": "Inferno",
+        "de_mirage": "Mirage",
+        "de_nuke": "Nuke",
+        "de_overpass": "Overpass",
+        "de_train": "Train",
+        "de_vertigo": "Vertigo",
+    }
+    if raw_name in known:
+        return known[raw_name]
+    return raw_name.removeprefix("de_").replace("_", " ").title()
+
+
+def _team_id(value) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_games(item: dict) -> list[MapResult]:
+    games = item.get("games")
+    if not isinstance(games, list):
+        return []
+
+    team1_id = _team_id(item.get("team1_id") or _dig(item, "team1", "id"))
+    team2_id = _team_id(item.get("team2_id") or _dig(item, "team2", "id"))
+    maps: list[MapResult] = []
+
+    for game in sorted((game for game in games if isinstance(game, dict)), key=lambda g: g.get("number") or 0):
+        winner_id = _team_id(_dig(game, "winner_team_clan", "team_id"))
+        loser_id = _team_id(_dig(game, "loser_team_clan", "team_id"))
+        winner_score = _first_present(game, [("winner_clan_score",), ("winner_score",), ("score1",)])
+        loser_score = _first_present(game, [("loser_clan_score",), ("loser_score",), ("score2",)])
+        try:
+            winner_score = int(winner_score) if winner_score is not None else None
+            loser_score = int(loser_score) if loser_score is not None else None
+        except (TypeError, ValueError):
+            winner_score = loser_score = None
+
+        score1 = score2 = None
+        if winner_id is not None and loser_id is not None and team1_id is not None and team2_id is not None:
+            if winner_id == team1_id and loser_id == team2_id:
+                score1, score2 = winner_score, loser_score
+            elif winner_id == team2_id and loser_id == team1_id:
+                score1, score2 = loser_score, winner_score
+
+        maps.append(
+            MapResult(
+                name=_map_name(game.get("map_name") or game.get("name")),
+                score1=score1,
+                score2=score2,
+            )
+        )
+
+    return maps
+
+
 def _normalize_item(item: dict) -> MatchNormalized | None:
     team1 = _team_name(_first_present(item, [("team1",), ("team_a",), ("opponents", "0")]))
     team2 = _team_name(_first_present(item, [("team2",), ("team_b",), ("opponents", "1")]))
@@ -68,6 +133,9 @@ def _normalize_item(item: dict) -> MatchNormalized | None:
     raw_id = _first_present(item, [("id",), ("match_id",), ("slug",)])
     match_id = str(raw_id) if raw_id else None
     match_url = _first_present(item, [("url",), ("match_url",)])
+    start_date = _first_present(item, [("start_date",), ("start_time",), ("date",)])
+    end_date = _first_present(item, [("end_date",), ("finished_at",)])
+    display_date = end_date or start_date
 
     if not tournament or not team1 or not team2:
         logger.debug("Skipping cs2api item with incomplete structure keys=%s", sorted(item.keys()))
@@ -82,11 +150,10 @@ def _normalize_item(item: dict) -> MatchNormalized | None:
         team2_name=str(team2),
         score1=score1,
         score2=score2,
-        maps=[],
-        date=_first_present(
-            item,
-            [("date",), ("finished_at",), ("end_date",), ("start_date",), ("start_time",)],
-        ),
+        maps=_normalize_games(item),
+        date=display_date,
+        start_date=start_date,
+        end_date=end_date,
         is_lan=_first_present(item, [("is_lan",), ("event", "is_lan")]),
         location=_first_present(item, [("location",), ("event", "location")]),
         prize_pool_usd=_first_present(

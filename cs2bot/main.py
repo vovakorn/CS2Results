@@ -87,7 +87,12 @@ def format_match(match: Any) -> str:
     score1 = _get_attr(match, "score1")
     score2 = _get_attr(match, "score2")
     event = _get_attr(match, "tournament_name") or _get_attr(match, "event")
-    time = _format_display_time(_get_attr(match, "date") or _get_attr(match, "time"))
+    time = _format_display_time(
+        _get_attr(match, "end_date")
+        or _get_attr(match, "date")
+        or _get_attr(match, "start_date")
+        or _get_attr(match, "time")
+    )
     match_id = _get_attr(match, "match_id")
     match_url = _get_attr(match, "match_url")
     source = _get_attr(match, "source")
@@ -98,6 +103,12 @@ def format_match(match: Any) -> str:
     pieces: List[str] = [f"{team1} vs {team2}"]
     if score1 != "" and score2 != "":
         pieces.append(f"Score: {score1}:{score2}")
+        try:
+            winner = team1 if int(score1) > int(score2) else team2 if int(score2) > int(score1) else ""
+        except ValueError:
+            winner = ""
+        if winner:
+            pieces.append(f"Winner: {winner}")
     if event:
         pieces.append(f"Event: {event}")
     if time:

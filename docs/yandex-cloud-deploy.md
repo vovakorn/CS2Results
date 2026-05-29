@@ -47,11 +47,10 @@ CHANNELS_JSON=[{"name":"global","chat_id":"@cs2_results","teams":null}]
 Из корня репозитория:
 
 ```bash
-python -m pip install -r requirements.txt -t packages/
-zip -r function.zip cs2bot packages requirements.txt runtime.txt
+scripts/build_function_zip.sh
 ```
 
-Не включайте `.venv`, `.git`, `.pytest_cache` и локальные секреты.
+Скрипт создаёт `dist/function.zip` и не включает `.venv`, `.git`, `.pytest_cache` и локальные секреты.
 
 ## 5. Настройка функции
 
@@ -72,6 +71,13 @@ ENABLE_HLTV_FALLBACK=1
 REQUEST_TIMEOUT_SECONDS=15
 BOT_MODE=production
 TIER1_PRIZE_POOL_THRESHOLD_USD=500000
+MAX_SOURCE_STALENESS_HOURS=48
+```
+
+Если нужно подменить whitelist без изменения Python-кода, положите новый JSON-файл в архив и задайте:
+
+```text
+TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 ```
 
 ## 6. Проверка
@@ -124,3 +130,20 @@ TIER1_PRIZE_POOL_THRESHOLD_USD=500000
 - доступ к Object Storage;
 - отсутствие дублей;
 - Telegram отправку в dry-run и production режимах.
+
+## 9. Deploy script
+
+Если установлен и настроен `yc`, можно создать новую версию функции одной командой:
+
+```bash
+YC_FUNCTION_NAME=cs2-results-bot \
+YC_SERVICE_ACCOUNT_ID=... \
+scripts/deploy_yandex_function.sh
+```
+
+Опционально:
+
+```text
+YC_MEMORY=512m
+YC_TIMEOUT=60s
+```

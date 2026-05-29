@@ -1,4 +1,6 @@
 import asyncio
+import logging
+from datetime import datetime, timezone
 
 import pytest
 
@@ -89,3 +91,37 @@ def test_include_filtered_returns_filtered_reason(monkeypatch):
     )
     assert matches[0].is_tier1_lan is False
     assert matches[0].filter_reason == "not_tier1"
+
+
+def test_log_source_freshness_warns_when_latest_match_is_stale(monkeypatch, caplog):
+    monkeypatch.setattr(match_fetcher.source_config, "MAX_SOURCE_STALENESS_HOURS", 48)
+    match = _match()
+    match.end_date = "2026-05-24T10:00:00Z"
+
+    with caplog.at_level(logging.WARNING):
+        fresh, age_hours = match_fetcher.log_source_freshness(
+            "cs2api",
+            [match],
+            now=datetime(2026, 5, 28, 10, 0, tzinfo=timezone.utc),
+        )
+
+    assert fresh is False
+    assert age_hours == 96
+    assert "event=source_stale" in caplog.text
+
+
+def test_log_source_freshness_accepts_recent_match(monkeypatch, caplog):
+    monkeypatch.setattr(match_fetcher.source_config, "MAX_SOURCE_STALENESS_HOURS", 48)
+    match = _match()
+    match.end_date = "2026-05-28T09:00:00Z"
+
+    with caplog.at_level(logging.INFO):
+        fresh, age_hours = match_fetcher.log_source_freshness(
+            "cs2api",
+            [match],
+            now=datetime(2026, 5, 28, 10, 0, tzinfo=timezone.utc),
+        )
+
+    assert fresh is True
+    assert age_hours == 1
+    assert "event=source_fresh" in caplog.text

@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Literal
 
 from . import config as source_config
@@ -53,6 +54,54 @@ async def _choose_source(source: SourceName, limit: int) -> tuple[str, list[Matc
     return "hltv", matches
 
 
+def _parse_match_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def latest_match_datetime(matches: list[MatchNormalized]) -> datetime | None:
+    parsed_dates = [
+        parsed
+        for match in matches
+        if (parsed := _parse_match_datetime(match.end_date or match.date or match.start_date)) is not None
+    ]
+    return max(parsed_dates) if parsed_dates else None
+
+
+def log_source_freshness(
+    source: str,
+    matches: list[MatchNormalized],
+    now: datetime | None = None,
+) -> tuple[bool, float | None]:
+    latest = latest_match_datetime(matches)
+    if latest is None:
+        logger.warning("event=source_freshness_unknown source=%s reason=missing_match_dates", source)
+        return False, None
+
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    age_hours = max((reference.astimezone(timezone.utc) - latest).total_seconds() / 3600, 0)
+    is_fresh = age_hours <= source_config.MAX_SOURCE_STALENESS_HOURS
+    log_method = logger.info if is_fresh else logger.warning
+    log_method(
+        "event=%s source=%s latest_match_at=%s age_hours=%.1f threshold_hours=%s",
+        "source_fresh" if is_fresh else "source_stale",
+        source,
+        latest.isoformat().replace("+00:00", "Z"),
+        age_hours,
+        source_config.MAX_SOURCE_STALENESS_HOURS,
+    )
+    return is_fresh, age_hours
+
+
 def apply_quality_filters(
     matches: list[MatchNormalized],
     include_filtered: bool = False,
@@ -91,6 +140,8 @@ async def get_new_finished_matches(
 
     logger.info("match_fetcher start source=%s limit=%s dry_run=%s", selected_source, limit, dry_run)
     used_source, fetched = await _choose_source(selected_source, limit)
+    if fetched:
+        log_source_freshness(used_source, fetched)
     filtered, valid_matches, tier1_lan_count = apply_quality_filters(fetched, include_filtered=include_filtered)
 
     new_matches: list[MatchNormalized] = []

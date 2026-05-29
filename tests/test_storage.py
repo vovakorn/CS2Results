@@ -40,6 +40,8 @@ def _match():
         team2_name="FaZe",
         score1=2,
         score2=1,
+        start_date="2026-02-17T10:30:00Z",
+        end_date="2026-02-17T12:40:00Z",
     )
 
 
@@ -56,6 +58,8 @@ def test_mark_processed_creates_object():
     assert key in s3.objects
     payload = json.loads(s3.objects[key]["Body"])
     assert payload["match_uid"] == match.match_uid
+    assert payload["start_date"] == "2026-02-17T10:30:00Z"
+    assert payload["end_date"] == "2026-02-17T12:40:00Z"
 
 
 def test_is_processed_true_after_mark_processed():

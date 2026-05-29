@@ -63,6 +63,10 @@ def test_bo3_fixture_normalizes_finished_matches():
     assert matches[0].score2 == 1
     assert matches[0].tournament_name == "IEM Cologne 2026"
     assert matches[0].date == "2026-02-17T12:40:00.000+00:00"
+    assert matches[0].start_date == "2026-02-17T10:30:00.000+00:00"
+    assert matches[0].end_date == "2026-02-17T12:40:00.000+00:00"
     assert matches[0].location == "Cologne, Germany"
     assert matches[0].prize_pool_usd == 1000000
     assert matches[0].operator == "ESL"
+    assert [item.name for item in matches[0].maps] == ["Mirage", "Ancient", "Inferno"]
+    assert [(item.score1, item.score2) for item in matches[0].maps] == [(13, 11), (7, 13), (13, 10)]

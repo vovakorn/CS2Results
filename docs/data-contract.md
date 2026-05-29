@@ -11,8 +11,10 @@
 - получает завершённые матчи из `cs2api` / BO3.gg;
 - использует HLTV HTTP fallback, если включён `ENABLE_HLTV_FALLBACK`;
 - приводит данные к `MatchNormalized`;
+- заполняет `start_date`, `end_date`, `date` и `maps`, если источник отдаёт эти поля;
 - отбрасывает невалидные матчи;
 - применяет Tier-1 LAN фильтр;
+- логирует свежесть источника через `source_fresh`, `source_stale` или `source_freshness_unknown`;
 - проверяет дедупликацию, если вызывающий слой просит `check_processed=True`.
 
 Он не делает:
@@ -49,6 +51,8 @@
 
 `maps` всегда должен быть списком. Если карты неизвестны, используется пустой список.
 
+`start_date` и `end_date` хранят исходные ISO datetime от источника. `date` остаётся совместимым полем отображения и обычно равно `end_date`, если оно известно.
+
 ## Дедупликация
 
 Data-layer может использовать общий ключ:
@@ -74,3 +78,15 @@ processed/{channel}_{source}_{match_id}.json
 3. HLTV HTTP fallback, если `ENABLE_HLTV_FALLBACK=1`.
 
 Если `ENABLE_HLTV_FALLBACK=0`, явный запуск `--source hltv` всё равно разрешён, но автоматический fallback из `auto` не выполняется.
+
+## Freshness contract
+
+Свежесть источника считается по максимальной дате среди `end_date`, `date`, `start_date`.
+
+Если последний матч старше `MAX_SOURCE_STALENESS_HOURS`, модуль пишет warning:
+
+```text
+event=source_stale
+```
+
+Это не блокирует публикацию само по себе, но должно использоваться для мониторинга качества источника.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 
 DEFAULT_KNOWN_TIER1_OPERATORS = [
@@ -38,7 +39,22 @@ def _load_json_config(env_name: str) -> dict:
     return data
 
 
-TIER1_FILTER_CONFIG = _load_json_config("TIER1_FILTER_CONFIG_JSON")
+def _load_json_file(path: str | None) -> dict:
+    if not path:
+        return {}
+    config_path = Path(path)
+    if not config_path.exists():
+        return {}
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{config_path} must contain a JSON object")
+    return data
+
+
+TIER1_FILTER_CONFIG = {
+    **_load_json_file(os.getenv("TIER1_FILTER_CONFIG_PATH", "tier1_filter.json")),
+    **_load_json_config("TIER1_FILTER_CONFIG_JSON"),
+}
 
 
 def _list_setting(name: str, default: list[str]) -> list[str]:
@@ -59,6 +75,7 @@ MATCH_SOURCE = os.getenv("MATCH_SOURCE", "auto")
 ENABLE_HLTV_FALLBACK = os.getenv("ENABLE_HLTV_FALLBACK", "1") not in {"0", "false", "False"}
 REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15"))
 DISPLAY_TIMEZONE = os.getenv("DISPLAY_TIMEZONE", "Europe/Berlin")
+MAX_SOURCE_STALENESS_HOURS = int(os.getenv("MAX_SOURCE_STALENESS_HOURS", "48"))
 
 OBJECT_STORAGE_BUCKET = os.getenv("OBJECT_STORAGE_BUCKET")
 OBJECT_STORAGE_ENDPOINT = os.getenv("OBJECT_STORAGE_ENDPOINT", "https://storage.yandexcloud.net")

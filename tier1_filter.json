@@ -1,0 +1,26 @@
+{
+  "known_operators": [
+    "ESL",
+    "IEM",
+    "PGL",
+    "BLAST",
+    "Esports World Cup",
+    "FISSURE"
+  ],
+  "tournament_patterns": [
+    "IEM",
+    "ESL Pro League",
+    "PGL",
+    "BLAST Open",
+    "BLAST Rivals",
+    "Esports World Cup",
+    "FISSURE Playground",
+    "CS Asia Championships",
+    "Major"
+  ],
+  "online_location_markers": [
+    "online",
+    "remote"
+  ],
+  "prize_pool_threshold_usd": 500000
+}

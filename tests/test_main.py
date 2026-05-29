@@ -1,7 +1,7 @@
 import json
 
 from cs2bot import main
-from cs2bot.match_sources.models import MatchNormalized
+from cs2bot.match_sources.models import MapResult, MatchNormalized
 
 
 def _match(match_id="1", team1="NAVI", team2="FaZe"):
@@ -23,6 +23,7 @@ def test_format_match_uses_normalized_fields():
     text = main.format_match(_match())
     assert "NAVI vs FaZe" in text
     assert "Score: 2:1" in text
+    assert "Winner: NAVI" in text
     assert "Event: IEM Cologne 2026" in text
     assert "Match ID: 1" in text
 
@@ -35,6 +36,22 @@ def test_format_match_uses_display_timezone(monkeypatch):
     text = main.format_match(match)
 
     assert "Date: 2026-02-17 11:30 CET" in text
+
+
+def test_format_match_prefers_end_date_and_includes_maps(monkeypatch):
+    monkeypatch.setattr(main, "DISPLAY_TIMEZONE", "Europe/Berlin")
+    match = _match()
+    match.start_date = "2026-02-17T10:30:00Z"
+    match.end_date = "2026-02-17T12:40:00Z"
+    match.maps = [
+        MapResult(name="Mirage", score1=13, score2=11),
+        MapResult(name="Ancient", score1=7, score2=13),
+    ]
+
+    text = main.format_match(match)
+
+    assert "Date: 2026-02-17 13:40 CET" in text
+    assert "Maps: Mirage 13:11, Ancient 7:13" in text
 
 
 def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
