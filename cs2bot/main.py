@@ -4,12 +4,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Sequence
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
 from .config import BOT_MODE, CHANNELS, TELEGRAM_TOKEN
 from .logging_utils import log_event
+from .match_sources.config import DISPLAY_TIMEZONE
 from .match_sources.match_fetcher import SourceName, get_new_finished_matches
 from .match_sources.models import MatchNormalized
 from .match_sources.storage import channel_match_uid, is_processed, mark_channel_processed
@@ -58,6 +61,25 @@ def _get_attr(obj: Any, key: str, default: str = "") -> str:
     return default
 
 
+def _format_display_time(value: str) -> str:
+    if not value or "T" not in value:
+        return value
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        return value
+
+    try:
+        timezone = ZoneInfo(DISPLAY_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        return value
+
+    return parsed.astimezone(timezone).strftime("%Y-%m-%d %H:%M %Z")
+
+
 def format_match(match: Any) -> str:
     """Convert a normalized match result into a multi-line Telegram message."""
     team1 = _get_attr(match, "team1_name") or _get_attr(match, "team1", "Team 1")
@@ -65,7 +87,12 @@ def format_match(match: Any) -> str:
     score1 = _get_attr(match, "score1")
     score2 = _get_attr(match, "score2")
     event = _get_attr(match, "tournament_name") or _get_attr(match, "event")
-    time = _get_attr(match, "date") or _get_attr(match, "time")
+    time = _format_display_time(
+        _get_attr(match, "end_date")
+        or _get_attr(match, "date")
+        or _get_attr(match, "start_date")
+        or _get_attr(match, "time")
+    )
     match_id = _get_attr(match, "match_id")
     match_url = _get_attr(match, "match_url")
     source = _get_attr(match, "source")
@@ -76,6 +103,12 @@ def format_match(match: Any) -> str:
     pieces: List[str] = [f"{team1} vs {team2}"]
     if score1 != "" and score2 != "":
         pieces.append(f"Score: {score1}:{score2}")
+        try:
+            winner = team1 if int(score1) > int(score2) else team2 if int(score2) > int(score1) else ""
+        except ValueError:
+            winner = ""
+        if winner:
+            pieces.append(f"Winner: {winner}")
     if event:
         pieces.append(f"Event: {event}")
     if time:
@@ -200,7 +233,6 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 skipped_filtered += 1
                 continue
 
-            delivered = 0
             for channel in _iter_channels():
                 name = channel.get("name", "unknown")
                 teams = channel.get("teams")
@@ -218,21 +250,14 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
                 channel_stats[name] = channel_stats.get(name, 0) + 1
                 if dry_run:
-                    delivered += 1
                     sent_messages += 1
                     continue
 
                 text = format_match(match)
                 send_to_telegram(channel["chat_id"], text)
-                delivered += 1
+                if isinstance(match, MatchNormalized):
+                    asyncio.run(mark_channel_processed(match, name))
                 sent_messages += 1
-
-            if delivered and not dry_run and isinstance(match, MatchNormalized):
-                for channel in _iter_channels():
-                    name = channel.get("name", "unknown")
-                    teams = channel.get("teams")
-                    if _match_matches_channel(match, teams):
-                        asyncio.run(mark_channel_processed(match, name))
     except Exception as exc:
         log_event(logger, logging.ERROR, "publish_failed", error=str(exc))
         return {

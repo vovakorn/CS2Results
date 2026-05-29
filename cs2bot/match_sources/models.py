@@ -38,6 +38,8 @@ class MatchNormalized(BaseModel):
     maps: list[MapResult] = Field(default_factory=list)
 
     date: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
     is_lan: bool | None = None
     location: str | None = None
     prize_pool_usd: int | None = None
@@ -54,4 +56,3 @@ class MatchNormalized(BaseModel):
             safe_url = self.match_url.rstrip("/").split("/")[-1]
             return f"{self.source}_{safe_url}"
         raise ValueError("match_id or match_url is required")
-

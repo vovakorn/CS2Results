@@ -16,6 +16,10 @@
 | `CHANNELS_JSON` | JSON-массив каналов, если нужно больше одного канала или фильтр по командам. |
 | `BOT_MODE` | `production` или `debug`. В `debug` можно видеть отфильтрованные матчи. |
 | `TIER1_FILTER_CONFIG_JSON` | JSON-конфиг Tier-1 LAN фильтра без изменения кода. |
+| `TIER1_FILTER_CONFIG_PATH` | Путь к JSON-файлу Tier-1 LAN фильтра, по умолчанию `tier1_filter.json`. |
+| `ENABLE_HLTV_FALLBACK` | `1` включает HLTV fallback в режиме `auto`, `0` отключает автоматический fallback. |
+| `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Berlin`. |
+| `MAX_SOURCE_STALENESS_HOURS` | Порог свежести источника для warning-лога, по умолчанию `48`. |
 
 Опционально:
 
@@ -26,6 +30,7 @@ REQUEST_TIMEOUT_SECONDS=15
 DISPLAY_TIMEZONE=Europe/Berlin
 BOT_MODE=production
 TIER1_PRIZE_POOL_THRESHOLD_USD=500000
+MAX_SOURCE_STALENESS_HOURS=48
 ```
 
 Пример `CHANNELS_JSON`:
@@ -37,7 +42,7 @@ TIER1_PRIZE_POOL_THRESHOLD_USD=500000
 ]
 ```
 
-Пример `TIER1_FILTER_CONFIG_JSON` можно взять из `tier1_filter.example.json`:
+Базовый whitelist лежит в `tier1_filter.json`. Его можно обновлять без изменения Python-кода. Пример `TIER1_FILTER_CONFIG_JSON` можно взять из `tier1_filter.example.json`:
 
 ```json
 {
@@ -79,10 +84,12 @@ python -m cs2bot.match_sources.match_fetcher --source hltv --limit 10 --dry-run
 `get_new_finished_matches` только возвращает новые матчи. В Cloud Functions обработчик помечает матч обработанным после успешной отправки в Telegram. Для ручной отладки есть отдельный флаг:
 
 ```bash
-python -m cs2bot.match_sources.match_fetcher --source auto --limit 10 --mark-processed
+python -m cs2bot.match_sources.match_fetcher --source auto --limit 10 --channel global --mark-processed
 ```
 
-Дедупликация хранит каждую публикацию отдельным объектом. Это важно для нескольких каналов: один и тот же матч может быть опубликован в `global` и в командный канал, но не будет повторён в одном и том же канале.
+`--mark-processed` требует хотя бы один `--channel`, чтобы CLI использовал те же per-channel ключи, что и Telegram handler. `--channel` можно повторять.
+
+Дедупликация Telegram-публикаций хранит каждую публикацию отдельным объектом. Это важно для нескольких каналов: один и тот же матч может быть опубликован в `global` и в командный канал, но не будет повторён в одном и том же канале.
 
 ```text
 processed/{channel}_{source}_{match_id}.json
@@ -115,7 +122,9 @@ Primary source `cs2api` использует два адаптера:
 1. установленную библиотеку `cs2api`;
 2. прямой HTTP-запрос к BO3.gg API, если библиотека недоступна, изменила интерфейс или вернула пустой результат.
 
-Если оба адаптера не дали данные, `auto` переключается на HLTV HTTP fallback. HLTV может вернуть `403`, поэтому browser fallback вынесен в отдельный placeholder и не добавлен в зависимости Cloud Functions.
+Если оба адаптера не дали данные, `auto` переключается на HLTV HTTP fallback только при `ENABLE_HLTV_FALLBACK=1`. Явный запуск `--source hltv` доступен независимо от этого флага. HLTV может вернуть `403`, поэтому browser fallback вынесен в отдельный placeholder и не добавлен в зависимости Cloud Functions.
+
+Для BO3.gg адаптер нормализует `start_date`, `end_date`, `date`, `tournament.prize` и карты из `games`, когда эти поля доступны. `date` остаётся совместимым полем для отображения, а `start_date` / `end_date` позволяют точнее проверять свежесть данных.
 
 ## Логи, метрики и алерты
 
@@ -126,6 +135,9 @@ Primary source `cs2api` использует два адаптера:
 - `fetch_failed`
 - `publish_failed`
 - `duplicate_skipped`
+- `source_fresh`
+- `source_stale`
+- `source_freshness_unknown`
 
 Ответ handler содержит поле `metrics`:
 
@@ -145,23 +157,33 @@ Primary source `cs2api` использует два адаптера:
 - `publish_failed > 0`;
 - `messages_sent = 0` долгое время при наличии `matches_received > 0`;
 - рост ошибок Object Storage;
+- `source_stale`, если последний матч старше `MAX_SOURCE_STALENESS_HOURS`;
 - частый `HLTV returned HTTP 403`, если fallback становится критичным.
 
 ## Структура проекта
 ```
+docs/
+    data-contract.md
+    object-storage-lifecycle.md
+    yandex-cloud-deploy.md
+scripts/
+    build_function_zip.sh
+    deploy_yandex_function.sh
 cs2bot/
     __init__.py
-    config.py        # конфигурация каналов
-    hltv_api.py      # legacy adapter, deprecated
-    main.py          # handler(event, context)
-    match_sources/   # MVP-модуль нормализованных источников матчей
+    config.py          # конфигурация Telegram и каналов
+    logging_utils.py   # structured JSON logs
+    main.py            # handler(event, context)
+    match_sources/     # MVP-модуль нормализованных источников матчей
         match_fetcher.py
         models.py
         filters.py
         storage.py
         sources/
-requirements.txt     # зависимости (requests)
-runtime.txt          # целевой Python runtime
+.github/workflows/tests.yml
+requirements.txt       # зависимости
+runtime.txt            # целевой Python runtime
+tier1_filter.json
 tier1_filter.example.json
 ```
 
@@ -171,10 +193,14 @@ tier1_filter.example.json
 pytest
 ```
 
+На GitHub добавлен workflow `.github/workflows/tests.yml`: он устанавливает зависимости, компилирует пакет и запускает pytest на Python 3.11 и 3.12 для pull request и push в `main`.
+
 ## Развёртывание в Yandex Cloud Functions
 
+Подробная инструкция вынесена в `docs/yandex-cloud-deploy.md`. Ниже короткий чеклист.
+
 1. Создайте Object Storage bucket для состояния, например `cs2-results-state`.
-2. Настройте lifecycle policy для удаления старых объектов `processed/*` через 180-365 дней.
+2. Настройте lifecycle policy для удаления старых объектов `processed/*` через 180-365 дней. Детали: `docs/object-storage-lifecycle.md`.
 3. Создайте сервисный аккаунт с минимальными правами чтения/записи в этот bucket.
 4. Создайте static access key для сервисного аккаунта.
 5. Соберите зависимости:
@@ -207,3 +233,27 @@ BOT_MODE=production
 10. Создайте timer trigger с периодом 60 минут.
 11. Для проверки запустите функцию вручную с `dry_run=true`.
 12. После проверки отключите `dry_run` и проверьте, что объекты появляются по ключам `processed/{channel}_{source}_{match_id}.json`.
+
+Можно собрать архив скриптом:
+
+```bash
+scripts/build_function_zip.sh
+```
+
+Или создать новую версию функции через `yc`:
+
+```bash
+YC_FUNCTION_NAME=cs2-results-bot \
+YC_SERVICE_ACCOUNT_ID=... \
+scripts/deploy_yandex_function.sh
+```
+
+## Архитектурные контракты
+
+Контракт между модулем данных и Telegram handler описан в `docs/data-contract.md`.
+
+Коротко:
+
+- `cs2bot.match_sources` получает и нормализует матчи;
+- `cs2bot.main` отвечает за Telegram, каналы и per-channel дедупликацию;
+- матч помечается обработанным только после успешной отправки в конкретный канал.

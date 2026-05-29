@@ -2,6 +2,7 @@
 
 __all__ = [
     "config",
-    "hltv_api",
+    "logging_utils",
     "main",
+    "match_sources",
 ]

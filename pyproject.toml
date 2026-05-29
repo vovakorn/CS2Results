@@ -6,3 +6,4 @@ description = "Telegram bot and normalized match-source layer for CS2 match resu
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]

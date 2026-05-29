@@ -1,4 +1,6 @@
 import asyncio
+import json
+from pathlib import Path
 
 from cs2bot.match_sources.models import MatchNormalized, SourceUnavailableError
 from cs2bot.match_sources.sources import cs2api_source
@@ -44,3 +46,27 @@ def test_cs2api_source_uses_bo3_http_when_library_returns_empty(monkeypatch):
     matches = asyncio.run(cs2api_source.fetch_finished_matches(limit=10))
 
     assert [match.match_id for match in matches] == ["3"]
+
+
+def test_bo3_fixture_normalizes_finished_matches():
+    fixture = Path(__file__).parent / "fixtures" / "bo3_finished_matches_sample.json"
+    data = json.loads(fixture.read_text())
+
+    matches = cs2api_source._normalize_raw_matches(data)
+
+    assert len(matches) == 2
+    assert matches[0].source == "cs2api"
+    assert matches[0].match_id == "984321"
+    assert matches[0].team1_name == "NAVI"
+    assert matches[0].team2_name == "FaZe"
+    assert matches[0].score1 == 2
+    assert matches[0].score2 == 1
+    assert matches[0].tournament_name == "IEM Cologne 2026"
+    assert matches[0].date == "2026-02-17T12:40:00.000+00:00"
+    assert matches[0].start_date == "2026-02-17T10:30:00.000+00:00"
+    assert matches[0].end_date == "2026-02-17T12:40:00.000+00:00"
+    assert matches[0].location == "Cologne, Germany"
+    assert matches[0].prize_pool_usd == 1000000
+    assert matches[0].operator == "ESL"
+    assert [item.name for item in matches[0].maps] == ["Mirage", "Ancient", "Inferno"]
+    assert [(item.score1, item.score2) for item in matches[0].maps] == [(13, 11), (7, 13), (13, 10)]

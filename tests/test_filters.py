@@ -34,6 +34,11 @@ def test_iem_is_tier1_lan():
     assert is_tier1_lan(_match(tournament_name="IEM Cologne 2026")) == (True, None)
 
 
+def test_cs_asia_championships_is_tier1_lan_without_location():
+    match = _match(tournament_name="CS Asia Championships 2026", location=None, prize_pool_usd=1000000)
+    assert is_tier1_lan(match) == (True, None)
+
+
 def test_online_cup_does_not_pass_lan_filter():
     ok, reason = is_tier1_lan(_match(tournament_name="Online Cup", location="Online"))
     assert ok is False
@@ -58,4 +63,3 @@ def test_known_operators_are_detected():
     assert detect_operator("BLAST Open Rotterdam 2026") == "BLAST"
     assert detect_operator("Esports World Cup 2026") == "Esports World Cup"
     assert detect_operator("FISSURE Playground") == "FISSURE"
-

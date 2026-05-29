@@ -79,6 +79,8 @@ async def mark_processed(match: MatchNormalized, client: Any | None = None, buck
         "team2_name": match.team2_name,
         "score1": match.score1,
         "score2": match.score2,
+        "start_date": match.start_date,
+        "end_date": match.end_date,
         "processed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 
@@ -117,6 +119,8 @@ async def mark_channel_processed(
         "team2_name": match.team2_name,
         "score1": match.score1,
         "score2": match.score2,
+        "start_date": match.start_date,
+        "end_date": match.end_date,
         "processed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
 

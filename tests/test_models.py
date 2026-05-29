@@ -32,3 +32,8 @@ def test_match_uid_requires_stable_identifier():
     with pytest.raises(ValueError):
         _ = match.match_uid
 
+
+def test_match_accepts_start_and_end_dates():
+    match = _match(start_date="2026-02-17T10:30:00Z", end_date="2026-02-17T12:40:00Z")
+    assert match.start_date == "2026-02-17T10:30:00Z"
+    assert match.end_date == "2026-02-17T12:40:00Z"
