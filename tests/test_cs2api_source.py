@@ -2,7 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from cs2bot.match_sources.models import MatchNormalized, SourceUnavailableError
+from cs2bot.match_sources.models import MatchNormalized
 from cs2bot.match_sources.sources import cs2api_source
 
 
@@ -18,14 +18,10 @@ def _match(match_id="1"):
     )
 
 
-def test_cs2api_source_falls_back_to_bo3_http_when_library_unavailable(monkeypatch):
-    async def fake_library(limit=30):
-        raise SourceUnavailableError("library failed")
-
+def test_cs2api_source_uses_direct_http_adapter(monkeypatch):
     async def fake_http():
         return [_match("2")]
 
-    monkeypatch.setattr(cs2api_source, "_fetch_via_cs2api_library", fake_library)
     monkeypatch.setattr(cs2api_source, "_fetch_via_bo3_http", fake_http)
 
     matches = asyncio.run(cs2api_source.fetch_finished_matches(limit=10))
@@ -33,19 +29,15 @@ def test_cs2api_source_falls_back_to_bo3_http_when_library_unavailable(monkeypat
     assert [match.match_id for match in matches] == ["2"]
 
 
-def test_cs2api_source_uses_bo3_http_when_library_returns_empty(monkeypatch):
-    async def fake_library(limit=30):
-        return []
-
+def test_cs2api_source_applies_requested_limit(monkeypatch):
     async def fake_http():
-        return [_match("3")]
+        return [_match("1"), _match("2"), _match("3")]
 
-    monkeypatch.setattr(cs2api_source, "_fetch_via_cs2api_library", fake_library)
     monkeypatch.setattr(cs2api_source, "_fetch_via_bo3_http", fake_http)
 
-    matches = asyncio.run(cs2api_source.fetch_finished_matches(limit=10))
+    matches = asyncio.run(cs2api_source.fetch_finished_matches(limit=2))
 
-    assert [match.match_id for match in matches] == ["3"]
+    assert [match.match_id for match in matches] == ["1", "2"]
 
 
 def test_bo3_fixture_normalizes_finished_matches():
@@ -70,3 +62,29 @@ def test_bo3_fixture_normalizes_finished_matches():
     assert matches[0].operator == "ESL"
     assert [item.name for item in matches[0].maps] == ["Mirage", "Ancient", "Inferno"]
     assert [(item.score1, item.score2) for item in matches[0].maps] == [(13, 11), (7, 13), (13, 10)]
+
+
+def test_bad_item_does_not_abort_other_source_results():
+    valid = {
+        "id": "2",
+        "team1": "NAVI",
+        "team2": "FaZe",
+        "team1_score": 2,
+        "team2_score": 1,
+        "tournament_name": "IEM Test",
+        "prize_pool_usd": "$1,000,000",
+    }
+    malformed = {
+        "id": "1",
+        "team1": "Broken",
+        "team2": "Data",
+        "team1_score": 2,
+        "team2_score": 1,
+        "tournament_name": "Broken",
+        "is_lan": "not-a-boolean",
+    }
+
+    matches = cs2api_source._normalize_raw_matches([malformed, valid])
+
+    assert [match.match_id for match in matches] == ["2"]
+    assert matches[0].prize_pool_usd == 1000000

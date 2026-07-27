@@ -7,30 +7,29 @@ Object Storage используется только для состояния �
 Для публикаций в Telegram используется per-channel ключ:
 
 ```text
-processed/{channel}_{source}_{match_id}.json
+processed/{channel_id}_match_v1_{fingerprint}.json
 ```
 
 Пример:
 
 ```text
-processed/global_hltv_2378481.json
-processed/navi_cs2api_984321.json
+processed/global_match_v1_5528f9748a200b85a2dfdc2b.json
 ```
 
-CLI без Telegram может использовать общий data-layer ключ только для низкоуровневой отладки:
+Перед отправкой создаётся атомарный lease:
 
 ```text
-processed/{source}_{match_id}.json
+claims/{channel_id}_match_v1_{fingerprint}.json
 ```
 
-Для проверки именно Telegram-сценария используйте CLI с `--channel`.
+Старые source-specific ключи продолжают читаться для безопасной миграции. Поле `id` в `CHANNELS_JSON` должно быть стабильным и уникальным.
 
 ## IAM
 
 Сервисному аккаунту Cloud Function нужны минимальные права на bucket:
 
 - `head_object` / чтение метаданных;
-- `put_object` / запись объекта;
+- `put_object` / запись объекта, включая conditional `If-None-Match` и `If-Match`;
 - опционально просмотр объектов для ручной диагностики.
 
 Ключи доступа не должны храниться в коде. Используйте только переменные окружения:
@@ -44,7 +43,7 @@ OBJECT_STORAGE_ENDPOINT
 
 ## Lifecycle policy
 
-Рекомендуется удалять старые объекты `processed/*` через 180-365 дней.
+Рекомендуется удалять `processed/*` через 180-365 дней, а `claims/*` через 7-30 дней.
 
 Для MVP это безопасно, потому что:
 
@@ -60,7 +59,7 @@ OBJECT_STORAGE_ENDPOINT
 
 ## Ошибки и повторы
 
-Если Telegram-отправка успешна, но запись в Object Storage упала, при следующем запуске возможен повтор. Поэтому handler помечает канал сразу после успешной отправки в этот канал и возвращает ошибку, если mark operation не удалась.
+Claim закрывает гонку между параллельными invocation. Если отправка не удалась, claim немедленно освобождается. Если Telegram принял сообщение, но процесс аварийно завершился до записи `processed`, повтор после истечения lease всё ещё теоретически возможен: Telegram Bot API не предоставляет клиентский idempotency key.
 
 Если один канал успешно отправлен, а следующий канал упал, уже успешный канал остаётся помеченным и не должен получить дубль при следующей попытке.
 

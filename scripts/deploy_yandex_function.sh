@@ -9,7 +9,7 @@ ZIP_PATH="$("${ROOT_DIR}/scripts/build_function_zip.sh")"
 
 yc serverless function version create \
   --function-name "${YC_FUNCTION_NAME}" \
-  --runtime python311 \
+  --runtime "${YC_RUNTIME:-python312}" \
   --entrypoint cs2bot.main.handler \
   --memory "${YC_MEMORY:-256m}" \
   --execution-timeout "${YC_TIMEOUT:-60s}" \

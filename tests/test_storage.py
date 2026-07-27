@@ -1,21 +1,27 @@
 import asyncio
 import json
+from datetime import datetime, timezone
 
 from botocore.exceptions import ClientError
 
 from cs2bot.match_sources.models import MatchNormalized
 from cs2bot.match_sources.storage import (
+    claim_channel_delivery,
     channel_match_uid,
+    is_channel_processed,
     is_processed,
+    legacy_channel_match_uid,
     mark_channel_processed,
     mark_processed,
     processed_key,
+    release_delivery_claim,
 )
 
 
 class FakeS3:
     def __init__(self):
         self.objects = {}
+        self.version = 0
 
     def head_object(self, Bucket, Key):
         if Key not in self.objects:
@@ -23,11 +29,30 @@ class FakeS3:
                 {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
                 "HeadObject",
             )
-        return {}
+        item = self.objects[Key]
+        return {"Metadata": item.get("Metadata", {}), "ETag": item["ETag"]}
 
-    def put_object(self, Bucket, Key, Body, ContentType):
-        self.objects[Key] = {"Body": Body, "ContentType": ContentType}
-        return {}
+    def put_object(self, Bucket, Key, Body, ContentType, Metadata=None, IfNoneMatch=None, IfMatch=None):
+        existing = self.objects.get(Key)
+        if IfNoneMatch == "*" and existing is not None:
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}},
+                "PutObject",
+            )
+        if IfMatch and (existing is None or existing["ETag"] != IfMatch):
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}},
+                "PutObject",
+            )
+        self.version += 1
+        etag = f'"etag-{self.version}"'
+        self.objects[Key] = {
+            "Body": Body,
+            "ContentType": ContentType,
+            "Metadata": Metadata or {},
+            "ETag": etag,
+        }
+        return {"ETag": etag}
 
 
 def _match():
@@ -74,5 +99,44 @@ def test_channel_processed_uses_channel_specific_uid():
     match = _match()
     asyncio.run(mark_channel_processed(match, "global", client=s3, bucket="bucket"))
     uid = channel_match_uid(match, "global")
-    assert uid == "global_hltv_2378481"
+    assert uid.startswith("global_match_v1_")
     assert asyncio.run(is_processed(uid, client=s3, bucket="bucket")) is True
+
+
+def test_channel_processed_accepts_legacy_source_specific_key():
+    s3 = FakeS3()
+    match = _match()
+    legacy_uid = legacy_channel_match_uid(match, "global")
+    s3.put_object(
+        Bucket="bucket",
+        Key=processed_key(legacy_uid),
+        Body=b"{}",
+        ContentType="application/json",
+    )
+
+    assert asyncio.run(
+        is_channel_processed(match, "global", client=s3, bucket="bucket")
+    ) is True
+
+
+def test_delivery_claim_prevents_concurrent_publication_and_can_be_released():
+    s3 = FakeS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+    second = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+
+    assert first is not None
+    assert second is None
+
+    asyncio.run(release_delivery_claim(first, client=s3, bucket="bucket"))
+    third = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+    assert third is not None
+    assert third.claim_id != first.claim_id

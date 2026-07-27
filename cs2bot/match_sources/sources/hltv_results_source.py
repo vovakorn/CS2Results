@@ -8,8 +8,14 @@ from urllib.parse import urljoin
 import aiohttp
 from bs4 import BeautifulSoup, Tag
 
-from ..config import DEFAULT_USER_AGENT, HLTV_RESULTS_URL, REQUEST_TIMEOUT_SECONDS
+from ..config import (
+    DEFAULT_USER_AGENT,
+    HLTV_RESULTS_URL,
+    MAX_SOURCE_RESPONSE_BYTES,
+    REQUEST_TIMEOUT_SECONDS,
+)
 from ..models import MatchDetails, MatchNormalized, SourceUnavailableError
+from .http_utils import read_limited_response
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +59,11 @@ async def fetch_html(url: str = HLTV_RESULTS_URL) -> str:
     }
     try:
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            async with session.get(url) as response:
-                if response.status >= 400:
+            async with session.get(url, allow_redirects=False) as response:
+                if response.status >= 300:
                     raise SourceUnavailableError(f"HLTV returned HTTP {response.status}")
-                return await response.text()
+                raw = await read_limited_response(response, MAX_SOURCE_RESPONSE_BYTES, "HLTV")
+                return raw.decode(response.charset or "utf-8", errors="replace")
     except SourceUnavailableError:
         raise
     except Exception as exc:
@@ -142,6 +149,8 @@ def parse_results_page(html: str, limit: int = 30) -> list[MatchNormalized]:
         for link in soup.find_all("a", href=re.compile(r"/matches/\d+")):
             if isinstance(link, Tag):
                 candidates.append(link)
+    if not candidates:
+        raise SourceUnavailableError("HLTV results page contains no recognizable match nodes")
 
     matches: list[MatchNormalized] = []
     for node in candidates:
@@ -154,10 +163,11 @@ def parse_results_page(html: str, limit: int = 30) -> list[MatchNormalized]:
             url = href_tag.get("href") if isinstance(href_tag, Tag) else None
             logger.error('source=hltv parser_error="%s" url="%s"', exc, url)
             continue
+    if not matches:
+        raise SourceUnavailableError("HLTV result nodes could not be normalized")
     return matches
 
 
 async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
     html = await fetch_html(HLTV_RESULTS_URL)
     return parse_results_page(html, limit=limit)
-

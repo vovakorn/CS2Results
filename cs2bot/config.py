@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from typing import Any
 
 # Токен бота берём из переменных окружения Yandex Cloud.
@@ -19,10 +20,49 @@ def _load_channels_from_env() -> list[dict[str, Any]] | None:
     data = json.loads(raw)
     if not isinstance(data, list):
         raise ValueError("CHANNELS_JSON must be a JSON array")
+    if not data or len(data) > 50:
+        raise ValueError("CHANNELS_JSON must contain between 1 and 50 channels")
+    normalized_channels: list[dict[str, Any]] = []
+    storage_ids: set[str] = set()
     for channel in data:
         if not isinstance(channel, dict):
             raise ValueError("Each channel config entry must be an object")
-    return data
+        name = channel.get("name")
+        chat_id = channel.get("chat_id")
+        teams = channel.get("teams")
+        storage_id = channel.get("id", name)
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 100:
+            raise ValueError("Each channel must have a non-empty string name")
+        if not isinstance(storage_id, str) or not storage_id.strip() or len(storage_id.strip()) > 100:
+            raise ValueError("Each channel id must be a non-empty string")
+        if (
+            isinstance(chat_id, bool)
+            or not isinstance(chat_id, (str, int))
+            or str(chat_id).strip() == ""
+            or len(str(chat_id)) > 200
+        ):
+            raise ValueError(f"Channel {name!r} must have a chat_id")
+        if teams is not None and (
+            not isinstance(teams, list)
+            or len(teams) > 100
+            or not all(isinstance(team, str) and team.strip() for team in teams)
+            or any(len(team.strip()) > 200 for team in teams if isinstance(team, str))
+        ):
+            raise ValueError(f"Channel {name!r} teams must be null or a string array")
+
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "_", storage_id.strip()).strip("_") or "unknown"
+        if safe_id in storage_ids:
+            raise ValueError("Channel ids must remain unique after storage normalization")
+        storage_ids.add(safe_id)
+        normalized_channels.append(
+            {
+                "id": storage_id.strip(),
+                "name": name.strip(),
+                "chat_id": chat_id,
+                "teams": [team.strip() for team in teams] if teams else None,
+            }
+        )
+    return normalized_channels
 
 # Конфигурация каналов.
 # Сейчас у нас один канал, который получает ВСЕ матчи.
