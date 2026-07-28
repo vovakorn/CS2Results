@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .config import TEAM_ALIASES
+
 
 class SourceUnavailableError(Exception):
     """Raised when a source cannot be fetched or parsed reliably."""
@@ -33,11 +35,12 @@ class MatchDetails(BaseModel):
 class MatchNormalized(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, validate_assignment=True)
 
-    source: Literal["cs2api", "hltv"]
+    source: Literal["pandascore", "liquipedia", "cs2api", "hltv"]
     match_id: str | None = Field(default=None, max_length=200)
     match_url: str | None = Field(default=None, max_length=2048)
 
     tournament_name: str = Field(min_length=1, max_length=300)
+    competition_key: str | None = Field(default=None, max_length=300)
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
 
@@ -60,7 +63,8 @@ class MatchNormalized(BaseModel):
     @staticmethod
     def _identity_part(value: str | None) -> str:
         normalized = unicodedata.normalize("NFKC", value or "").casefold()
-        return re.sub(r"\W+", " ", normalized, flags=re.UNICODE).strip()
+        normalized = re.sub(r"\W+", " ", normalized, flags=re.UNICODE).strip()
+        return TEAM_ALIASES.get(normalized, normalized)
 
     @property
     def legacy_match_uid(self) -> str:
@@ -89,7 +93,7 @@ class MatchNormalized(BaseModel):
         identity = "|".join(
             [
                 match_day,
-                self._identity_part(self.tournament_name),
+                self._identity_part(self.competition_key or self.tournament_name),
                 *(f"{team}:{score if score is not None else ''}" for team, score in team_scores),
             ]
         )

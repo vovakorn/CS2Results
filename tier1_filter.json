@@ -14,5 +14,37 @@
     "online",
     "remote"
   ],
+  "trusted_lan_tournament_patterns": [
+    "Major",
+    "IEM Cologne",
+    "IEM Katowice",
+    "IEM Dallas",
+    "IEM Chengdu",
+    "ESL Pro League",
+    "BLAST Open",
+    "BLAST Rivals",
+    "Esports World Cup",
+    "FISSURE Playground",
+    "CS Asia Championships"
+  ],
+  "tournament_exclusion_patterns": [
+    "qualifier",
+    "open qualifier",
+    "closed qualifier",
+    "regional qualifier",
+    "showmatch"
+  ],
+  "team_aliases": {
+    "natus vincere": "navi",
+    "navi": "navi",
+    "faze clan": "faze",
+    "faze": "faze",
+    "team spirit": "spirit",
+    "spirit": "spirit",
+    "team vitality": "vitality",
+    "vitality": "vitality",
+    "g2 esports": "g2",
+    "g2": "g2"
+  },
   "prize_pool_threshold_usd": 500000
 }

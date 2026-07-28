@@ -6,6 +6,8 @@ from .config import (
     ONLINE_LOCATION_MARKERS,
     TIER1_PRIZE_POOL_THRESHOLD_USD,
     TIER1_TOURNAMENT_PATTERNS,
+    TOURNAMENT_EXCLUSION_PATTERNS,
+    TRUSTED_LAN_TOURNAMENT_PATTERNS,
 )
 from .models import MatchNormalized
 
@@ -52,6 +54,7 @@ def detect_operator(tournament_name: str) -> str | None:
 def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     location = match.location or ""
     location_lower = location.casefold()
+    excluded = _contains_pattern(match.tournament_name, TOURNAMENT_EXCLUSION_PATTERNS)
 
     if match.is_lan is False:
         lan_confirmed = False
@@ -62,7 +65,13 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     elif any(marker in location_lower for marker in ONLINE_LOCATION_MARKERS):
         lan_confirmed = False
         lan_reason = "online_location"
+    elif excluded:
+        lan_confirmed = False
+        lan_reason = "excluded_tournament"
     elif location.strip():
+        lan_confirmed = True
+        lan_reason = None
+    elif _contains_pattern(match.tournament_name, TRUSTED_LAN_TOURNAMENT_PATTERNS):
         lan_confirmed = True
         lan_reason = None
     else:

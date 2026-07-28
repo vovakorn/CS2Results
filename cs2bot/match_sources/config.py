@@ -18,6 +18,38 @@ DEFAULT_TIER1_TOURNAMENT_PATTERNS = [
 ]
 
 DEFAULT_ONLINE_LOCATION_MARKERS = ["online", "remote"]
+DEFAULT_TRUSTED_LAN_TOURNAMENT_PATTERNS = [
+    "Major",
+    "IEM Cologne",
+    "IEM Katowice",
+    "IEM Dallas",
+    "IEM Chengdu",
+    "ESL Pro League",
+    "BLAST Open",
+    "BLAST Rivals",
+    "Esports World Cup",
+    "FISSURE Playground",
+    "CS Asia Championships",
+]
+DEFAULT_TOURNAMENT_EXCLUSION_PATTERNS = [
+    "qualifier",
+    "open qualifier",
+    "closed qualifier",
+    "regional qualifier",
+    "showmatch",
+]
+DEFAULT_TEAM_ALIASES = {
+    "natus vincere": "navi",
+    "navi": "navi",
+    "faze clan": "faze",
+    "faze": "faze",
+    "team spirit": "spirit",
+    "spirit": "spirit",
+    "team vitality": "vitality",
+    "vitality": "vitality",
+    "g2 esports": "g2",
+    "g2": "g2",
+}
 
 
 def _load_json_config(env_name: str) -> dict:
@@ -55,6 +87,15 @@ def _list_setting(name: str, default: list[str]) -> list[str]:
     return value
 
 
+def _dict_setting(name: str, default: dict[str, str]) -> dict[str, str]:
+    value = TIER1_FILTER_CONFIG.get(name, default)
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str) and isinstance(item, str) for key, item in value.items()
+    ):
+        raise ValueError(f"TIER1_FILTER_CONFIG_JSON.{name} must be a string-to-string object")
+    return value
+
+
 def _int_setting(name: str, default: int, minimum: int = 1, config_name: str | None = None) -> int:
     raw = TIER1_FILTER_CONFIG.get(config_name or name, os.getenv(name, str(default)))
     try:
@@ -80,6 +121,15 @@ def _bool_env(name: str, default: bool) -> bool:
 
 TIER1_TOURNAMENT_PATTERNS = _list_setting("tournament_patterns", DEFAULT_TIER1_TOURNAMENT_PATTERNS)
 ONLINE_LOCATION_MARKERS = _list_setting("online_location_markers", DEFAULT_ONLINE_LOCATION_MARKERS)
+TRUSTED_LAN_TOURNAMENT_PATTERNS = _list_setting(
+    "trusted_lan_tournament_patterns",
+    DEFAULT_TRUSTED_LAN_TOURNAMENT_PATTERNS,
+)
+TOURNAMENT_EXCLUSION_PATTERNS = _list_setting(
+    "tournament_exclusion_patterns",
+    DEFAULT_TOURNAMENT_EXCLUSION_PATTERNS,
+)
+TEAM_ALIASES = _dict_setting("team_aliases", DEFAULT_TEAM_ALIASES)
 TIER1_PRIZE_POOL_THRESHOLD_USD = _int_setting(
     "TIER1_PRIZE_POOL_THRESHOLD_USD",
     500000,
@@ -87,10 +137,10 @@ TIER1_PRIZE_POOL_THRESHOLD_USD = _int_setting(
 )
 
 MATCH_SOURCE = os.getenv("MATCH_SOURCE", "auto")
-if MATCH_SOURCE not in {"auto", "cs2api", "hltv"}:
-    raise ValueError("MATCH_SOURCE must be auto, cs2api, or hltv")
+if MATCH_SOURCE not in {"auto", "pandascore", "liquipedia"}:
+    raise ValueError("MATCH_SOURCE must be auto, pandascore, or liquipedia")
 
-ENABLE_HLTV_FALLBACK = _bool_env("ENABLE_HLTV_FALLBACK", True)
+ENABLE_LIQUIPEDIA_FALLBACK = _bool_env("ENABLE_LIQUIPEDIA_FALLBACK", True)
 ALLOW_STALE_IN_DRY_RUN = _bool_env("ALLOW_STALE_IN_DRY_RUN", True)
 REQUEST_TIMEOUT_SECONDS = _int_setting("REQUEST_TIMEOUT_SECONDS", 15)
 DISPLAY_TIMEZONE = os.getenv("DISPLAY_TIMEZONE", "Europe/Berlin")
@@ -102,6 +152,14 @@ MAX_SOURCE_RESPONSE_BYTES = _int_setting("MAX_SOURCE_RESPONSE_BYTES", 5_000_000,
 OBJECT_STORAGE_BUCKET = os.getenv("OBJECT_STORAGE_BUCKET")
 OBJECT_STORAGE_ENDPOINT = os.getenv("OBJECT_STORAGE_ENDPOINT", "https://storage.yandexcloud.net")
 
+PANDASCORE_API_TOKEN = os.getenv("PANDASCORE_API_TOKEN")
+PANDASCORE_API_BASE_URL = os.getenv("PANDASCORE_API_BASE_URL", "https://api.pandascore.co")
+LIQUIPEDIA_API_KEY = os.getenv("LIQUIPEDIA_API_KEY") or os.getenv("LPDB_API_KEY")
+LIQUIPEDIA_API_BASE_URL = os.getenv("LIQUIPEDIA_API_BASE_URL", "https://api.liquipedia.net/api/v3")
+LIQUIPEDIA_WIKI = os.getenv("LIQUIPEDIA_WIKI", "counterstrike")
+
+# Legacy sources remain in the repository only for migration tests and diagnostics.
+# Production source selection intentionally never calls them.
 HLTV_RESULTS_URL = "https://www.hltv.org/results"
 DEFAULT_USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "

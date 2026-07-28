@@ -13,19 +13,20 @@ from .filters import is_tier1_lan, is_valid_match
 from .models import MatchNormalized, SourceUnavailableError
 from .storage import is_channel_processed, is_match_processed, mark_channel_processed
 
-SourceName = Literal["auto", "cs2api", "hltv"]
+ConcreteSourceName = Literal["pandascore", "liquipedia"]
+SourceName = Literal["auto", "pandascore", "liquipedia"]
 
 logger = logging.getLogger(__name__)
 
 
-async def _fetch_from_source(source: Literal["cs2api", "hltv"], limit: int) -> list[MatchNormalized]:
-    if source == "cs2api":
-        from .sources import cs2api_source
+async def _fetch_from_source(source: ConcreteSourceName, limit: int) -> list[MatchNormalized]:
+    if source == "pandascore":
+        from .sources import pandascore_source
 
-        return await cs2api_source.fetch_finished_matches(limit=limit)
-    from .sources import hltv_results_source
+        return await pandascore_source.fetch_finished_matches(limit=limit)
+    from .sources import liquipedia_source
 
-    return await hltv_results_source.fetch_finished_matches(limit=limit)
+    return await liquipedia_source.fetch_finished_matches(limit=limit)
 
 
 def _source_is_usable(
@@ -52,7 +53,7 @@ async def _choose_source(
     limit: int,
     require_fresh: bool = True,
 ) -> tuple[str, list[MatchNormalized]]:
-    if source in {"cs2api", "hltv"}:
+    if source in {"pandascore", "liquipedia"}:
         matches = await _fetch_from_source(source, limit)
         logger.info("source=%s fetched=%s", source, len(matches))
         usable, reason = _source_is_usable(source, matches, require_fresh=require_fresh)
@@ -62,35 +63,35 @@ async def _choose_source(
 
     primary_error: str | None = None
     try:
-        matches = await _fetch_from_source("cs2api", limit)
-        logger.info("source=cs2api fetched=%s", len(matches))
-        usable, reason = _source_is_usable("cs2api", matches, require_fresh=require_fresh)
+        matches = await _fetch_from_source("pandascore", limit)
+        logger.info("source=pandascore fetched=%s", len(matches))
+        usable, reason = _source_is_usable("pandascore", matches, require_fresh=require_fresh)
         if usable:
-            return "cs2api", matches
+            return "pandascore", matches
         primary_error = reason
-        if not source_config.ENABLE_HLTV_FALLBACK:
-            logger.warning("source=cs2api status=%s fallback=disabled", reason)
+        if not source_config.ENABLE_LIQUIPEDIA_FALLBACK:
+            logger.warning("source=pandascore status=%s fallback=disabled", reason)
             if require_fresh:
-                raise SourceUnavailableError(f"cs2api is not usable: {reason}")
-            return "cs2api", matches
-        logger.warning("source=cs2api status=%s fallback=hltv", reason)
+                raise SourceUnavailableError(f"pandascore is not usable: {reason}")
+            return "pandascore", matches
+        logger.warning("source=pandascore status=%s fallback=liquipedia", reason)
     except SourceUnavailableError as exc:
         primary_error = str(exc)
-        if not source_config.ENABLE_HLTV_FALLBACK:
-            logger.warning("source=cs2api status=unavailable fallback=disabled error=%s", exc)
+        if not source_config.ENABLE_LIQUIPEDIA_FALLBACK:
+            logger.warning("source=pandascore status=unavailable fallback=disabled error=%s", exc)
             raise
-        logger.warning("source=cs2api status=unavailable fallback=hltv error=%s", exc)
+        logger.warning("source=pandascore status=unavailable fallback=liquipedia error=%s", exc)
 
     try:
-        matches = await _fetch_from_source("hltv", limit)
-        logger.info("source=hltv fetched=%s", len(matches))
-        usable, reason = _source_is_usable("hltv", matches, require_fresh=require_fresh)
+        matches = await _fetch_from_source("liquipedia", limit)
+        logger.info("source=liquipedia fetched=%s", len(matches))
+        usable, reason = _source_is_usable("liquipedia", matches, require_fresh=require_fresh)
         if not usable and (require_fresh or reason != "empty"):
-            raise SourceUnavailableError(f"hltv is not usable: {reason}")
-        return "hltv", matches
+            raise SourceUnavailableError(f"liquipedia is not usable: {reason}")
+        return "liquipedia", matches
     except SourceUnavailableError as exc:
         raise SourceUnavailableError(
-            f"no usable match source; cs2api={primary_error or 'unavailable'}; hltv={exc}"
+            f"no usable match source; pandascore={primary_error or 'unavailable'}; liquipedia={exc}"
         ) from exc
 
 
@@ -200,8 +201,8 @@ async def get_new_finished_matches(
     check_processed: bool = True,
 ) -> list[MatchNormalized]:
     selected_source = source or source_config.MATCH_SOURCE
-    if selected_source not in {"auto", "cs2api", "hltv"}:
-        raise ValueError("--source must be auto, cs2api, or hltv")
+    if selected_source not in {"auto", "pandascore", "liquipedia"}:
+        raise ValueError("--source must be auto, pandascore, or liquipedia")
 
     logger.info("match_fetcher start source=%s limit=%s dry_run=%s", selected_source, limit, dry_run)
     fetch_limit = min(max(limit * 3, limit), 100)
@@ -301,7 +302,11 @@ async def _main_async(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Fetch recently finished CS2 matches.")
-    parser.add_argument("--source", choices=["auto", "cs2api", "hltv"], default=os.getenv("MATCH_SOURCE", "auto"))
+    parser.add_argument(
+        "--source",
+        choices=["auto", "pandascore", "liquipedia"],
+        default=os.getenv("MATCH_SOURCE", "auto"),
+    )
     parser.add_argument("--limit", type=int, default=30)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--include-filtered", action="store_true")
