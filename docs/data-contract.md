@@ -8,8 +8,8 @@
 
 Он делает:
 
-- получает завершённые матчи из `cs2api` / BO3.gg;
-- использует HLTV HTTP fallback, если включён `ENABLE_HLTV_FALLBACK`;
+- получает завершённые матчи из PandaScore;
+- использует LiquipediaDB fallback, если включён `ENABLE_LIQUIPEDIA_FALLBACK`;
 - приводит данные к `MatchNormalized`;
 - заполняет `start_date`, `end_date`, `date` и `maps`, если источник отдаёт эти поля;
 - отбрасывает невалидные матчи;
@@ -53,7 +53,7 @@
 
 `maps` всегда должен быть списком. Если карты неизвестны, используется пустой список.
 
-`start_date` и `end_date` хранят исходные ISO datetime от источника. `date` остаётся совместимым полем отображения и обычно равно `end_date`, если оно известно.
+`start_date` и `end_date` хранят исходные ISO datetime от источника. `date` остаётся совместимым полем отображения и обычно равно `end_date`, если оно известно. `competition_key` хранит стабильное название соревнования без названия стадии и используется только для cross-provider дедупликации.
 
 ## Дедупликация
 
@@ -69,7 +69,7 @@ Delivery-layer использует per-channel ключ:
 processed/{channel_id}_match_v1_{fingerprint}.json
 ```
 
-Fingerprint строится из даты, турнира, команд и счёта. Он не зависит от source ID и порядка команд. Если даты нет, применяется старый source-specific UID, чтобы не склеивать разные матчи по недостаточным данным.
+Fingerprint строится из даты, `competition_key` (или отображаемого названия турнира), нормализованных псевдонимов команд и счёта. Он не зависит от source ID и порядка команд. Если даты нет, применяется старый source-specific UID, чтобы не склеивать разные матчи по недостаточным данным.
 
 Перед отправкой создаётся lease:
 
@@ -83,10 +83,10 @@ claims/{channel_id}_match_v1_{fingerprint}.json
 
 В режиме `source=auto` порядок такой:
 
-1. BO3.gg HTTP adapter (`source=cs2api` для совместимости контракта).
-2. HLTV HTTP fallback, если `ENABLE_HLTV_FALLBACK=1`.
+1. PandaScore Fixtures adapter (`source=pandascore`).
+2. LiquipediaDB adapter (`source=liquipedia`), если `ENABLE_LIQUIPEDIA_FALLBACK=1`.
 
-Решение о fallback принимается после validation и freshness gate. Если `ENABLE_HLTV_FALLBACK=0`, явный запуск `--source hltv` всё равно разрешён, но stale/invalid источник в production блокируется.
+Решение о fallback принимается после validation и freshness gate. Источники не объединяются в одном запуске. Явный выбор `pandascore` или `liquipedia` доступен для диагностики. Старые BO3.gg и HLTV адаптеры production selector не вызывает.
 
 ## Freshness contract
 

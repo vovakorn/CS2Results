@@ -72,7 +72,9 @@ Memory: 256-512 MB
 
 ```text
 MATCH_SOURCE=auto
-ENABLE_HLTV_FALLBACK=1
+PANDASCORE_API_TOKEN=...
+LIQUIPEDIA_API_KEY=...
+ENABLE_LIQUIPEDIA_FALLBACK=1
 REQUEST_TIMEOUT_SECONDS=15
 BOT_MODE=production
 TIER1_PRIZE_POOL_THRESHOLD_USD=500000
@@ -81,6 +83,8 @@ MAX_SOURCE_FUTURE_SKEW_HOURS=6
 DELIVERY_CLAIM_TTL_SECONDS=300
 MAX_SOURCE_RESPONSE_BYTES=5000000
 ```
+
+Храните API-токены в Lockbox и подключайте их к версии функции как секреты. Если Lockbox пока не используется, ограничьте доступ к чтению и редактированию версии функции и не передавайте секреты в event payload.
 
 Если нужно подменить whitelist без изменения Python-кода, положите новый JSON-файл в архив и задайте:
 
@@ -119,7 +123,7 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 
 ## 7. Timer trigger
 
-Создайте timer trigger с периодом 60 минут.
+Создайте timer trigger с периодом 60 минут. Это один запрос к основному источнику за запуск; Liquipedia вызывается только при fallback и остаётся далеко ниже ограничения 60 запросов в час.
 
 Рекомендуемое событие:
 

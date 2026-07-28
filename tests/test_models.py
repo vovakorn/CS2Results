@@ -55,6 +55,31 @@ def test_canonical_uid_matches_across_sources_and_team_order():
     assert hltv.match_uid == cs2api.match_uid
 
 
+def test_canonical_uid_matches_provider_team_aliases_and_display_names():
+    pandascore = _match(
+        source="pandascore",
+        tournament_name="IEM — IEM Cologne 2026 — Playoffs",
+        competition_key="IEM Cologne 2026",
+        team1_name="NAVI",
+        team2_name="FaZe",
+        date="2026-02-17",
+        score1=2,
+        score2=1,
+    )
+    liquipedia = _match(
+        source="liquipedia",
+        tournament_name="IEM Cologne 2026",
+        competition_key="IEM Cologne 2026",
+        team1_name="Natus Vincere",
+        team2_name="FaZe Clan",
+        date="2026-02-17",
+        score1=2,
+        score2=1,
+    )
+
+    assert pandascore.match_uid == liquipedia.match_uid
+
+
 def test_match_without_date_keeps_legacy_uid_to_avoid_false_collisions():
     assert _match(date=None).match_uid == "hltv_123456"
 

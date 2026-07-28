@@ -39,7 +39,7 @@ def test_iem_is_tier1_lan():
 
 
 def test_tier1_event_without_lan_evidence_is_rejected():
-    match = _match(tournament_name="CS Asia Championships 2026", location=None, prize_pool_usd=1000000)
+    match = _match(tournament_name="Unlisted Arena Finals 2026", location=None, prize_pool_usd=1000000)
     assert is_tier1_lan(match) == (False, "lan_unconfirmed")
 
 
@@ -56,6 +56,16 @@ def test_explicit_lan_flag_confirms_lan_without_location():
 def test_explicit_not_lan_overrides_tournament_heuristics():
     match = _match(tournament_name="IEM Online Qualifier", location=None, is_lan=False)
     assert is_tier1_lan(match) == (False, "explicitly_not_lan")
+
+
+def test_trusted_lan_tournament_passes_without_location():
+    match = _match(tournament_name="IEM Cologne 2026", location=None)
+    assert is_tier1_lan(match) == (True, None)
+
+
+def test_qualifier_is_rejected_even_if_name_contains_trusted_event():
+    match = _match(tournament_name="IEM Cologne 2026 Closed Qualifier", location=None)
+    assert is_tier1_lan(match) == (False, "excluded_tournament")
 
 
 def test_online_cup_does_not_pass_lan_filter():

@@ -2,7 +2,7 @@
 
 Телеграм-бот и MVP-модуль данных для получения результатов завершённых матчей CS2.
 
-Модуль `cs2bot.match_sources` получает нормализованные результаты из бесплатного основного источника `cs2api` / BO3.gg и использует `https://www.hltv.org/results` как HTTP fallback. Перед публикацией handler проверяет валидность и свежесть источника, резервирует доставку атомарным Object Storage claim и помечает её завершённой только после успешной отправки.
+Модуль `cs2bot.match_sources` получает нормализованные результаты из документированного PandaScore API и использует одобренный LiquipediaDB API как резервный источник. Источники не смешиваются: fallback включается только при пустом, невалидном, недоступном или устаревшем ответе PandaScore. Перед публикацией handler проверяет качество и свежесть данных, резервирует доставку атомарным Object Storage claim и помечает её завершённой только после успешной отправки.
 
 ## Переменные окружения
 | Название | Описание |
@@ -17,7 +17,9 @@
 | `BOT_MODE` | `production` или `debug`. Отфильтрованные матчи доступны только вместе с `dry_run=true`. |
 | `TIER1_FILTER_CONFIG_JSON` | JSON-конфиг Tier-1 LAN фильтра без изменения кода. |
 | `TIER1_FILTER_CONFIG_PATH` | Путь к JSON-файлу Tier-1 LAN фильтра, по умолчанию `tier1_filter.json`. |
-| `ENABLE_HLTV_FALLBACK` | `1` включает HLTV fallback в режиме `auto`, `0` отключает автоматический fallback. |
+| `PANDASCORE_API_TOKEN` | Токен PandaScore Fixtures API. Обязателен для основного источника. |
+| `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
+| `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`, `0` отключает его. |
 | `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Berlin`. |
 | `MAX_SOURCE_STALENESS_HOURS` | Максимальный возраст источника для production-публикации, по умолчанию `48`. |
 | `MAX_SOURCE_FUTURE_SKEW_HOURS` | Допустимое отклонение даты источника в будущее, по умолчанию `6`. |
@@ -29,7 +31,7 @@
 
 ```text
 MATCH_SOURCE=auto
-ENABLE_HLTV_FALLBACK=1
+ENABLE_LIQUIPEDIA_FALLBACK=1
 REQUEST_TIMEOUT_SECONDS=15
 DISPLAY_TIMEZONE=Europe/Berlin
 BOT_MODE=production
@@ -55,6 +57,9 @@ MAX_SOURCE_RESPONSE_BYTES=5000000
 {
   "tournament_patterns": ["IEM", "ESL Pro League", "Major"],
   "online_location_markers": ["online", "remote"],
+  "trusted_lan_tournament_patterns": ["Major", "IEM Cologne", "IEM Katowice"],
+  "tournament_exclusion_patterns": ["qualifier", "showmatch"],
+  "team_aliases": {"natus vincere": "navi", "navi": "navi"},
   "prize_pool_threshold_usd": 500000
 }
 ```
@@ -83,8 +88,8 @@ python -m cs2bot.match_sources.match_fetcher --source auto --limit 30 --dry-run 
 
 ```bash
 python -m cs2bot.match_sources.match_fetcher --source auto --limit 10 --dry-run
-python -m cs2bot.match_sources.match_fetcher --source cs2api --limit 10 --dry-run
-python -m cs2bot.match_sources.match_fetcher --source hltv --limit 10 --dry-run
+python -m cs2bot.match_sources.match_fetcher --source pandascore --limit 10 --dry-run
+python -m cs2bot.match_sources.match_fetcher --source liquipedia --limit 10 --dry-run
 ```
 
 `get_new_finished_matches` только возвращает новые матчи. В Cloud Functions обработчик помечает матч обработанным после успешной отправки в Telegram. Для ручной отладки есть отдельный флаг:
@@ -95,14 +100,14 @@ python -m cs2bot.match_sources.match_fetcher --source auto --limit 10 --channel 
 
 `--mark-processed` требует хотя бы один `--channel`, чтобы CLI использовал те же per-channel ключи, что и Telegram handler. `--channel` можно повторять.
 
-Дедупликация использует source-independent fingerprint, поэтому переключение BO3.gg ↔ HLTV не должно повторно публиковать тот же матч. Для совместимости также проверяются старые source-specific ключи.
+Дедупликация использует source-independent fingerprint, `competition_key` и нормализованные псевдонимы команд. Поэтому переключение PandaScore ↔ Liquipedia не должно повторно публиковать тот же матч. Для совместимости также проверяются старые source-specific ключи.
 
 ```text
 claims/{channel_id}_match_v1_{fingerprint}.json
 processed/{channel_id}_match_v1_{fingerprint}.json
 ```
 
-HLTV fallback в MVP не использует Playwright, Selenium или Camoufox. Если HLTV отдаёт 403 или меняет HTML, ошибка логируется контролируемо. Browser fallback оставлен как отдельный placeholder `hltv_browser_source.py`; если он понадобится, его лучше запускать отдельным контейнерным сервисом, а не внутри Cloud Functions.
+Старые адаптеры BO3.gg и HLTV сохранены только для миграционных тестов и диагностики. Production selector их не вызывает.
 
 ## Режимы работы
 
@@ -124,11 +129,11 @@ HLTV fallback в MVP не использует Playwright, Selenium или Camou
 
 ## Источники данных
 
-Primary source с внутренним именем `cs2api` использует контролируемый прямой HTTP-запрос к BO3.gg API. Сторонний Python-wrapper удалён: он обращался к тому же upstream и не обеспечивал независимый fallback.
+Primary source `pandascore` использует документированный endpoint `GET /csgo/matches/past` и передаёт токен в заголовке `Authorization`. Бесплатный Fixtures-план предоставляет итог серии, команды и турнир; карты не являются обязательной частью MVP.
 
-Если BO3.gg вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на HLTV HTTP fallback при `ENABLE_HLTV_FALLBACK=1`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует. Явный запуск `--source hltv` доступен независимо от флага.
+Если PandaScore вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на одобренный LiquipediaDB API при `ENABLE_LIQUIPEDIA_FALLBACK=1`. Liquipedia вызывается через `https://api.liquipedia.net/api/v3/match` с `Authorization: Apikey ...`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует.
 
-Для BO3.gg адаптер нормализует `start_date`, `end_date`, `date`, `tournament.prize` и карты из `games`, когда эти поля доступны. `date` остаётся совместимым полем для отображения, а `start_date` / `end_date` позволяют точнее проверять свежесть данных.
+`competition_key` и конфиг `team_aliases` сводят различающиеся названия турниров и команд к общему fingerprint. Liquipedia-сообщения содержат атрибуцию и ссылку на исходную страницу. Ключи обоих API нельзя передавать в event payload или сохранять в репозитории.
 
 ## Логи, метрики и алерты
 
@@ -166,7 +171,7 @@ Primary source с внутренним именем `cs2api` используе�
 - `messages_sent = 0` долгое время при наличии `matches_received > 0`;
 - рост ошибок Object Storage;
 - `source_stale` или `source_future_timestamp`;
-- частый `HLTV returned HTTP 403`, если fallback становится критичным.
+- частый переход `fallback=liquipedia`, если основной источник становится нестабильным.
 
 ## Структура проекта
 ```
@@ -229,7 +234,10 @@ AWS_ACCESS_KEY_ID=...
 AWS_SECRET_ACCESS_KEY=...
 OBJECT_STORAGE_BUCKET=cs2-results-state
 OBJECT_STORAGE_ENDPOINT=https://storage.yandexcloud.net
+PANDASCORE_API_TOKEN=...
+LIQUIPEDIA_API_KEY=...
 MATCH_SOURCE=auto
+ENABLE_LIQUIPEDIA_FALLBACK=1
 BOT_MODE=production
 ```
 

@@ -12,11 +12,12 @@ from cs2bot.match_sources.storage import DeliveryClaim
 def configured_runtime(monkeypatch):
     monkeypatch.setattr(main, "TELEGRAM_TOKEN", "test-token")
     monkeypatch.setattr(main, "OBJECT_STORAGE_BUCKET", "test-bucket")
+    monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", "pandascore-token")
 
 
 def _match(match_id="1", team1="NAVI", team2="FaZe"):
     return MatchNormalized(
-        source="cs2api",
+        source="pandascore",
         match_id=match_id,
         match_url=f"https://example.com/matches/{match_id}",
         tournament_name="IEM Cologne 2026",
@@ -41,6 +42,7 @@ def test_format_match_uses_normalized_fields():
     assert "Winner: NAVI" in text
     assert "Event: IEM Cologne 2026" in text
     assert "Match ID: 1" in text
+    assert "Source: PandaScore" in text
 
 
 def test_format_match_uses_display_timezone(monkeypatch):
@@ -80,9 +82,11 @@ def test_format_match_drops_untrusted_source_url():
 
 def test_format_match_allows_expected_source_url():
     match = _match()
-    match.match_url = "https://bo3.gg/matches/1"
+    match.source = "liquipedia"
+    match.match_url = "https://liquipedia.net/counterstrike/IEM_Cologne/Matches"
 
-    assert "https://bo3.gg/matches/1" in main.format_match(match)
+    assert match.match_url in main.format_match(match)
+    assert "Source: Liquipedia" in main.format_match(match)
 
 
 def test_format_match_caps_telegram_message_length():
@@ -297,13 +301,13 @@ def test_handler_uses_match_source_from_environment_default(monkeypatch):
         seen.update(kwargs)
         return []
 
-    monkeypatch.setattr(main, "MATCH_SOURCE", "hltv")
+    monkeypatch.setattr(main, "MATCH_SOURCE", "liquipedia")
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
 
     response = main.handler({"dry_run": True}, None)
 
     assert response["statusCode"] == 200
-    assert seen["source"] == "hltv"
+    assert seen["source"] == "liquipedia"
 
 
 def test_telegram_http_error_never_exposes_token(monkeypatch):
@@ -401,6 +405,8 @@ def test_missing_runtime_configuration_fails_before_fetch(monkeypatch):
 
     monkeypatch.setattr(main, "TELEGRAM_TOKEN", None)
     monkeypatch.setattr(main, "OBJECT_STORAGE_BUCKET", None)
+    monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", None)
+    monkeypatch.setattr(main, "LIQUIPEDIA_API_KEY", None)
     monkeypatch.setattr(main, "CHANNELS", [])
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
 
@@ -408,4 +414,40 @@ def test_missing_runtime_configuration_fails_before_fetch(monkeypatch):
 
     assert response["statusCode"] == 503
     assert json.loads(response["body"]) == {"error": "configuration_error"}
+    assert called is False
+
+
+def test_auto_accepts_liquipedia_as_only_configured_source(monkeypatch):
+    called = False
+
+    async def fake_get_new_finished_matches(**kwargs):
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", None)
+    monkeypatch.setattr(main, "LIQUIPEDIA_API_KEY", "liquipedia-key")
+    monkeypatch.setattr(main, "ENABLE_LIQUIPEDIA_FALLBACK", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+
+    response = main.handler({}, None)
+
+    assert response["statusCode"] == 200
+    assert called is True
+
+
+def test_legacy_source_is_rejected_before_fetch(monkeypatch):
+    called = False
+
+    async def fake_get_new_finished_matches(**kwargs):
+        nonlocal called
+        called = True
+        return []
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+
+    response = main.handler({"source": "hltv", "dry_run": True}, None)
+
+    assert response["statusCode"] == 400
     assert called is False

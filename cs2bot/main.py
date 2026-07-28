@@ -15,7 +15,14 @@ import requests
 
 from .config import BOT_MODE, CHANNELS, TELEGRAM_TOKEN
 from .logging_utils import log_event
-from .match_sources.config import DISPLAY_TIMEZONE, MATCH_SOURCE, OBJECT_STORAGE_BUCKET
+from .match_sources.config import (
+    DISPLAY_TIMEZONE,
+    ENABLE_LIQUIPEDIA_FALLBACK,
+    LIQUIPEDIA_API_KEY,
+    MATCH_SOURCE,
+    OBJECT_STORAGE_BUCKET,
+    PANDASCORE_API_TOKEN,
+)
 from .match_sources.match_fetcher import SourceName, get_new_finished_matches
 from .match_sources.models import MatchNormalized
 from .match_sources.storage import (
@@ -33,8 +40,16 @@ MIN_MATCHES = 1
 MAX_MATCHES = 30
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MATCH_URL_HOSTS = {
+    "pandascore": {"pandascore.co", "www.pandascore.co"},
+    "liquipedia": {"liquipedia.net", "www.liquipedia.net"},
     "cs2api": {"bo3.gg", "www.bo3.gg"},
     "hltv": {"hltv.org", "www.hltv.org"},
+}
+SOURCE_LABELS = {
+    "pandascore": "PandaScore",
+    "liquipedia": "Liquipedia",
+    "cs2api": "BO3.gg",
+    "hltv": "HLTV",
 }
 
 
@@ -44,8 +59,9 @@ class TelegramDeliveryError(RuntimeError):
 
 def _safe_error_message(exc: Exception) -> str:
     message = str(exc)
-    if TELEGRAM_TOKEN:
-        message = message.replace(TELEGRAM_TOKEN, "[REDACTED]")
+    for secret in (TELEGRAM_TOKEN, PANDASCORE_API_TOKEN, LIQUIPEDIA_API_KEY):
+        if secret:
+            message = message.replace(secret, "[REDACTED]")
     message = re.sub(r"/bot[^/\s]+/", "/bot[REDACTED]/", message, flags=re.IGNORECASE)
     return message[:500] or type(exc).__name__
 
@@ -204,7 +220,7 @@ def format_match(match: Any) -> str:
     if match_id:
         pieces.append(f"Match ID: {match_id}")
     if source:
-        pieces.append(f"Source: {source}")
+        pieces.append(f"Source: {SOURCE_LABELS.get(source, source)}")
     if filter_reason:
         pieces.append(f"Filter: {filter_reason}")
     safe_url = _safe_match_url(match_url, source)
@@ -251,9 +267,9 @@ def _parse_bool(value: Any, default: bool = False) -> bool:
 def _parse_source(value: Any, default: str | None = None) -> SourceName:
     if value is None:
         value = default or MATCH_SOURCE
-    if value in {"auto", "cs2api", "hltv"}:
+    if value in {"auto", "pandascore", "liquipedia"}:
         return value
-    raise ValueError("source must be auto, cs2api, or hltv")
+    raise ValueError("source must be auto, pandascore, or liquipedia")
 
 
 def _parse_mode(value: Any) -> str:
@@ -319,6 +335,14 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             missing_config.append("object_storage_bucket")
         if not any(True for _ in _iter_channels()):
             missing_config.append("delivery_channels")
+        if source == "pandascore" and not PANDASCORE_API_TOKEN:
+            missing_config.append("match_source_credentials")
+        elif source == "liquipedia" and not LIQUIPEDIA_API_KEY:
+            missing_config.append("match_source_credentials")
+        elif source == "auto" and not PANDASCORE_API_TOKEN and not (
+            ENABLE_LIQUIPEDIA_FALLBACK and LIQUIPEDIA_API_KEY
+        ):
+            missing_config.append("match_source_credentials")
         if missing_config:
             log_event(
                 logger,

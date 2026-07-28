@@ -14,5 +14,20 @@
     "online",
     "remote"
   ],
+  "trusted_lan_tournament_patterns": [
+    "Major",
+    "IEM Cologne",
+    "IEM Katowice"
+  ],
+  "tournament_exclusion_patterns": [
+    "qualifier",
+    "showmatch"
+  ],
+  "team_aliases": {
+    "natus vincere": "navi",
+    "navi": "navi",
+    "faze clan": "faze",
+    "faze": "faze"
+  },
   "prize_pool_threshold_usd": 500000
 }
