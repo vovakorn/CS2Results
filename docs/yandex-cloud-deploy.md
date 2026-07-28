@@ -10,7 +10,7 @@
 cs2-results-state
 ```
 
-Включите lifecycle policy для prefix `processed/`. Рекомендации описаны в `docs/object-storage-lifecycle.md`.
+Включите lifecycle policy для prefix `processed/` и `claims/`. Рекомендации описаны в `docs/object-storage-lifecycle.md`.
 
 ## 2. Сервисный аккаунт
 
@@ -24,6 +24,8 @@ AWS_SECRET_ACCESS_KEY
 OBJECT_STORAGE_BUCKET
 OBJECT_STORAGE_ENDPOINT=https://storage.yandexcloud.net
 ```
+
+Не делайте функцию публичной. Право invocation должно быть только у timer trigger и назначенного service account. Ограничьте доступ к настройкам версии функции, поскольку они содержат секретные переменные окружения.
 
 ## 3. Telegram
 
@@ -39,8 +41,10 @@ TELEGRAM_CHAT_ID=@your_channel
 Для нескольких каналов используйте:
 
 ```text
-CHANNELS_JSON=[{"name":"global","chat_id":"@cs2_results","teams":null}]
+CHANNELS_JSON=[{"id":"global","name":"global","chat_id":"@cs2_results","teams":null}]
 ```
+
+`id` используется в ключах дедупликации и не должен меняться при переименовании канала.
 
 ## 4. Сборка архива
 
@@ -51,13 +55,14 @@ scripts/build_function_zip.sh
 ```
 
 Скрипт создаёт `dist/function.zip` и не включает `.venv`, `.git`, `.pytest_cache` и локальные секреты.
+Архив содержит исходники и `requirements.txt`; зависимости устанавливаются в Linux-среде Cloud Functions, поэтому локальные platform-specific wheels в него не попадают.
 
 ## 5. Настройка функции
 
 Параметры:
 
 ```text
-Runtime: Python 3.11+
+Runtime: Python 3.12
 Handler: cs2bot.main.handler
 Timeout: 30-60 seconds
 Memory: 256-512 MB
@@ -72,6 +77,9 @@ REQUEST_TIMEOUT_SECONDS=15
 BOT_MODE=production
 TIER1_PRIZE_POOL_THRESHOLD_USD=500000
 MAX_SOURCE_STALENESS_HOURS=48
+MAX_SOURCE_FUTURE_SKEW_HOURS=6
+DELIVERY_CLAIM_TTL_SECONDS=300
+MAX_SOURCE_RESPONSE_BYTES=5000000
 ```
 
 Если нужно подменить whitelist без изменения Python-кода, положите новый JSON-файл в архив и задайте:
@@ -104,8 +112,10 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 Затем запустите без `dry_run` и проверьте:
 
 - сообщение появилось в Telegram;
-- в bucket создан ключ `processed/{channel}_{source}_{match_id}.json`;
+- в bucket созданы канонические ключи `claims/{channel_id}_match_v1_...` и `processed/{channel_id}_match_v1_...`;
 - повторный запуск не отправляет дубль в тот же канал.
+
+Если оба источника stale/invalid, ожидается `502` с `match_source_unavailable` и ноль публикаций. Это fail-closed поведение.
 
 ## 7. Timer trigger
 

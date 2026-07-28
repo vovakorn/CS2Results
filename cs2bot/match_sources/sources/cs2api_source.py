@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import inspect
+import json
 import logging
+import re
 from collections.abc import Iterable
 
 import aiohttp
+from pydantic import ValidationError
 
-from ..config import DEFAULT_USER_AGENT, REQUEST_TIMEOUT_SECONDS
+from ..config import DEFAULT_USER_AGENT, MAX_SOURCE_RESPONSE_BYTES, REQUEST_TIMEOUT_SECONDS
 from ..models import MapResult, MatchNormalized, SourceUnavailableError
+from .http_utils import read_limited_response
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +78,27 @@ def _team_id(value) -> int | None:
         return None
 
 
+def _optional_int(value) -> int | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value)
+    match = re.search(r"-?\d[\d,.\s]*", str(value))
+    if not match:
+        return None
+    digits = re.sub(r"[^\d-]", "", match.group(0))
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _optional_str(value) -> str | None:
+    return str(value) if value not in (None, "") else None
+
+
 def _normalize_games(item: dict) -> list[MapResult]:
     games = item.get("games")
     if not isinstance(games, list):
@@ -89,11 +113,8 @@ def _normalize_games(item: dict) -> list[MapResult]:
         loser_id = _team_id(_dig(game, "loser_team_clan", "team_id"))
         winner_score = _first_present(game, [("winner_clan_score",), ("winner_score",), ("score1",)])
         loser_score = _first_present(game, [("loser_clan_score",), ("loser_score",), ("score2",)])
-        try:
-            winner_score = int(winner_score) if winner_score is not None else None
-            loser_score = int(loser_score) if loser_score is not None else None
-        except (TypeError, ValueError):
-            winner_score = loser_score = None
+        winner_score = _optional_int(winner_score)
+        loser_score = _optional_int(loser_score)
 
         score1 = score2 = None
         if winner_id is not None and loser_id is not None and team1_id is not None and team2_id is not None:
@@ -123,11 +144,8 @@ def _normalize_item(item: dict) -> MatchNormalized | None:
 
     score1 = _first_present(item, [("score1",), ("team1_score",), ("score", "team1"), ("result", "score1")])
     score2 = _first_present(item, [("score2",), ("team2_score",), ("score", "team2"), ("result", "score2")])
-    try:
-        score1 = int(score1) if score1 is not None else None
-        score2 = int(score2) if score2 is not None else None
-    except (TypeError, ValueError):
-        score1 = score2 = None
+    score1 = _optional_int(score1)
+    score2 = _optional_int(score2)
 
     tournament = _first_present(item, [("tournament_name",), ("event", "name"), ("tournament", "name"), ("league", "name")])
     raw_id = _first_present(item, [("id",), ("match_id",), ("slug",)])
@@ -151,29 +169,24 @@ def _normalize_item(item: dict) -> MatchNormalized | None:
         score1=score1,
         score2=score2,
         maps=_normalize_games(item),
-        date=display_date,
-        start_date=start_date,
-        end_date=end_date,
+        date=_optional_str(display_date),
+        start_date=_optional_str(start_date),
+        end_date=_optional_str(end_date),
         is_lan=_first_present(item, [("is_lan",), ("event", "is_lan")]),
         location=_first_present(item, [("location",), ("event", "location")]),
-        prize_pool_usd=_first_present(
-            item,
-            [
-                ("prize_pool_usd",),
-                ("event", "prize_pool_usd"),
-                ("tournament", "prize_pool_usd"),
-                ("tournament", "prize"),
-            ],
+        prize_pool_usd=_optional_int(
+            _first_present(
+                item,
+                [
+                    ("prize_pool_usd",),
+                    ("event", "prize_pool_usd"),
+                    ("tournament", "prize_pool_usd"),
+                    ("tournament", "prize"),
+                ],
+            )
         ),
         operator=_first_present(item, [("operator",), ("event", "operator")]),
     )
-
-
-async def _call_maybe_async(func, *args, **kwargs):
-    result = func(*args, **kwargs)
-    if inspect.isawaitable(result):
-        return await result
-    return result
 
 
 def _normalize_raw_matches(data) -> list[MatchNormalized]:
@@ -182,7 +195,7 @@ def _normalize_raw_matches(data) -> list[MatchNormalized]:
     else:
         raw_matches = data
 
-    if not isinstance(raw_matches, Iterable):
+    if not isinstance(raw_matches, Iterable) or isinstance(raw_matches, (str, bytes)):
         logger.warning("source=cs2api unexpected_response_type=%s", type(raw_matches).__name__)
         return []
 
@@ -191,53 +204,18 @@ def _normalize_raw_matches(data) -> list[MatchNormalized]:
         if not isinstance(item, dict):
             logger.debug("Skipping cs2api non-dict item type=%s", type(item).__name__)
             continue
-        normalized = _normalize_item(item)
+        try:
+            normalized = _normalize_item(item)
+        except (ValidationError, TypeError, ValueError) as exc:
+            logger.warning(
+                "source=cs2api item_invalid error_type=%s keys=%s",
+                type(exc).__name__,
+                sorted(item.keys()),
+            )
+            continue
         if normalized:
             matches.append(normalized)
     return matches
-
-
-async def _fetch_via_cs2api_library(limit: int = 30) -> list[MatchNormalized]:
-    try:
-        import cs2api  # type: ignore
-    except Exception as exc:
-        raise SourceUnavailableError(f"cs2api import failed: {exc}") from exc
-
-    try:
-        client = getattr(cs2api, "Client", None) or getattr(cs2api, "CS2", None)
-        api = None
-        if client is not None:
-            api = client()
-            fetcher = (
-                getattr(api, "finished", None)
-                or getattr(api, "finished_matches", None)
-                or getattr(api, "get_finished_matches", None)
-                or getattr(api, "matches", None)
-            )
-        else:
-            fetcher = (
-                getattr(cs2api, "finished", None)
-                or getattr(cs2api, "finished_matches", None)
-                or getattr(cs2api, "get_finished_matches", None)
-                or getattr(cs2api, "matches", None)
-            )
-        if fetcher is None:
-            raise SourceUnavailableError("cs2api has no known finished match method")
-
-        try:
-            data = await _call_maybe_async(fetcher, limit=limit)
-        except TypeError:
-            data = await _call_maybe_async(fetcher)
-        finally:
-            close = getattr(api, "close", None) if api is not None else None
-            if close is not None:
-                await _call_maybe_async(close)
-    except SourceUnavailableError:
-        raise
-    except Exception as exc:
-        raise SourceUnavailableError(f"cs2api request failed: {exc}") from exc
-
-    return _normalize_raw_matches(data)
 
 
 async def _fetch_via_bo3_http() -> list[MatchNormalized]:
@@ -250,10 +228,15 @@ async def _fetch_via_bo3_http() -> list[MatchNormalized]:
     }
     try:
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            async with session.get(BO3_MATCHES_URL, params=BO3_FINISHED_MATCHES_PARAMS) as response:
-                if response.status >= 400:
+            async with session.get(
+                BO3_MATCHES_URL,
+                params=BO3_FINISHED_MATCHES_PARAMS,
+                allow_redirects=False,
+            ) as response:
+                if response.status >= 300:
                     raise SourceUnavailableError(f"BO3.gg returned HTTP {response.status}")
-                data = await response.json()
+                raw = await read_limited_response(response, MAX_SOURCE_RESPONSE_BYTES, "BO3.gg")
+                data = json.loads(raw)
     except SourceUnavailableError:
         raise
     except Exception as exc:
@@ -263,20 +246,6 @@ async def _fetch_via_bo3_http() -> list[MatchNormalized]:
 
 
 async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
-    errors: list[str] = []
-    for fetcher_name, fetcher in (
-        ("cs2api_library", lambda: _fetch_via_cs2api_library(limit=limit)),
-        ("bo3_http", _fetch_via_bo3_http),
-    ):
-        try:
-            matches = await fetcher()
-            logger.info("source=cs2api adapter=%s normalized=%s", fetcher_name, len(matches))
-            if matches:
-                return matches[:limit]
-        except SourceUnavailableError as exc:
-            errors.append(f"{fetcher_name}: {exc}")
-            logger.warning("source=cs2api adapter=%s status=unavailable error=%s", fetcher_name, exc)
-
-    if errors:
-        raise SourceUnavailableError("; ".join(errors))
-    return []
+    matches = await _fetch_via_bo3_http()
+    logger.info("source=cs2api adapter=bo3_http normalized=%s", len(matches))
+    return matches[:limit]

@@ -5,15 +5,6 @@ import os
 from pathlib import Path
 
 
-DEFAULT_KNOWN_TIER1_OPERATORS = [
-    "ESL",
-    "IEM",
-    "PGL",
-    "BLAST",
-    "Esports World Cup",
-    "FISSURE",
-]
-
 DEFAULT_TIER1_TOURNAMENT_PATTERNS = [
     "IEM",
     "ESL Pro League",
@@ -64,18 +55,49 @@ def _list_setting(name: str, default: list[str]) -> list[str]:
     return value
 
 
-KNOWN_TIER1_OPERATORS = _list_setting("known_operators", DEFAULT_KNOWN_TIER1_OPERATORS)
+def _int_setting(name: str, default: int, minimum: int = 1, config_name: str | None = None) -> int:
+    raw = TIER1_FILTER_CONFIG.get(config_name or name, os.getenv(name, str(default)))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
+    return value
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "n"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
 TIER1_TOURNAMENT_PATTERNS = _list_setting("tournament_patterns", DEFAULT_TIER1_TOURNAMENT_PATTERNS)
 ONLINE_LOCATION_MARKERS = _list_setting("online_location_markers", DEFAULT_ONLINE_LOCATION_MARKERS)
-TIER1_PRIZE_POOL_THRESHOLD_USD = int(
-    TIER1_FILTER_CONFIG.get("prize_pool_threshold_usd", os.getenv("TIER1_PRIZE_POOL_THRESHOLD_USD", "500000"))
+TIER1_PRIZE_POOL_THRESHOLD_USD = _int_setting(
+    "TIER1_PRIZE_POOL_THRESHOLD_USD",
+    500000,
+    config_name="prize_pool_threshold_usd",
 )
 
 MATCH_SOURCE = os.getenv("MATCH_SOURCE", "auto")
-ENABLE_HLTV_FALLBACK = os.getenv("ENABLE_HLTV_FALLBACK", "1") not in {"0", "false", "False"}
-REQUEST_TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15"))
+if MATCH_SOURCE not in {"auto", "cs2api", "hltv"}:
+    raise ValueError("MATCH_SOURCE must be auto, cs2api, or hltv")
+
+ENABLE_HLTV_FALLBACK = _bool_env("ENABLE_HLTV_FALLBACK", True)
+ALLOW_STALE_IN_DRY_RUN = _bool_env("ALLOW_STALE_IN_DRY_RUN", True)
+REQUEST_TIMEOUT_SECONDS = _int_setting("REQUEST_TIMEOUT_SECONDS", 15)
 DISPLAY_TIMEZONE = os.getenv("DISPLAY_TIMEZONE", "Europe/Berlin")
-MAX_SOURCE_STALENESS_HOURS = int(os.getenv("MAX_SOURCE_STALENESS_HOURS", "48"))
+MAX_SOURCE_STALENESS_HOURS = _int_setting("MAX_SOURCE_STALENESS_HOURS", 48)
+MAX_SOURCE_FUTURE_SKEW_HOURS = _int_setting("MAX_SOURCE_FUTURE_SKEW_HOURS", 6)
+DELIVERY_CLAIM_TTL_SECONDS = _int_setting("DELIVERY_CLAIM_TTL_SECONDS", 300, minimum=30)
+MAX_SOURCE_RESPONSE_BYTES = _int_setting("MAX_SOURCE_RESPONSE_BYTES", 5_000_000, minimum=100_000)
 
 OBJECT_STORAGE_BUCKET = os.getenv("OBJECT_STORAGE_BUCKET")
 OBJECT_STORAGE_ENDPOINT = os.getenv("OBJECT_STORAGE_ENDPOINT", "https://storage.yandexcloud.net")

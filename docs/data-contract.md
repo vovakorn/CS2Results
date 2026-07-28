@@ -14,7 +14,8 @@
 - заполняет `start_date`, `end_date`, `date` и `maps`, если источник отдаёт эти поля;
 - отбрасывает невалидные матчи;
 - применяет Tier-1 LAN фильтр;
-- логирует свежесть источника через `source_fresh`, `source_stale` или `source_freshness_unknown`;
+- логирует свежесть источника через `source_fresh`, `source_stale`, `source_future_timestamp` или `source_freshness_unknown`;
+- не возвращает stale/undated данные для production-публикации;
 - проверяет дедупликацию, если вызывающий слой просит `check_processed=True`.
 
 Он не делает:
@@ -32,7 +33,8 @@
 
 - получает матчи через `get_new_finished_matches(..., check_processed=False)`;
 - применяет фильтры каналов по командам;
-- проверяет per-channel дедупликацию;
+- атомарно резервирует per-channel доставку через conditional Object Storage write;
+- проверяет новые канонические и старые source-specific ключи дедупликации;
 - отправляет сообщение в Telegram;
 - помечает конкретный канал обработанным только после успешной отправки.
 
@@ -58,35 +60,42 @@
 Data-layer может использовать общий ключ:
 
 ```text
-processed/{source}_{match_id}.json
+processed/match_v1_{fingerprint}.json
 ```
 
 Delivery-layer использует per-channel ключ:
 
 ```text
-processed/{channel}_{source}_{match_id}.json
+processed/{channel_id}_match_v1_{fingerprint}.json
 ```
 
-Это позволяет опубликовать один и тот же матч в нескольких каналах, но не повторять его в одном и том же канале.
+Fingerprint строится из даты, турнира, команд и счёта. Он не зависит от source ID и порядка команд. Если даты нет, применяется старый source-specific UID, чтобы не склеивать разные матчи по недостаточным данным.
+
+Перед отправкой создаётся lease:
+
+```text
+claims/{channel_id}_match_v1_{fingerprint}.json
+```
+
+`If-None-Match: *` и `If-Match: <etag>` не позволяют двум параллельным invocation одновременно получить один claim. Claim с истёкшим TTL можно безопасно перехватить. Старые `processed/{channel}_{source}_{match_id}.json` продолжают проверяться.
 
 ## Fallback contract
 
 В режиме `source=auto` порядок такой:
 
-1. `cs2api` library adapter.
-2. BO3.gg HTTP adapter.
-3. HLTV HTTP fallback, если `ENABLE_HLTV_FALLBACK=1`.
+1. BO3.gg HTTP adapter (`source=cs2api` для совместимости контракта).
+2. HLTV HTTP fallback, если `ENABLE_HLTV_FALLBACK=1`.
 
-Если `ENABLE_HLTV_FALLBACK=0`, явный запуск `--source hltv` всё равно разрешён, но автоматический fallback из `auto` не выполняется.
+Решение о fallback принимается после validation и freshness gate. Если `ENABLE_HLTV_FALLBACK=0`, явный запуск `--source hltv` всё равно разрешён, но stale/invalid источник в production блокируется.
 
 ## Freshness contract
 
 Свежесть источника считается по максимальной дате среди `end_date`, `date`, `start_date`.
 
-Если последний матч старше `MAX_SOURCE_STALENESS_HOURS`, модуль пишет warning:
+Если последний матч старше `MAX_SOURCE_STALENESS_HOURS`, отсутствует дата или timestamp слишком далеко в будущем, production-вызов не получает эти матчи.
 
 ```text
 event=source_stale
 ```
 
-Это не блокирует публикацию само по себе, но должно использоваться для мониторинга качества источника.
+Для диагностики stale-ответ можно увидеть только в dry-run при `ALLOW_STALE_IN_DRY_RUN=1`.

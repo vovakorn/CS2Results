@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import re
+import unicodedata
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SourceUnavailableError(Exception):
@@ -10,12 +13,16 @@ class SourceUnavailableError(Exception):
 
 
 class MapResult(BaseModel):
-    name: str
-    score1: int | None = None
-    score2: int | None = None
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=100)
+    score1: int | None = Field(default=None, ge=0, le=100)
+    score2: int | None = Field(default=None, ge=0, le=100)
 
 
 class MatchDetails(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     maps: list[MapResult] = Field(default_factory=list)
     location: str | None = None
     prize_pool_usd: int | None = None
@@ -24,35 +31,71 @@ class MatchDetails(BaseModel):
 
 
 class MatchNormalized(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, validate_assignment=True)
+
     source: Literal["cs2api", "hltv"]
-    match_id: str | None = None
-    match_url: str | None = None
+    match_id: str | None = Field(default=None, max_length=200)
+    match_url: str | None = Field(default=None, max_length=2048)
 
-    tournament_name: str
-    team1_name: str
-    team2_name: str
+    tournament_name: str = Field(min_length=1, max_length=300)
+    team1_name: str = Field(min_length=1, max_length=200)
+    team2_name: str = Field(min_length=1, max_length=200)
 
-    score1: int | None
-    score2: int | None
+    score1: int | None = Field(ge=0, le=100)
+    score2: int | None = Field(ge=0, le=100)
 
-    maps: list[MapResult] = Field(default_factory=list)
+    maps: list[MapResult] = Field(default_factory=list, max_length=10)
 
-    date: str | None = None
-    start_date: str | None = None
-    end_date: str | None = None
+    date: str | None = Field(default=None, max_length=100)
+    start_date: str | None = Field(default=None, max_length=100)
+    end_date: str | None = Field(default=None, max_length=100)
     is_lan: bool | None = None
-    location: str | None = None
-    prize_pool_usd: int | None = None
-    operator: str | None = None
+    location: str | None = Field(default=None, max_length=300)
+    prize_pool_usd: int | None = Field(default=None, ge=0, le=10_000_000_000)
+    operator: str | None = Field(default=None, max_length=200)
 
     is_tier1_lan: bool = False
-    filter_reason: str | None = None
+    filter_reason: str | None = Field(default=None, max_length=200)
+
+    @staticmethod
+    def _identity_part(value: str | None) -> str:
+        normalized = unicodedata.normalize("NFKC", value or "").casefold()
+        return re.sub(r"\W+", " ", normalized, flags=re.UNICODE).strip()
 
     @property
-    def match_uid(self) -> str:
+    def legacy_match_uid(self) -> str:
+        """Return the source-specific UID used by deployments before canonical IDs."""
         if self.match_id:
             return f"{self.source}_{self.match_id}"
         if self.match_url:
             safe_url = self.match_url.rstrip("/").split("/")[-1]
             return f"{self.source}_{safe_url}"
         raise ValueError("match_id or match_url is required")
+
+    @property
+    def canonical_match_uid(self) -> str:
+        """Return a stable cross-source fingerprint when the source data permits it."""
+        match_datetime = self.end_date or self.date or self.start_date
+        match_day = match_datetime[:10] if match_datetime and len(match_datetime) >= 10 else ""
+        if not match_day:
+            return self.legacy_match_uid
+
+        team_scores = sorted(
+            (
+                (self._identity_part(self.team1_name), self.score1),
+                (self._identity_part(self.team2_name), self.score2),
+            )
+        )
+        identity = "|".join(
+            [
+                match_day,
+                self._identity_part(self.tournament_name),
+                *(f"{team}:{score if score is not None else ''}" for team, score in team_scores),
+            ]
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        return f"match_v1_{digest}"
+
+    @property
+    def match_uid(self) -> str:
+        return self.canonical_match_uid

@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 
 from .config import (
-    KNOWN_TIER1_OPERATORS,
     ONLINE_LOCATION_MARKERS,
     TIER1_PRIZE_POOL_THRESHOLD_USD,
     TIER1_TOURNAMENT_PATTERNS,
@@ -51,30 +50,27 @@ def detect_operator(tournament_name: str) -> str | None:
 
 
 def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
-    operator = match.operator or detect_operator(match.tournament_name)
     location = match.location or ""
     location_lower = location.casefold()
 
-    if any(marker in location_lower for marker in ONLINE_LOCATION_MARKERS):
+    if match.is_lan is False:
+        lan_confirmed = False
+        lan_reason = "explicitly_not_lan"
+    elif match.is_lan is True:
+        lan_confirmed = True
+        lan_reason = None
+    elif any(marker in location_lower for marker in ONLINE_LOCATION_MARKERS):
         lan_confirmed = False
         lan_reason = "online_location"
     elif location.strip():
         lan_confirmed = True
         lan_reason = None
-    elif _contains_pattern(match.tournament_name, TIER1_TOURNAMENT_PATTERNS):
-        lan_confirmed = True
-        lan_reason = None
-    elif operator in KNOWN_TIER1_OPERATORS:
-        lan_confirmed = True
-        lan_reason = None
     else:
         lan_confirmed = False
-        lan_reason = "missing_location_and_prize_pool"
+        lan_reason = "lan_unconfirmed"
 
     tier1_confirmed = False
     if match.prize_pool_usd is not None and match.prize_pool_usd >= TIER1_PRIZE_POOL_THRESHOLD_USD:
-        tier1_confirmed = True
-    elif operator in KNOWN_TIER1_OPERATORS:
         tier1_confirmed = True
     elif _contains_pattern(match.tournament_name, TIER1_TOURNAMENT_PATTERNS):
         tier1_confirmed = True

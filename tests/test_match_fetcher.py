@@ -81,6 +81,81 @@ def test_auto_raises_when_cs2api_unavailable_and_fallback_disabled(monkeypatch):
         asyncio.run(match_fetcher.get_new_finished_matches(source="auto", dry_run=True))
 
 
+def test_auto_falls_back_when_primary_is_stale_in_production(monkeypatch):
+    calls = []
+    recent = datetime.now(timezone.utc).isoformat()
+
+    async def fake_fetch(source, limit):
+        calls.append(source)
+        match = _match(source=source, match_id="1" if source == "cs2api" else "2")
+        match.end_date = "2000-01-01T00:00:00Z" if source == "cs2api" else recent
+        return [match]
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+
+    used_source, matches = asyncio.run(
+        match_fetcher._choose_source("auto", 10, require_fresh=True)
+    )
+
+    assert used_source == "hltv"
+    assert matches[0].source == "hltv"
+    assert calls == ["cs2api", "hltv"]
+
+
+def test_auto_never_returns_stale_primary_when_fallback_fails(monkeypatch):
+    async def fake_fetch(source, limit):
+        if source == "hltv":
+            raise SourceUnavailableError("blocked")
+        match = _match()
+        match.end_date = "2000-01-01T00:00:00Z"
+        return [match]
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+
+    with pytest.raises(SourceUnavailableError, match="no usable match source"):
+        asyncio.run(match_fetcher._choose_source("auto", 10, require_fresh=True))
+
+
+def test_auto_falls_back_when_primary_has_no_valid_matches(monkeypatch):
+    recent = datetime.now(timezone.utc).isoformat()
+
+    async def fake_fetch(source, limit):
+        match = _match(source=source, match_id="1" if source == "cs2api" else "2")
+        match.end_date = recent
+        if source == "cs2api":
+            match.score1 = None
+        return [match]
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+
+    used_source, _ = asyncio.run(
+        match_fetcher._choose_source("auto", 10, require_fresh=True)
+    )
+    assert used_source == "hltv"
+
+
+def test_production_drops_stale_matches_even_when_source_has_recent_data(monkeypatch):
+    stale_tier1 = _match(match_id="old")
+    stale_tier1.end_date = "2000-01-01T00:00:00Z"
+    recent_non_tier1 = _match(match_id="new", tournament_name="Regional Finals")
+    recent_non_tier1.end_date = datetime.now(timezone.utc).isoformat()
+
+    async def fake_fetch(source, limit):
+        return [stale_tier1, recent_non_tier1]
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+
+    matches = asyncio.run(
+        match_fetcher.get_new_finished_matches(
+            source="cs2api",
+            dry_run=False,
+            check_processed=False,
+        )
+    )
+
+    assert matches == []
+
+
 def test_include_filtered_returns_filtered_reason(monkeypatch):
     async def fake_fetch(source, limit):
         return [_match(source="hltv", tournament_name="Regional Finals")]
@@ -125,3 +200,20 @@ def test_log_source_freshness_accepts_recent_match(monkeypatch, caplog):
     assert fresh is True
     assert age_hours == 1
     assert "event=source_fresh" in caplog.text
+
+
+def test_log_source_freshness_rejects_future_timestamp(monkeypatch, caplog):
+    monkeypatch.setattr(match_fetcher.source_config, "MAX_SOURCE_FUTURE_SKEW_HOURS", 6)
+    match = _match()
+    match.end_date = "2026-05-29T10:00:00Z"
+
+    with caplog.at_level(logging.WARNING):
+        fresh, age_hours = match_fetcher.log_source_freshness(
+            "cs2api",
+            [match],
+            now=datetime(2026, 5, 28, 10, 0, tzinfo=timezone.utc),
+        )
+
+    assert fresh is False
+    assert age_hours == -24
+    assert "event=source_future_timestamp" in caplog.text

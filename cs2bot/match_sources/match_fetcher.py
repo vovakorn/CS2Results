@@ -11,7 +11,7 @@ from typing import Literal
 from . import config as source_config
 from .filters import is_tier1_lan, is_valid_match
 from .models import MatchNormalized, SourceUnavailableError
-from .storage import channel_match_uid, is_processed, mark_channel_processed
+from .storage import is_channel_processed, is_match_processed, mark_channel_processed
 
 SourceName = Literal["auto", "cs2api", "hltv"]
 
@@ -28,30 +28,70 @@ async def _fetch_from_source(source: Literal["cs2api", "hltv"], limit: int) -> l
     return await hltv_results_source.fetch_finished_matches(limit=limit)
 
 
-async def _choose_source(source: SourceName, limit: int) -> tuple[str, list[MatchNormalized]]:
+def _source_is_usable(
+    source: str,
+    matches: list[MatchNormalized],
+    require_fresh: bool,
+) -> tuple[bool, str]:
+    if not matches:
+        logger.warning("source=%s status=empty", source)
+        return False, "empty"
+    valid_matches = [match for match in matches if is_valid_match(match)[0]]
+    if not valid_matches:
+        logger.warning("source=%s status=invalid reason=no_valid_matches", source)
+        return False, "invalid"
+
+    fresh, _ = log_source_freshness(source, valid_matches)
+    if require_fresh and not fresh:
+        return False, "stale_or_undated"
+    return True, "usable"
+
+
+async def _choose_source(
+    source: SourceName,
+    limit: int,
+    require_fresh: bool = True,
+) -> tuple[str, list[MatchNormalized]]:
     if source in {"cs2api", "hltv"}:
         matches = await _fetch_from_source(source, limit)
         logger.info("source=%s fetched=%s", source, len(matches))
+        usable, reason = _source_is_usable(source, matches, require_fresh=require_fresh)
+        if not usable and (require_fresh or reason != "empty"):
+            raise SourceUnavailableError(f"{source} is not usable: {reason}")
         return source, matches
 
+    primary_error: str | None = None
     try:
         matches = await _fetch_from_source("cs2api", limit)
         logger.info("source=cs2api fetched=%s", len(matches))
-        if matches:
+        usable, reason = _source_is_usable("cs2api", matches, require_fresh=require_fresh)
+        if usable:
             return "cs2api", matches
+        primary_error = reason
         if not source_config.ENABLE_HLTV_FALLBACK:
-            logger.warning("source=cs2api status=empty fallback=disabled")
-            return "cs2api", []
-        logger.warning("source=cs2api status=empty fallback=hltv")
+            logger.warning("source=cs2api status=%s fallback=disabled", reason)
+            if require_fresh:
+                raise SourceUnavailableError(f"cs2api is not usable: {reason}")
+            return "cs2api", matches
+        logger.warning("source=cs2api status=%s fallback=hltv", reason)
     except SourceUnavailableError as exc:
+        primary_error = str(exc)
         if not source_config.ENABLE_HLTV_FALLBACK:
             logger.warning("source=cs2api status=unavailable fallback=disabled error=%s", exc)
             raise
         logger.warning("source=cs2api status=unavailable fallback=hltv error=%s", exc)
 
-    matches = await _fetch_from_source("hltv", limit)
-    logger.info("source=hltv fetched=%s", len(matches))
-    return "hltv", matches
+    try:
+        matches = await _fetch_from_source("hltv", limit)
+        logger.info("source=hltv fetched=%s", len(matches))
+        usable, reason = _source_is_usable("hltv", matches, require_fresh=require_fresh)
+        if not usable and (require_fresh or reason != "empty"):
+            raise SourceUnavailableError(f"hltv is not usable: {reason}")
+        return "hltv", matches
+    except SourceUnavailableError as exc:
+        raise SourceUnavailableError(
+            f"no usable match source; cs2api={primary_error or 'unavailable'}; hltv={exc}"
+        ) from exc
 
 
 def _parse_match_datetime(value: str | None) -> datetime | None:
@@ -75,6 +115,21 @@ def latest_match_datetime(matches: list[MatchNormalized]) -> datetime | None:
     return max(parsed_dates) if parsed_dates else None
 
 
+def is_match_fresh(match: MatchNormalized, now: datetime | None = None) -> bool:
+    parsed = _parse_match_datetime(match.end_date or match.date or match.start_date)
+    if parsed is None:
+        return False
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    age_hours = (reference.astimezone(timezone.utc) - parsed).total_seconds() / 3600
+    return (
+        -source_config.MAX_SOURCE_FUTURE_SKEW_HOURS
+        <= age_hours
+        <= source_config.MAX_SOURCE_STALENESS_HOURS
+    )
+
+
 def log_source_freshness(
     source: str,
     matches: list[MatchNormalized],
@@ -88,7 +143,17 @@ def log_source_freshness(
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)
-    age_hours = max((reference.astimezone(timezone.utc) - latest).total_seconds() / 3600, 0)
+    age_hours = (reference.astimezone(timezone.utc) - latest).total_seconds() / 3600
+    if age_hours < -source_config.MAX_SOURCE_FUTURE_SKEW_HOURS:
+        logger.warning(
+            "event=source_future_timestamp source=%s latest_match_at=%s skew_hours=%.1f threshold_hours=%s",
+            source,
+            latest.isoformat().replace("+00:00", "Z"),
+            abs(age_hours),
+            source_config.MAX_SOURCE_FUTURE_SKEW_HOURS,
+        )
+        return False, age_hours
+
     is_fresh = age_hours <= source_config.MAX_SOURCE_STALENESS_HOURS
     log_method = logger.info if is_fresh else logger.warning
     log_method(
@@ -134,24 +199,38 @@ async def get_new_finished_matches(
     include_filtered: bool = False,
     check_processed: bool = True,
 ) -> list[MatchNormalized]:
-    selected_source = source or os.getenv("MATCH_SOURCE", "auto")
+    selected_source = source or source_config.MATCH_SOURCE
     if selected_source not in {"auto", "cs2api", "hltv"}:
         raise ValueError("--source must be auto, cs2api, or hltv")
 
     logger.info("match_fetcher start source=%s limit=%s dry_run=%s", selected_source, limit, dry_run)
-    used_source, fetched = await _choose_source(selected_source, limit)
-    if fetched:
-        log_source_freshness(used_source, fetched)
+    fetch_limit = min(max(limit * 3, limit), 100)
+    require_fresh = not (dry_run and source_config.ALLOW_STALE_IN_DRY_RUN)
+    used_source, fetched = await _choose_source(
+        selected_source,
+        fetch_limit,
+        require_fresh=require_fresh,
+    )
+    if require_fresh:
+        fresh_matches = [match for match in fetched if is_match_fresh(match)]
+        dropped = len(fetched) - len(fresh_matches)
+        if dropped:
+            logger.warning(
+                "event=stale_matches_dropped source=%s dropped=%s",
+                used_source,
+                dropped,
+            )
+        fetched = fresh_matches
     filtered, valid_matches, tier1_lan_count = apply_quality_filters(fetched, include_filtered=include_filtered)
 
     new_matches: list[MatchNormalized] = []
-    for match in filtered:
+    for match in filtered[:limit]:
         if not match.is_tier1_lan and not include_filtered:
             continue
         if dry_run or not check_processed:
             new_matches.append(match)
             continue
-        if await is_processed(match.match_uid):
+        if await is_match_processed(match):
             continue
         new_matches.append(match)
 
@@ -178,8 +257,7 @@ async def _filter_unprocessed_for_channels(
     new_matches: list[MatchNormalized] = []
     for match in matches:
         for channel_name in channel_names:
-            uid = channel_match_uid(match, channel_name)
-            if not await is_processed(uid):
+            if not await is_channel_processed(match, channel_name):
                 new_matches.append(match)
                 break
     return new_matches

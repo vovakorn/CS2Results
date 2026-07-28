@@ -2,7 +2,7 @@
 
 Телеграм-бот и MVP-модуль данных для получения результатов завершённых матчей CS2.
 
-Модуль `cs2bot.match_sources` получает нормализованные результаты из бесплатного основного источника `cs2api` / BO3.gg и использует `https://www.hltv.org/results` как HTTP fallback. Handler Cloud Functions использует этот data-layer, отправляет новые матчи в Telegram и помечает их обработанными только после успешной публикации.
+Модуль `cs2bot.match_sources` получает нормализованные результаты из бесплатного основного источника `cs2api` / BO3.gg и использует `https://www.hltv.org/results` как HTTP fallback. Перед публикацией handler проверяет валидность и свежесть источника, резервирует доставку атомарным Object Storage claim и помечает её завершённой только после успешной отправки.
 
 ## Переменные окружения
 | Название | Описание |
@@ -13,13 +13,17 @@
 | `AWS_SECRET_ACCESS_KEY` | Secret key сервисного аккаунта для Object Storage. |
 | `OBJECT_STORAGE_BUCKET` | Bucket для дедупликации обработанных матчей. |
 | `OBJECT_STORAGE_ENDPOINT` | Endpoint Object Storage, по умолчанию `https://storage.yandexcloud.net`. |
-| `CHANNELS_JSON` | JSON-массив каналов, если нужно больше одного канала или фильтр по командам. |
-| `BOT_MODE` | `production` или `debug`. В `debug` можно видеть отфильтрованные матчи. |
+| `CHANNELS_JSON` | JSON-массив каналов. Поле `id` — стабильный идентификатор дедупликации, который не следует менять при переименовании канала. |
+| `BOT_MODE` | `production` или `debug`. Отфильтрованные матчи доступны только вместе с `dry_run=true`. |
 | `TIER1_FILTER_CONFIG_JSON` | JSON-конфиг Tier-1 LAN фильтра без изменения кода. |
 | `TIER1_FILTER_CONFIG_PATH` | Путь к JSON-файлу Tier-1 LAN фильтра, по умолчанию `tier1_filter.json`. |
 | `ENABLE_HLTV_FALLBACK` | `1` включает HLTV fallback в режиме `auto`, `0` отключает автоматический fallback. |
 | `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Berlin`. |
-| `MAX_SOURCE_STALENESS_HOURS` | Порог свежести источника для warning-лога, по умолчанию `48`. |
+| `MAX_SOURCE_STALENESS_HOURS` | Максимальный возраст источника для production-публикации, по умолчанию `48`. |
+| `MAX_SOURCE_FUTURE_SKEW_HOURS` | Допустимое отклонение даты источника в будущее, по умолчанию `6`. |
+| `ALLOW_STALE_IN_DRY_RUN` | Разрешает показывать stale-данные только в dry-run, по умолчанию `1`. |
+| `DELIVERY_CLAIM_TTL_SECONDS` | Срок lease атомарного delivery claim, по умолчанию `300`. |
+| `MAX_SOURCE_RESPONSE_BYTES` | Максимальный размер ответа внешнего источника, по умолчанию `5000000`. |
 
 Опционально:
 
@@ -31,14 +35,17 @@ DISPLAY_TIMEZONE=Europe/Berlin
 BOT_MODE=production
 TIER1_PRIZE_POOL_THRESHOLD_USD=500000
 MAX_SOURCE_STALENESS_HOURS=48
+MAX_SOURCE_FUTURE_SKEW_HOURS=6
+DELIVERY_CLAIM_TTL_SECONDS=300
+MAX_SOURCE_RESPONSE_BYTES=5000000
 ```
 
 Пример `CHANNELS_JSON`:
 
 ```json
 [
-  {"name": "global", "chat_id": "@cs2_results", "teams": null},
-  {"name": "navi", "chat_id": "@navi_results", "teams": ["NAVI", "Natus Vincere"]}
+  {"id": "global", "name": "global", "chat_id": "@cs2_results", "teams": null},
+  {"id": "navi", "name": "NAVI", "chat_id": "@navi_results", "teams": ["NAVI", "Natus Vincere"]}
 ]
 ```
 
@@ -46,7 +53,6 @@ MAX_SOURCE_STALENESS_HOURS=48
 
 ```json
 {
-  "known_operators": ["ESL", "IEM", "PGL", "BLAST"],
   "tournament_patterns": ["IEM", "ESL Pro League", "Major"],
   "online_location_markers": ["online", "remote"],
   "prize_pool_threshold_usd": 500000
@@ -58,7 +64,7 @@ MAX_SOURCE_STALENESS_HOURS=48
 Установите зависимости:
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 ```
 
 Dry-run без записи в Object Storage:
@@ -89,10 +95,11 @@ python -m cs2bot.match_sources.match_fetcher --source auto --limit 10 --channel 
 
 `--mark-processed` требует хотя бы один `--channel`, чтобы CLI использовал те же per-channel ключи, что и Telegram handler. `--channel` можно повторять.
 
-Дедупликация Telegram-публикаций хранит каждую публикацию отдельным объектом. Это важно для нескольких каналов: один и тот же матч может быть опубликован в `global` и в командный канал, но не будет повторён в одном и том же канале.
+Дедупликация использует source-independent fingerprint, поэтому переключение BO3.gg ↔ HLTV не должно повторно публиковать тот же матч. Для совместимости также проверяются старые source-specific ключи.
 
 ```text
-processed/{channel}_{source}_{match_id}.json
+claims/{channel_id}_match_v1_{fingerprint}.json
+processed/{channel_id}_match_v1_{fingerprint}.json
 ```
 
 HLTV fallback в MVP не использует Playwright, Selenium или Camoufox. Если HLTV отдаёт 403 или меняет HTML, ошибка логируется контролируемо. Browser fallback оставлен как отдельный placeholder `hltv_browser_source.py`; если он понадобится, его лучше запускать отдельным контейнерным сервисом, а не внутри Cloud Functions.
@@ -100,7 +107,7 @@ HLTV fallback в MVP не использует Playwright, Selenium или Camou
 ## Режимы работы
 
 - `production`: публикуются только матчи, прошедшие Tier-1 LAN фильтр.
-- `debug`: можно включить `include_filtered`, чтобы увидеть матчи с `filter_reason`.
+- `debug`: можно включить `include_filtered`, чтобы увидеть матчи с `filter_reason`, но только при `dry_run=true`.
 - `dry_run`: ничего не отправляет в Telegram и не пишет в Object Storage.
 
 Пример события для ручного запуска Cloud Function:
@@ -117,12 +124,9 @@ HLTV fallback в MVP не использует Playwright, Selenium или Camou
 
 ## Источники данных
 
-Primary source `cs2api` использует два адаптера:
+Primary source с внутренним именем `cs2api` использует контролируемый прямой HTTP-запрос к BO3.gg API. Сторонний Python-wrapper удалён: он обращался к тому же upstream и не обеспечивал независимый fallback.
 
-1. установленную библиотеку `cs2api`;
-2. прямой HTTP-запрос к BO3.gg API, если библиотека недоступна, изменила интерфейс или вернула пустой результат.
-
-Если оба адаптера не дали данные, `auto` переключается на HLTV HTTP fallback только при `ENABLE_HLTV_FALLBACK=1`. Явный запуск `--source hltv` доступен независимо от этого флага. HLTV может вернуть `403`, поэтому browser fallback вынесен в отдельный placeholder и не добавлен в зависимости Cloud Functions.
+Если BO3.gg вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на HLTV HTTP fallback при `ENABLE_HLTV_FALLBACK=1`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует. Явный запуск `--source hltv` доступен независимо от флага.
 
 Для BO3.gg адаптер нормализует `start_date`, `end_date`, `date`, `tournament.prize` и карты из `games`, когда эти поля доступны. `date` остаётся совместимым полем для отображения, а `start_date` / `end_date` позволяют точнее проверять свежесть данных.
 
@@ -134,10 +138,13 @@ Primary source `cs2api` использует два адаптера:
 - `handler_complete`
 - `fetch_failed`
 - `publish_failed`
-- `duplicate_skipped`
+- `duplicate_or_inflight_skipped`
+- `delivery_claim_failed`
+- `delivery_state_failed`
 - `source_fresh`
 - `source_stale`
 - `source_freshness_unknown`
+- `source_future_timestamp`
 
 Ответ handler содержит поле `metrics`:
 
@@ -147,6 +154,7 @@ Primary source `cs2api` использует два адаптера:
   "messages_sent": 1,
   "duplicates_skipped": 0,
   "filtered_skipped": 2,
+  "delivery_failures": 0,
   "channels": {"global": 1}
 }
 ```
@@ -157,7 +165,7 @@ Primary source `cs2api` использует два адаптера:
 - `publish_failed > 0`;
 - `messages_sent = 0` долгое время при наличии `matches_received > 0`;
 - рост ошибок Object Storage;
-- `source_stale`, если последний матч старше `MAX_SOURCE_STALENESS_HOURS`;
+- `source_stale` или `source_future_timestamp`;
 - частый `HLTV returned HTTP 403`, если fallback становится критичным.
 
 ## Структура проекта
@@ -190,10 +198,10 @@ tier1_filter.example.json
 ## Тесты
 
 ```bash
-pytest
+python -m pytest
 ```
 
-На GitHub добавлен workflow `.github/workflows/tests.yml`: он устанавливает зависимости, компилирует пакет и запускает pytest на Python 3.11 и 3.12 для pull request и push в `main`.
+На GitHub добавлен workflow `.github/workflows/tests.yml`: он проверяет зависимости через `pip check` и `pip-audit`, компилирует пакет, запускает pytest на Python 3.11 и 3.12 и проверяет сборку архива. Dependabot еженедельно предлагает обновления Python-пакетов и GitHub Actions.
 
 ## Развёртывание в Yandex Cloud Functions
 
@@ -203,14 +211,9 @@ pytest
 2. Настройте lifecycle policy для удаления старых объектов `processed/*` через 180-365 дней. Детали: `docs/object-storage-lifecycle.md`.
 3. Создайте сервисный аккаунт с минимальными правами чтения/записи в этот bucket.
 4. Создайте static access key для сервисного аккаунта.
-5. Соберите зависимости:
-
-```bash
-pip install -r requirements.txt -t packages/
-```
-
-6. Упакуйте `cs2bot/` и `packages/` в архив.
-7. Загрузите архив в Cloud Functions с runtime Python 3.11+.
+5. Соберите platform-independent source archive через `scripts/build_function_zip.sh`.
+6. Загрузите архив в Cloud Functions: сервис установит закреплённые зависимости из `requirements.txt`.
+7. Используйте поддерживаемый runtime Python 3.12.
 8. Укажите handler:
 
 ```text
@@ -232,13 +235,17 @@ BOT_MODE=production
 
 10. Создайте timer trigger с периодом 60 минут.
 11. Для проверки запустите функцию вручную с `dry_run=true`.
-12. После проверки отключите `dry_run` и проверьте, что объекты появляются по ключам `processed/{channel}_{source}_{match_id}.json`.
+12. После проверки отключите `dry_run` и проверьте, что объекты появляются в `claims/` и `processed/`.
+
+Функция не должна быть публичной: право invocation выдавайте только trigger/service account. Не передавайте токены и ключи внутри event payload.
 
 Можно собрать архив скриптом:
 
 ```bash
 scripts/build_function_zip.sh
 ```
+
+Не добавляйте в архив локальные `site-packages`: бинарные wheels с macOS/Windows несовместимы с Linux runtime Cloud Functions.
 
 Или создать новую версию функции через `yc`:
 

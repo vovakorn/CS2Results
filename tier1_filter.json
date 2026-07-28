@@ -1,12 +1,4 @@
 {
-  "known_operators": [
-    "ESL",
-    "IEM",
-    "PGL",
-    "BLAST",
-    "Esports World Cup",
-    "FISSURE"
-  ],
   "tournament_patterns": [
     "IEM",
     "ESL Pro League",

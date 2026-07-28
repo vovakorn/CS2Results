@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from cs2bot.match_sources.filters import detect_operator, is_tier1_lan, is_valid_match
 from cs2bot.match_sources.models import MatchNormalized
 
@@ -23,7 +26,8 @@ def test_valid_match_passes():
 
 
 def test_match_without_team_fails():
-    assert is_valid_match(_match(team1_name="")) == (False, "missing_team1")
+    with pytest.raises(ValidationError):
+        _match(team1_name="")
 
 
 def test_match_without_score_fails():
@@ -34,9 +38,24 @@ def test_iem_is_tier1_lan():
     assert is_tier1_lan(_match(tournament_name="IEM Cologne 2026")) == (True, None)
 
 
-def test_cs_asia_championships_is_tier1_lan_without_location():
+def test_tier1_event_without_lan_evidence_is_rejected():
     match = _match(tournament_name="CS Asia Championships 2026", location=None, prize_pool_usd=1000000)
+    assert is_tier1_lan(match) == (False, "lan_unconfirmed")
+
+
+def test_explicit_lan_flag_confirms_lan_without_location():
+    match = _match(
+        tournament_name="CS Asia Championships 2026",
+        location=None,
+        prize_pool_usd=1000000,
+        is_lan=True,
+    )
     assert is_tier1_lan(match) == (True, None)
+
+
+def test_explicit_not_lan_overrides_tournament_heuristics():
+    match = _match(tournament_name="IEM Online Qualifier", location=None, is_lan=False)
+    assert is_tier1_lan(match) == (False, "explicitly_not_lan")
 
 
 def test_online_cup_does_not_pass_lan_filter():
@@ -50,10 +69,20 @@ def test_prize_pool_threshold_passes_tier1():
     assert is_tier1_lan(match) == (True, None)
 
 
+def test_known_operator_alone_does_not_make_event_tier1():
+    match = _match(
+        tournament_name="Regional Challenger Finals",
+        operator="ESL",
+        location="Cologne, Germany",
+        prize_pool_usd=100000,
+    )
+    assert is_tier1_lan(match) == (False, "not_tier1")
+
+
 def test_missing_location_and_whitelist_does_not_pass_lan():
     ok, reason = is_tier1_lan(_match(tournament_name="Regional Finals", location=None, operator=None))
     assert ok is False
-    assert reason == "missing_location_and_prize_pool"
+    assert reason == "lan_unconfirmed"
 
 
 def test_known_operators_are_detected():
