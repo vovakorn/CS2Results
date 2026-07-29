@@ -20,6 +20,8 @@ and does not expose internal match IDs or filter diagnostics.
 - PandaScore failure recovery is covered by tests for Liquipedia fallback.
   Runtime fallback remains disabled until an approved Liquipedia API key is
   installed.
+- PandaScore requests use an explicit recent `begin_at` range. The API may
+  otherwise place old records with null dates before fresh finished matches.
 
 ## Cloud gate
 

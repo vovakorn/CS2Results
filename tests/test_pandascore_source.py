@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 import pytest
 
@@ -65,6 +66,17 @@ def test_pandascore_skips_unknown_best_of():
     item["number_of_games"] = 2
 
     assert pandascore_source._normalize_raw_matches([item]) == []
+
+
+def test_pandascore_recent_range_avoids_undated_records(monkeypatch):
+    monkeypatch.setattr(pandascore_source.source_config, "MAX_SOURCE_STALENESS_HOURS", 48)
+    monkeypatch.setattr(pandascore_source.source_config, "MAX_SOURCE_FUTURE_SKEW_HOURS", 6)
+
+    result = pandascore_source._recent_match_range(
+        datetime(2026, 7, 29, 14, 0, tzinfo=timezone.utc)
+    )
+
+    assert result == "2026-07-22T14:00:00Z,2026-07-29T20:00:00Z"
 
 
 def test_pandascore_requires_token(monkeypatch):
