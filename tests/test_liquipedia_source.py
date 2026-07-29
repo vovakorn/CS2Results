@@ -45,6 +45,8 @@ def test_liquipedia_normalizes_finished_offline_match():
     assert match.team1_name == "Natus Vincere"
     assert match.team2_name == "FaZe Clan"
     assert (match.score1, match.score2) == (2, 1)
+    assert match.status == "finished"
+    assert match.best_of == 3
     assert match.competition_key == "IEM Cologne 2026"
     assert match.is_lan is True
     assert match.match_url == "https://liquipedia.net/counterstrike/IEM_Cologne_2026/Playoffs"
@@ -59,6 +61,13 @@ def test_liquipedia_marks_online_match_as_not_lan():
     response["result"][0]["type"] = "online"
 
     assert liquipedia_source._normalize_raw_matches(response)[0].is_lan is False
+
+
+def test_liquipedia_skips_match_not_confirmed_finished():
+    response = _sample_response()
+    response["result"][0]["finished"] = "0"
+
+    assert liquipedia_source._normalize_raw_matches(response) == []
 
 
 def test_liquipedia_requires_api_key(monkeypatch):

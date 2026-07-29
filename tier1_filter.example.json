@@ -21,7 +21,13 @@
   ],
   "tournament_exclusion_patterns": [
     "qualifier",
-    "showmatch"
+    "showmatch",
+    "academy league"
+  ],
+  "team_exclusion_patterns": [
+    "academy",
+    "youth",
+    "junior"
   ],
   "team_aliases": {
     "natus vincere": "navi",

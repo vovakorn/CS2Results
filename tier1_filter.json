@@ -32,7 +32,15 @@
     "open qualifier",
     "closed qualifier",
     "regional qualifier",
-    "showmatch"
+    "showmatch",
+    "show match",
+    "academy league",
+    "youth league"
+  ],
+  "team_exclusion_patterns": [
+    "academy",
+    "youth",
+    "junior"
   ],
   "team_aliases": {
     "natus vincere": "navi",

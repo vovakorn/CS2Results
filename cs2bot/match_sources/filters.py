@@ -4,6 +4,7 @@ import re
 
 from .config import (
     ONLINE_LOCATION_MARKERS,
+    TEAM_EXCLUSION_PATTERNS,
     TIER1_PRIZE_POOL_THRESHOLD_USD,
     TIER1_TOURNAMENT_PATTERNS,
     TOURNAMENT_EXCLUSION_PATTERNS,
@@ -26,6 +27,20 @@ def is_valid_match(match: MatchNormalized) -> tuple[bool, str | None]:
         return False, "missing_team2"
     if match.score1 is None or match.score2 is None:
         return False, "missing_score"
+    if match.status != "finished":
+        return False, "match_not_finished"
+    if match.score1 == 0 and match.score2 == 0:
+        return False, "empty_score"
+    if match.score1 == match.score2:
+        return False, "winner_unconfirmed"
+    if match.best_of is not None:
+        wins_required = (match.best_of // 2) + 1
+        winner_score = max(match.score1, match.score2)
+        loser_score = min(match.score1, match.score2)
+        if winner_score != wins_required or loser_score >= wins_required:
+            return False, "invalid_best_of_score"
+    elif max(match.score1, match.score2) > 3:
+        return False, "implausible_series_score"
     if not match.tournament_name:
         return False, "missing_tournament"
     if not match.match_id and not match.match_url:
@@ -55,6 +70,13 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     location = match.location or ""
     location_lower = location.casefold()
     excluded = _contains_pattern(match.tournament_name, TOURNAMENT_EXCLUSION_PATTERNS)
+    excluded_team = _contains_pattern(
+        f"{match.team1_name} {match.team2_name}",
+        TEAM_EXCLUSION_PATTERNS,
+    )
+
+    if excluded_team:
+        return False, "excluded_team"
 
     if match.is_lan is False:
         lan_confirmed = False

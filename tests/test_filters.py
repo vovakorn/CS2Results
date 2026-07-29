@@ -34,6 +34,40 @@ def test_match_without_score_fails():
     assert is_valid_match(_match(score1=None)) == (False, "missing_score")
 
 
+def test_zero_zero_result_is_rejected():
+    assert is_valid_match(_match(score1=0, score2=0)) == (False, "empty_score")
+
+
+def test_tied_result_without_winner_is_rejected():
+    assert is_valid_match(_match(score1=1, score2=1)) == (False, "winner_unconfirmed")
+
+
+@pytest.mark.parametrize(
+    ("best_of", "score1", "score2"),
+    [(1, 1, 0), (3, 2, 0), (3, 2, 1), (5, 3, 0), (5, 3, 2)],
+)
+def test_valid_best_of_scores_pass(best_of, score1, score2):
+    assert is_valid_match(_match(best_of=best_of, score1=score1, score2=score2)) == (True, None)
+
+
+@pytest.mark.parametrize(
+    ("best_of", "score1", "score2"),
+    [(1, 2, 0), (3, 1, 0), (3, 3, 0), (5, 2, 1), (5, 4, 2)],
+)
+def test_invalid_best_of_scores_fail(best_of, score1, score2):
+    assert is_valid_match(_match(best_of=best_of, score1=score1, score2=score2)) == (
+        False,
+        "invalid_best_of_score",
+    )
+
+
+def test_implausible_unknown_series_score_is_rejected():
+    assert is_valid_match(_match(score1=13, score2=11)) == (
+        False,
+        "implausible_series_score",
+    )
+
+
 def test_iem_is_tier1_lan():
     assert is_tier1_lan(_match(tournament_name="IEM Cologne 2026")) == (True, None)
 
@@ -66,6 +100,12 @@ def test_trusted_lan_tournament_passes_without_location():
 def test_qualifier_is_rejected_even_if_name_contains_trusted_event():
     match = _match(tournament_name="IEM Cologne 2026 Closed Qualifier", location=None)
     assert is_tier1_lan(match) == (False, "excluded_tournament")
+
+
+@pytest.mark.parametrize("team_name", ["NAVI Academy", "Spirit Junior", "FaZe Youth"])
+def test_academy_and_youth_teams_are_rejected(team_name):
+    match = _match(team1_name=team_name)
+    assert is_tier1_lan(match) == (False, "excluded_team")
 
 
 def test_online_cup_does_not_pass_lan_filter():

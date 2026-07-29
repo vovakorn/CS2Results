@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import re
@@ -13,7 +14,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import requests
 
-from .config import BOT_MODE, CHANNELS, TELEGRAM_TOKEN
+from .config import (
+    BOT_MODE,
+    CHANNELS,
+    TELEGRAM_ADMIN_CHAT_ID,
+    TELEGRAM_SPOILERS,
+    TELEGRAM_TOKEN,
+)
 from .logging_utils import log_event
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
@@ -26,6 +33,7 @@ from .match_sources.config import (
 from .match_sources.match_fetcher import SourceName, get_new_finished_matches
 from .match_sources.models import MatchNormalized
 from .match_sources.storage import (
+    claim_admin_alert,
     claim_channel_delivery,
     mark_channel_processed,
     release_delivery_claim,
@@ -51,10 +59,51 @@ SOURCE_LABELS = {
     "cs2api": "BO3.gg",
     "hltv": "HLTV",
 }
+RUSSIAN_MONTHS = (
+    "",
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
 
 
 class TelegramDeliveryError(RuntimeError):
     """A safe Telegram failure that never contains the bot token or request URL."""
+
+
+def _notify_admin(alert_code: str, message: str) -> None:
+    """Send a rate-limited operational alert without affecting public delivery."""
+    if not TELEGRAM_ADMIN_CHAT_ID or not TELEGRAM_TOKEN:
+        log_event(logger, logging.WARNING, "admin_alert_not_configured", alert_code=alert_code)
+        return
+
+    try:
+        if OBJECT_STORAGE_BUCKET and not asyncio.run(claim_admin_alert(alert_code)):
+            log_event(logger, logging.INFO, "admin_alert_suppressed", alert_code=alert_code)
+            return
+        send_to_telegram(
+            TELEGRAM_ADMIN_CHAT_ID,
+            f"⚠️ <b>CS2 Results Bot</b>\n{html.escape(message)}",
+        )
+        log_event(logger, logging.INFO, "admin_alert_sent", alert_code=alert_code)
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "admin_alert_failed",
+            alert_code=alert_code,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
 
 
 def _safe_error_message(exc: Exception) -> str:
@@ -80,8 +129,7 @@ def send_to_telegram(
     payload = {
         "chat_id": chat_id,
         "text": text,
-        # Если захочешь HTML-разметку — добавь parse_mode="HTML"
-        # "parse_mode": "HTML",
+        "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }
     attempts = max(1, max_attempts)
@@ -155,7 +203,12 @@ def _format_display_time(value: str) -> str:
     except ZoneInfoNotFoundError:
         return value
 
-    return parsed.astimezone(timezone).strftime("%Y-%m-%d %H:%M %Z")
+    local = parsed.astimezone(timezone)
+    timezone_label = "МСК" if DISPLAY_TIMEZONE == "Europe/Moscow" else local.tzname() or ""
+    return (
+        f"{local.day} {RUSSIAN_MONTHS[local.month]} {local.year}, "
+        f"{local:%H:%M} {timezone_label}"
+    ).strip()
 
 
 def _safe_match_url(value: str, source: str) -> str:
@@ -171,7 +224,7 @@ def _safe_match_url(value: str, source: str) -> str:
 
 
 def format_match(match: Any) -> str:
-    """Convert a normalized match result into a multi-line Telegram message."""
+    """Convert a normalized match result into the final public Telegram template."""
     team1 = _get_attr(match, "team1_name") or _get_attr(match, "team1", "Team 1")
     team2 = _get_attr(match, "team2_name") or _get_attr(match, "team2", "Team 2")
     score1 = _get_attr(match, "score1")
@@ -183,28 +236,34 @@ def format_match(match: Any) -> str:
         or _get_attr(match, "start_date")
         or _get_attr(match, "time")
     )
-    match_id = _get_attr(match, "match_id")
     match_url = _get_attr(match, "match_url")
     source = _get_attr(match, "source")
-    filter_reason = _get_attr(match, "filter_reason")
-    location = _get_attr(match, "location")
     maps = getattr(match, "maps", None)
 
-    pieces: List[str] = [f"{team1} vs {team2}"]
+    safe_team1 = html.escape(team1)
+    safe_team2 = html.escape(team2)
+    safe_event = html.escape(event)
+    pieces: List[str] = []
+    if event:
+        pieces.append(f"🏆 <b>{safe_event}</b>")
+        pieces.append("")
+    pieces.append(f"⚔️ <b>{safe_team1} — {safe_team2}</b>")
     if score1 != "" and score2 != "":
-        pieces.append(f"Score: {score1}:{score2}")
+        safe_score = f"{html.escape(score1)}:{html.escape(score2)}"
         try:
             winner = team1 if int(score1) > int(score2) else team2 if int(score2) > int(score1) else ""
         except ValueError:
             winner = ""
+        if TELEGRAM_SPOILERS:
+            safe_score = f"<tg-spoiler>{safe_score}</tg-spoiler>"
+        pieces.append(f"📊 Счёт: {safe_score}")
         if winner:
-            pieces.append(f"Winner: {winner}")
-    if event:
-        pieces.append(f"Event: {event}")
+            safe_winner = html.escape(winner)
+            if TELEGRAM_SPOILERS:
+                safe_winner = f"<tg-spoiler>{safe_winner}</tg-spoiler>"
+            pieces.append(f"✅ Победитель: {safe_winner}")
     if time:
-        pieces.append(f"Date: {time}")
-    if location:
-        pieces.append(f"Location: {location}")
+        pieces.append(f"🕒 Дата: {html.escape(time)}")
     if maps:
         map_lines = []
         for item in maps:
@@ -212,20 +271,21 @@ def format_match(match: Any) -> str:
             map_score1 = _get_attr(item, "score1")
             map_score2 = _get_attr(item, "score2")
             if name and map_score1 != "" and map_score2 != "":
-                map_lines.append(f"{name} {map_score1}:{map_score2}")
+                map_lines.append(
+                    f"{html.escape(name)} {html.escape(map_score1)}:{html.escape(map_score2)}"
+                )
             elif name:
-                map_lines.append(name)
+                map_lines.append(html.escape(name))
         if map_lines:
-            pieces.append("Maps: " + ", ".join(map_lines))
-    if match_id:
-        pieces.append(f"Match ID: {match_id}")
+            pieces.append("🗺 Карты: " + ", ".join(map_lines))
     if source:
-        pieces.append(f"Source: {SOURCE_LABELS.get(source, source)}")
-    if filter_reason:
-        pieces.append(f"Filter: {filter_reason}")
-    safe_url = _safe_match_url(match_url, source)
-    if safe_url:
-        pieces.append(safe_url)
+        source_label = html.escape(SOURCE_LABELS.get(source, source))
+        safe_url = _safe_match_url(match_url, source)
+        if safe_url:
+            pieces.append(f'Источник: <a href="{html.escape(safe_url, quote=True)}">{source_label}</a>')
+        else:
+            pieces.append(f"Источник: {source_label}")
+    pieces.extend(["", "#CS2 #РезультатыМатчей"])
 
     message = "\n".join(pieces)
     if len(message) > MAX_TELEGRAM_MESSAGE_LENGTH:
@@ -350,6 +410,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 "configuration_invalid",
                 missing=missing_config,
             )
+            _notify_admin("configuration_invalid", "Конфигурация функции неполна.")
             return _error_response(503, "configuration_error")
 
     try:
@@ -370,6 +431,10 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             "fetch_failed",
             error_type=type(exc).__name__,
             error=_safe_error_message(exc),
+        )
+        _notify_admin(
+            "match_source_unavailable",
+            "Источник матчей недоступен, пуст или не обновлялся более 48 часов.",
         )
         return _error_response(502, "match_source_unavailable")
 
@@ -485,6 +550,11 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "channels": channel_stats,
     }
     log_event(logger, logging.INFO, "handler_complete", **metrics)
+    if failed_messages:
+        _notify_admin(
+            "delivery_failed",
+            f"Не доставлено сообщений: {failed_messages}. Проверьте логи функции.",
+        )
     body = {
         "requested_limit": limit,
         "matches_received": len(matches),

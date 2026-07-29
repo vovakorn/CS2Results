@@ -6,6 +6,8 @@ from botocore.exceptions import ClientError
 
 from cs2bot.match_sources.models import MatchNormalized
 from cs2bot.match_sources.storage import (
+    alert_key,
+    claim_admin_alert,
     claim_channel_delivery,
     channel_match_uid,
     is_channel_processed,
@@ -140,3 +142,12 @@ def test_delivery_claim_prevents_concurrent_publication_and_can_be_released():
     )
     assert third is not None
     assert third.claim_id != first.claim_id
+
+
+def test_admin_alert_is_claimed_only_once_per_cooldown_window():
+    s3 = FakeS3()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    assert asyncio.run(claim_admin_alert("source-down", client=s3, bucket="bucket", now=now))
+    assert not asyncio.run(claim_admin_alert("source-down", client=s3, bucket="bucket", now=now))
+    assert alert_key("source-down", now) in s3.objects

@@ -12,7 +12,12 @@ from typing import Any
 import boto3
 from botocore.exceptions import ClientError
 
-from .config import DELIVERY_CLAIM_TTL_SECONDS, OBJECT_STORAGE_BUCKET, OBJECT_STORAGE_ENDPOINT
+from .config import (
+    ALERT_COOLDOWN_SECONDS,
+    DELIVERY_CLAIM_TTL_SECONDS,
+    OBJECT_STORAGE_BUCKET,
+    OBJECT_STORAGE_ENDPOINT,
+)
 from .models import MatchNormalized
 
 logger = logging.getLogger(__name__)
@@ -48,6 +53,11 @@ def claim_key(match_uid: str) -> str:
     return f"claims/{match_uid}.json"
 
 
+def alert_key(alert_code: str, now: datetime) -> str:
+    window = int(now.timestamp()) // ALERT_COOLDOWN_SECONDS
+    return f"alerts/{safe_storage_part(alert_code)}/{window}.json"
+
+
 def safe_storage_part(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return cleaned.strip("_") or "unknown"
@@ -71,6 +81,43 @@ def _is_precondition_failed(exc: ClientError) -> bool:
     code = str(exc.response.get("Error", {}).get("Code", ""))
     status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
     return code in {"PreconditionFailed", "412", "ConditionalRequestConflict"} or status in {409, 412}
+
+
+async def claim_admin_alert(
+    alert_code: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Return True once per cooldown window so repeated failures do not spam the admin."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    reference = now or datetime.now(timezone.utc)
+    key = alert_key(alert_code, reference)
+    body = json.dumps(
+        {
+            "alert_code": alert_code,
+            "claimed_at": reference.isoformat().replace("+00:00", "Z"),
+            "cooldown_seconds": ALERT_COOLDOWN_SECONDS,
+        }
+    ).encode("utf-8")
+
+    def _put() -> None:
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=body,
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+
+    try:
+        await asyncio.to_thread(_put)
+        return True
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return False
+        raise StorageUnavailableError(f"alert claim failed for {key}") from exc
 
 
 async def is_processed(match_uid: str, client: Any | None = None, bucket: str | None = None) -> bool:

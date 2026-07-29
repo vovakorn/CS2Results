@@ -9,6 +9,8 @@ from cs2bot.match_sources.sources import pandascore_source
 def _sample_match():
     return {
         "id": 12345,
+        "status": "finished",
+        "number_of_games": 3,
         "begin_at": "2026-07-28T10:00:00Z",
         "end_at": "2026-07-28T12:10:00Z",
         "league": {"id": 1, "name": "IEM"},
@@ -35,6 +37,8 @@ def test_pandascore_normalizes_series_result_by_team_id():
     assert match.team1_name == "NAVI"
     assert match.team2_name == "FaZe"
     assert (match.score1, match.score2) == (2, 1)
+    assert match.status == "finished"
+    assert match.best_of == 3
     assert match.tournament_name == "IEM — IEM Cologne 2026 — Playoffs"
     assert match.competition_key == "IEM Cologne 2026"
     assert match.start_date == "2026-07-28T10:00:00Z"
@@ -45,6 +49,20 @@ def test_pandascore_normalizes_series_result_by_team_id():
 def test_pandascore_skips_incomplete_match_without_two_opponents():
     item = _sample_match()
     item["opponents"] = item["opponents"][:1]
+
+    assert pandascore_source._normalize_raw_matches([item]) == []
+
+
+def test_pandascore_skips_match_not_confirmed_finished():
+    item = _sample_match()
+    item["status"] = "running"
+
+    assert pandascore_source._normalize_raw_matches([item]) == []
+
+
+def test_pandascore_skips_unknown_best_of():
+    item = _sample_match()
+    item["number_of_games"] = 2
 
     assert pandascore_source._normalize_raw_matches([item]) == []
 
