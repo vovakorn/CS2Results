@@ -46,6 +46,8 @@ class MatchNormalized(BaseModel):
 
     score1: int | None = Field(ge=0, le=100)
     score2: int | None = Field(ge=0, le=100)
+    status: Literal["finished"] = "finished"
+    best_of: Literal[1, 3, 5] | None = None
 
     maps: list[MapResult] = Field(default_factory=list, max_length=10)
 

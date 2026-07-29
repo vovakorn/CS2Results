@@ -63,6 +63,9 @@ def _normalize_games(value: Any) -> list[MapResult]:
 
 
 def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
+    if str(item.get("finished") or "").strip().casefold() not in {"1", "true", "yes"}:
+        return None
+
     opponents = _json_value(item.get("match2opponents"))
     if not isinstance(opponents, list) or len(opponents) != 2:
         return None
@@ -87,6 +90,8 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
     event_type = str(item.get("type") or "").strip().casefold()
     is_lan = True if event_type == "offline" else False if event_type == "online" else None
     match_date = item.get("date")
+    series_score = max(score1 or 0, score2 or 0)
+    best_of = {1: 1, 2: 3, 3: 5}.get(series_score)
     return MatchNormalized(
         source="liquipedia",
         match_id=str(match_id),
@@ -97,6 +102,8 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         team2_name=str(team2),
         score1=score1,
         score2=score2,
+        status="finished",
+        best_of=best_of,
         maps=_normalize_games(item.get("match2games")),
         date=str(match_date) if match_date else None,
         start_date=str(match_date) if match_date else None,

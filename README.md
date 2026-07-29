@@ -9,6 +9,8 @@
 | --- | --- |
 | `TELEGRAM_TOKEN` или `TELEGRAM_BOT_TOKEN` | Токен вашего Telegram-бота, полученный у BotFather. |
 | `TELEGRAM_CHAT_ID` | ID канала или чата, куда будут отправляться результаты. |
+| `TELEGRAM_ADMIN_CHAT_ID` | Приватный chat ID администратора для технических алертов. Не указывайте публичный канал. |
+| `TELEGRAM_SPOILERS` | `1` скрывает счёт и победителя Telegram-спойлером; по умолчанию `1`. |
 | `AWS_ACCESS_KEY_ID` | Access key сервисного аккаунта для Object Storage. |
 | `AWS_SECRET_ACCESS_KEY` | Secret key сервисного аккаунта для Object Storage. |
 | `OBJECT_STORAGE_BUCKET` | Bucket для дедупликации обработанных матчей. |
@@ -20,11 +22,12 @@
 | `PANDASCORE_API_TOKEN` | Токен PandaScore Fixtures API. Обязателен для основного источника. |
 | `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
 | `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`, `0` отключает его. |
-| `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Berlin`. |
+| `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Moscow`. |
 | `MAX_SOURCE_STALENESS_HOURS` | Максимальный возраст источника для production-публикации, по умолчанию `48`. |
 | `MAX_SOURCE_FUTURE_SKEW_HOURS` | Допустимое отклонение даты источника в будущее, по умолчанию `6`. |
 | `ALLOW_STALE_IN_DRY_RUN` | Разрешает показывать stale-данные только в dry-run, по умолчанию `1`. |
 | `DELIVERY_CLAIM_TTL_SECONDS` | Срок lease атомарного delivery claim, по умолчанию `300`. |
+| `ALERT_COOLDOWN_SECONDS` | Минимальный интервал между одинаковыми алертами, по умолчанию `21600` (6 часов). |
 | `MAX_SOURCE_RESPONSE_BYTES` | Максимальный размер ответа внешнего источника, по умолчанию `5000000`. |
 
 Опционально:
@@ -33,12 +36,14 @@
 MATCH_SOURCE=auto
 ENABLE_LIQUIPEDIA_FALLBACK=1
 REQUEST_TIMEOUT_SECONDS=15
-DISPLAY_TIMEZONE=Europe/Berlin
+DISPLAY_TIMEZONE=Europe/Moscow
+TELEGRAM_SPOILERS=1
 BOT_MODE=production
 TIER1_PRIZE_POOL_THRESHOLD_USD=500000
 MAX_SOURCE_STALENESS_HOURS=48
 MAX_SOURCE_FUTURE_SKEW_HOURS=6
 DELIVERY_CLAIM_TTL_SECONDS=300
+ALERT_COOLDOWN_SECONDS=21600
 MAX_SOURCE_RESPONSE_BYTES=5000000
 ```
 
@@ -58,7 +63,8 @@ MAX_SOURCE_RESPONSE_BYTES=5000000
   "tournament_patterns": ["IEM", "ESL Pro League", "Major"],
   "online_location_markers": ["online", "remote"],
   "trusted_lan_tournament_patterns": ["Major", "IEM Cologne", "IEM Katowice"],
-  "tournament_exclusion_patterns": ["qualifier", "showmatch"],
+  "tournament_exclusion_patterns": ["qualifier", "showmatch", "academy league"],
+  "team_exclusion_patterns": ["academy", "youth", "junior"],
   "team_aliases": {"natus vincere": "navi", "navi": "navi"},
   "prize_pool_threshold_usd": 500000
 }
@@ -129,7 +135,7 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 
 ## Источники данных
 
-Primary source `pandascore` использует документированный endpoint `GET /csgo/matches/past` и передаёт токен в заголовке `Authorization`. Бесплатный Fixtures-план предоставляет итог серии, команды и турнир; карты не являются обязательной частью MVP.
+Primary source `pandascore` использует документированный endpoint `GET /csgo/matches/past` и передаёт токен в заголовке `Authorization`. Адаптер принимает только записи со статусом `finished`. Валидатор блокирует `0:0`, ничьи без подтверждённого победителя и невозможный итог BO1/BO3/BO5. Бесплатный Fixtures-план предоставляет итог серии, команды и турнир; карты не являются обязательной частью MVP.
 
 Если PandaScore вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на одобренный LiquipediaDB API при `ENABLE_LIQUIPEDIA_FALLBACK=1`. Liquipedia вызывается через `https://api.liquipedia.net/api/v3/match` с `Authorization: Apikey ...`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует.
 
@@ -172,6 +178,20 @@ Primary source `pandascore` использует документированн�
 - рост ошибок Object Storage;
 - `source_stale` или `source_future_timestamp`;
 - частый переход `fallback=liquipedia`, если основной источник становится нестабильным.
+
+При настроенном `TELEGRAM_ADMIN_CHAT_ID` критические ошибки источника, конфигурации и доставки также отправляются администратору. Одинаковые сообщения ограничиваются одним алертом на шестичасовое окно через Object Storage. Устаревание источника более чем на `MAX_SOURCE_STALENESS_HOURS` считается его недоступностью и вызывает тот же алерт.
+
+## Зафиксированный охват первого канала
+
+Первая production-версия публикует только результаты Tier-1 LAN:
+
+- основной турнир, без open/closed/regional qualifiers и showmatch;
+- без academy, youth и junior составов;
+- только завершённая серия с подтверждённым победителем;
+- счёт BO1/BO3/BO5 должен соответствовать формату серии;
+- счёт и победитель по умолчанию скрыты Telegram-спойлером.
+
+Пауза между крупными LAN-турнирами допустима: канал не заполняется низкокачественными матчами ради частоты. Расписание, анонсы и дайджесты относятся к следующему этапу контентной работы.
 
 ## Структура проекта
 ```

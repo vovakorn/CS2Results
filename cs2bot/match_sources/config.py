@@ -37,6 +37,14 @@ DEFAULT_TOURNAMENT_EXCLUSION_PATTERNS = [
     "closed qualifier",
     "regional qualifier",
     "showmatch",
+    "show match",
+    "academy league",
+    "youth league",
+]
+DEFAULT_TEAM_EXCLUSION_PATTERNS = [
+    "academy",
+    "youth",
+    "junior",
 ]
 DEFAULT_TEAM_ALIASES = {
     "natus vincere": "navi",
@@ -129,6 +137,10 @@ TOURNAMENT_EXCLUSION_PATTERNS = _list_setting(
     "tournament_exclusion_patterns",
     DEFAULT_TOURNAMENT_EXCLUSION_PATTERNS,
 )
+TEAM_EXCLUSION_PATTERNS = _list_setting(
+    "team_exclusion_patterns",
+    DEFAULT_TEAM_EXCLUSION_PATTERNS,
+)
 TEAM_ALIASES = _dict_setting("team_aliases", DEFAULT_TEAM_ALIASES)
 TIER1_PRIZE_POOL_THRESHOLD_USD = _int_setting(
     "TIER1_PRIZE_POOL_THRESHOLD_USD",
@@ -143,10 +155,11 @@ if MATCH_SOURCE not in {"auto", "pandascore", "liquipedia"}:
 ENABLE_LIQUIPEDIA_FALLBACK = _bool_env("ENABLE_LIQUIPEDIA_FALLBACK", True)
 ALLOW_STALE_IN_DRY_RUN = _bool_env("ALLOW_STALE_IN_DRY_RUN", True)
 REQUEST_TIMEOUT_SECONDS = _int_setting("REQUEST_TIMEOUT_SECONDS", 15)
-DISPLAY_TIMEZONE = os.getenv("DISPLAY_TIMEZONE", "Europe/Berlin")
+DISPLAY_TIMEZONE = os.getenv("DISPLAY_TIMEZONE", "Europe/Moscow")
 MAX_SOURCE_STALENESS_HOURS = _int_setting("MAX_SOURCE_STALENESS_HOURS", 48)
 MAX_SOURCE_FUTURE_SKEW_HOURS = _int_setting("MAX_SOURCE_FUTURE_SKEW_HOURS", 6)
 DELIVERY_CLAIM_TTL_SECONDS = _int_setting("DELIVERY_CLAIM_TTL_SECONDS", 300, minimum=30)
+ALERT_COOLDOWN_SECONDS = _int_setting("ALERT_COOLDOWN_SECONDS", 21600, minimum=300)
 MAX_SOURCE_RESPONSE_BYTES = _int_setting("MAX_SOURCE_RESPONSE_BYTES", 5_000_000, minimum=100_000)
 
 OBJECT_STORAGE_BUCKET = os.getenv("OBJECT_STORAGE_BUCKET")

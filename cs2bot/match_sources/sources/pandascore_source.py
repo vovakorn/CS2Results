@@ -48,6 +48,9 @@ def _competition_key(item: dict[str, Any]) -> str | None:
 
 
 def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
+    if str(item.get("status") or "").strip().casefold() != "finished":
+        return None
+
     opponents = item.get("opponents")
     if not isinstance(opponents, list) or len(opponents) != 2:
         return None
@@ -96,6 +99,8 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         team2_name=normalized_opponents[1][0],
         score1=score1,
         score2=score2,
+        status="finished",
+        best_of=_optional_int(item.get("number_of_games")),
         maps=[],
         date=str(end_at or begin_at) if end_at or begin_at else None,
         start_date=str(begin_at) if begin_at else None,
@@ -141,6 +146,7 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
         "User-Agent": "CS2ResultsBot/0.2 (https://github.com/vovakorn/CS2ResultsBot)",
     }
     params = {
+        "filter[status]": "finished",
         "sort": "-end_at",
         "per_page": min(max(limit, 1), 100),
     }

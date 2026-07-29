@@ -12,6 +12,22 @@ DEFAULT_CHANNEL = os.getenv("TELEGRAM_CHAT_ID")
 BOT_MODE = os.getenv("BOT_MODE", "production")
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().casefold()
+    if normalized in {"1", "true", "yes", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "n"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
+TELEGRAM_SPOILERS = _bool_env("TELEGRAM_SPOILERS", True)
+TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+
+
 def _load_channels_from_env() -> list[dict[str, Any]] | None:
     raw = os.getenv("CHANNELS_JSON") or os.getenv("CHANNEL_CONFIG_JSON")
     if not raw:

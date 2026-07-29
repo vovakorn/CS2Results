@@ -37,12 +37,13 @@ def _claim(match, channel_name):
 
 def test_format_match_uses_normalized_fields():
     text = main.format_match(_match())
-    assert "NAVI vs FaZe" in text
-    assert "Score: 2:1" in text
-    assert "Winner: NAVI" in text
-    assert "Event: IEM Cologne 2026" in text
-    assert "Match ID: 1" in text
-    assert "Source: PandaScore" in text
+    assert "⚔️ <b>NAVI — FaZe</b>" in text
+    assert "Счёт: <tg-spoiler>2:1</tg-spoiler>" in text
+    assert "Победитель: <tg-spoiler>NAVI</tg-spoiler>" in text
+    assert "🏆 <b>IEM Cologne 2026</b>" in text
+    assert "Match ID" not in text
+    assert "Источник: PandaScore" in text
+    assert "#CS2 #РезультатыМатчей" in text
 
 
 def test_format_match_uses_display_timezone(monkeypatch):
@@ -52,7 +53,7 @@ def test_format_match_uses_display_timezone(monkeypatch):
 
     text = main.format_match(match)
 
-    assert "Date: 2026-02-17 11:30 CET" in text
+    assert "Дата: 17 февраля 2026, 11:30 CET" in text
 
 
 def test_format_match_prefers_end_date_and_includes_maps(monkeypatch):
@@ -67,8 +68,8 @@ def test_format_match_prefers_end_date_and_includes_maps(monkeypatch):
 
     text = main.format_match(match)
 
-    assert "Date: 2026-02-17 13:40 CET" in text
-    assert "Maps: Mirage 13:11, Ancient 7:13" in text
+    assert "Дата: 17 февраля 2026, 13:40 CET" in text
+    assert "Карты: Mirage 13:11, Ancient 7:13" in text
 
 
 def test_format_match_drops_untrusted_source_url():
@@ -86,7 +87,27 @@ def test_format_match_allows_expected_source_url():
     match.match_url = "https://liquipedia.net/counterstrike/IEM_Cologne/Matches"
 
     assert match.match_url in main.format_match(match)
-    assert "Source: Liquipedia" in main.format_match(match)
+    assert "Источник: <a href=" in main.format_match(match)
+
+
+def test_format_match_escapes_untrusted_html():
+    match = _match(team1="<b>Fake</b>")
+    match.tournament_name = "IEM <script>alert(1)</script>"
+
+    text = main.format_match(match)
+
+    assert "<script>" not in text
+    assert "&lt;script&gt;" in text
+    assert "&lt;b&gt;Fake&lt;/b&gt;" in text
+
+
+def test_format_match_can_disable_spoilers(monkeypatch):
+    monkeypatch.setattr(main, "TELEGRAM_SPOILERS", False)
+
+    text = main.format_match(_match())
+
+    assert "<tg-spoiler>" not in text
+    assert "Счёт: 2:1" in text
 
 
 def test_format_match_caps_telegram_message_length():
@@ -346,6 +367,27 @@ def test_telegram_redirect_is_not_followed(monkeypatch):
         main.send_to_telegram("chat", "text", max_attempts=1)
 
     assert seen["allow_redirects"] is False
+
+
+def test_telegram_uses_html_parse_mode(monkeypatch):
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(*args, **kwargs):
+        seen.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(main.requests, "post", fake_post)
+
+    main.send_to_telegram("chat", "<b>text</b>", max_attempts=1)
+
+    assert seen["json"]["parse_mode"] == "HTML"
+    assert seen["json"]["disable_web_page_preview"] is True
 
 
 def test_telegram_network_exception_never_exposes_token(monkeypatch):
