@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import aiohttp
@@ -14,6 +15,7 @@ from .http_utils import read_limited_response
 logger = logging.getLogger(__name__)
 
 PANDASCORE_PAST_MATCHES_PATH = "/csgo/matches/past"
+MIN_PANDASCORE_QUERY_WINDOW_HOURS = 24 * 7
 
 
 def _optional_int(value: Any) -> int | None:
@@ -45,6 +47,21 @@ def _tournament_name(item: dict[str, Any]) -> str | None:
 
 def _competition_key(item: dict[str, Any]) -> str | None:
     return _name(item.get("serie")) or _name(item.get("league")) or _name(item.get("tournament"))
+
+
+def _recent_match_range(now: datetime | None = None) -> str:
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    reference = reference.astimezone(timezone.utc)
+    start = reference - timedelta(
+        hours=max(source_config.MAX_SOURCE_STALENESS_HOURS, MIN_PANDASCORE_QUERY_WINDOW_HOURS)
+    )
+    end = reference + timedelta(hours=source_config.MAX_SOURCE_FUTURE_SKEW_HOURS)
+    return ",".join(
+        value.isoformat(timespec="seconds").replace("+00:00", "Z")
+        for value in (start, end)
+    )
 
 
 def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
@@ -147,7 +164,11 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
     }
     params = {
         "filter[status]": "finished",
-        "sort": "-end_at",
+        # PandaScore places undated records before fresh ones even for
+        # ``sort=-end_at``. An explicit begin_at range prevents an old/null
+        # page from hiding recent completed matches.
+        "range[begin_at]": _recent_match_range(),
+        "sort": "-begin_at",
         "per_page": min(max(limit, 1), 100),
     }
     url = f"{source_config.PANDASCORE_API_BASE_URL.rstrip('/')}{PANDASCORE_PAST_MATCHES_PATH}"
