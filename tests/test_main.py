@@ -59,18 +59,17 @@ def test_format_match_uses_normalized_fields():
     assert "#CS2 #РезультатыМатчей" in text
 
 
-def test_format_match_uses_display_timezone(monkeypatch):
-    monkeypatch.setattr(main, "DISPLAY_TIMEZONE", "Europe/Berlin")
+def test_format_match_omits_match_time():
     match = _match()
     match.date = "2026-02-17T10:30:00Z"
 
     text = main.format_match(match)
 
-    assert "Дата: 17 февраля 2026, 11:30 CET" in text
+    assert "Дата:" not in text
+    assert "10:30" not in text
 
 
-def test_format_match_prefers_end_date_and_includes_maps(monkeypatch):
-    monkeypatch.setattr(main, "DISPLAY_TIMEZONE", "Europe/Berlin")
+def test_format_match_includes_maps_and_omits_time():
     match = _match()
     match.start_date = "2026-02-17T10:30:00Z"
     match.end_date = "2026-02-17T12:40:00Z"
@@ -81,7 +80,8 @@ def test_format_match_prefers_end_date_and_includes_maps(monkeypatch):
 
     text = main.format_match(match)
 
-    assert "Дата: 17 февраля 2026, 13:40 CET" in text
+    assert "Дата:" not in text
+    assert "12:40" not in text
     assert "Карты: Mirage 13:11, Ancient 7:13" in text
 
 

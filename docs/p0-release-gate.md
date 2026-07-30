@@ -6,9 +6,10 @@ The first channel publishes only confirmed Tier-1 LAN CS2 results. Qualifiers,
 showmatches, academy/youth/junior teams, unfinished matches, 0:0 records, tied
 series and invalid BO1/BO3/BO5 scores are blocked.
 
-The final public template is Russian, uses Moscow time, hides score and winner
-with Telegram spoilers by default, contains source attribution and hashtags,
-and does not expose internal match IDs or filter diagnostics.
+The final public templates are Russian. Result posts omit match time, while the
+morning schedule uses Moscow time. Score and winner are hidden with Telegram
+spoilers by default; public messages contain source attribution and hashtags
+and do not expose internal match IDs or filter diagnostics.
 
 ## Automated evidence
 

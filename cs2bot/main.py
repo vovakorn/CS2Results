@@ -194,30 +194,6 @@ def _get_attr(obj: Any, key: str, default: str = "") -> str:
     return default
 
 
-def _format_display_time(value: str) -> str:
-    if not value or "T" not in value:
-        return value
-
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return value
-    if parsed.tzinfo is None:
-        return value
-
-    try:
-        timezone = ZoneInfo(DISPLAY_TIMEZONE)
-    except ZoneInfoNotFoundError:
-        return value
-
-    local = parsed.astimezone(timezone)
-    timezone_label = "МСК" if DISPLAY_TIMEZONE == "Europe/Moscow" else local.tzname() or ""
-    return (
-        f"{local.day} {RUSSIAN_MONTHS[local.month]} {local.year}, "
-        f"{local:%H:%M} {timezone_label}"
-    ).strip()
-
-
 def _safe_match_url(value: str, source: str) -> str:
     try:
         parsed = urlparse(value)
@@ -237,12 +213,6 @@ def format_match(match: Any) -> str:
     score1 = _get_attr(match, "score1")
     score2 = _get_attr(match, "score2")
     event = _get_attr(match, "tournament_name") or _get_attr(match, "event")
-    time = _format_display_time(
-        _get_attr(match, "end_date")
-        or _get_attr(match, "date")
-        or _get_attr(match, "start_date")
-        or _get_attr(match, "time")
-    )
     match_url = _get_attr(match, "match_url")
     source = _get_attr(match, "source")
     maps = getattr(match, "maps", None)
@@ -269,8 +239,6 @@ def format_match(match: Any) -> str:
             if TELEGRAM_SPOILERS:
                 safe_winner = f"<tg-spoiler>{safe_winner}</tg-spoiler>"
             pieces.append(f"✅ Победитель: {safe_winner}")
-    if time:
-        pieces.append(f"🕒 Дата: {html.escape(time)}")
     if maps:
         map_lines = []
         for item in maps:
