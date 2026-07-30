@@ -9,11 +9,13 @@ from cs2bot.match_sources.storage import (
     alert_key,
     claim_admin_alert,
     claim_channel_delivery,
+    claim_content_delivery,
     channel_match_uid,
     is_channel_processed,
     is_processed,
     legacy_channel_match_uid,
     mark_channel_processed,
+    mark_content_processed,
     mark_processed,
     processed_key,
     release_delivery_claim,
@@ -151,3 +153,30 @@ def test_admin_alert_is_claimed_only_once_per_cooldown_window():
     assert asyncio.run(claim_admin_alert("source-down", client=s3, bucket="bucket", now=now))
     assert not asyncio.run(claim_admin_alert("source-down", client=s3, bucket="bucket", now=now))
     assert alert_key("source-down", now) in s3.objects
+
+
+def test_content_delivery_is_atomic_and_persisted_after_success():
+    s3 = FakeS3()
+    now = datetime(2026, 7, 30, 7, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        claim_content_delivery("schedule_2026-07-30_global", client=s3, bucket="bucket", now=now)
+    )
+    second = asyncio.run(
+        claim_content_delivery("schedule_2026-07-30_global", client=s3, bucket="bucket", now=now)
+    )
+    assert first is not None
+    assert second is None
+
+    asyncio.run(
+        mark_content_processed(
+            "schedule_2026-07-30_global",
+            "schedule",
+            client=s3,
+            bucket="bucket",
+        )
+    )
+    asyncio.run(release_delivery_claim(first, client=s3, bucket="bucket"))
+    assert asyncio.run(
+        claim_content_delivery("schedule_2026-07-30_global", client=s3, bucket="bucket", now=now)
+    ) is None

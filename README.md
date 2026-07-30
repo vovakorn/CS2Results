@@ -65,6 +65,7 @@ MAX_SOURCE_RESPONSE_BYTES=5000000
   "trusted_lan_tournament_patterns": ["Major", "IEM Cologne", "IEM Katowice"],
   "tournament_exclusion_patterns": ["qualifier", "showmatch", "academy league"],
   "team_exclusion_patterns": ["academy", "youth", "junior"],
+  "popular_teams": ["NAVI", "Team Spirit", "Vitality", "MOUZ", "FaZe", "G2"],
   "team_aliases": {"natus vincere": "navi", "navi": "navi"},
   "prize_pool_threshold_usd": 500000
 }
@@ -120,6 +121,9 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 - `production`: публикуются только матчи, прошедшие Tier-1 LAN фильтр.
 - `debug`: можно включить `include_filtered`, чтобы увидеть матчи с `filter_reason`, но только при `dry_run=true`.
 - `dry_run`: ничего не отправляет в Telegram и не пишет в Object Storage.
+- `job=results`: новые подтверждённые Tier-1 LAN результаты.
+- `job=schedule`: один утренний выпуск с Tier-1 матчами и матчами популярных команд.
+- `job=digest`: один вечерний выпуск с итогами Tier-1 LAN; пустой выпуск не публикуется.
 
 Пример события для ручного запуска Cloud Function:
 
@@ -136,6 +140,8 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 ## Источники данных
 
 Primary source `pandascore` использует документированный endpoint `GET /csgo/matches/past` и передаёт токен в заголовке `Authorization`. Адаптер принимает только записи со статусом `finished`. Валидатор блокирует `0:0`, ничьи без подтверждённого победителя и невозможный итог BO1/BO3/BO5. Бесплатный Fixtures-план предоставляет итог серии, команды и турнир; карты не являются обязательной частью MVP.
+
+Для утреннего расписания используется документированный endpoint `GET /csgo/matches/upcoming`. Окно запроса соответствует текущему календарному дню в `DISPLAY_TIMEZONE`. В расписание попадают Tier-1 турниры, а также матчи популярных команд; qualifiers, showmatch и молодёжные составы исключаются. Список популярных команд настраивается через `popular_teams` в Tier-1 конфиге.
 
 Если PandaScore вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на одобренный LiquipediaDB API при `ENABLE_LIQUIPEDIA_FALLBACK=1`. Liquipedia вызывается через `https://api.liquipedia.net/api/v3/match` с `Authorization: Apikey ...`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует.
 
@@ -191,7 +197,7 @@ Primary source `pandascore` использует документированн�
 - счёт BO1/BO3/BO5 должен соответствовать формату серии;
 - счёт и победитель по умолчанию скрыты Telegram-спойлером.
 
-Пауза между крупными LAN-турнирами допустима: канал не заполняется низкокачественными матчами ради частоты. Расписание, анонсы и дайджесты относятся к следующему этапу контентной работы.
+Пауза между крупными LAN-турнирами допустима: канал не заполняется низкокачественными результатами ради частоты. Утром публикуется расписание Tier-1 и заметных матчей популярных команд, вечером — краткий итог только при наличии завершённых Tier-1 LAN матчей.
 
 ## Структура проекта
 ```
@@ -261,8 +267,8 @@ ENABLE_LIQUIPEDIA_FALLBACK=1
 BOT_MODE=production
 ```
 
-10. Создайте timer trigger с периодом 60 минут.
-11. Для проверки запустите функцию вручную с `dry_run=true`.
+10. Создайте три timer trigger: результаты раз в 15 минут, расписание в 10:00 МСК и итоги в 23:00 МСК.
+11. Для каждого `job` сначала запустите функцию вручную с `dry_run=true`.
 12. После проверки отключите `dry_run` и проверьте, что объекты появляются в `claims/` и `processed/`.
 
 Функция не должна быть публичной: право invocation выдавайте только trigger/service account. Не передавайте токены и ключи внутри event payload.

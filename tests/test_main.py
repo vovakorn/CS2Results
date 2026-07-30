@@ -4,7 +4,7 @@ import pytest
 import requests
 
 from cs2bot import main
-from cs2bot.match_sources.models import MapResult, MatchNormalized
+from cs2bot.match_sources.models import MapResult, MatchNormalized, UpcomingMatchNormalized
 from cs2bot.match_sources.storage import DeliveryClaim
 
 
@@ -33,6 +33,19 @@ def _match(match_id="1", team1="NAVI", team2="FaZe"):
 def _claim(match, channel_name):
     uid = f"{channel_name}_{match.match_uid}"
     return DeliveryClaim(uid, f"claims/{uid}.json", f"claim-{channel_name}", '"etag"')
+
+
+def _upcoming():
+    return UpcomingMatchNormalized(
+        match_id="upcoming-1",
+        tournament_name="IEM Cologne 2026",
+        team1_name="NAVI",
+        team2_name="FaZe",
+        scheduled_at="2026-07-30T11:00:00Z",
+        best_of=3,
+        is_featured=True,
+        feature_reason="tier1_tournament",
+    )
 
 
 def test_format_match_uses_normalized_fields():
@@ -493,3 +506,121 @@ def test_legacy_source_is_rejected_before_fetch(monkeypatch):
 
     assert response["statusCode"] == 400
     assert called is False
+
+
+def test_schedule_is_formatted_in_moscow_time():
+    local_now = main.datetime.fromisoformat("2026-07-30T10:00:00+03:00")
+
+    text = main.format_daily_schedule([_upcoming()], local_now)
+
+    assert "Матчи CS2 сегодня — 30 июля" in text
+    assert "14:00 — <b>NAVI — FaZe</b>" in text
+    assert "Время московское" in text
+
+
+def test_schedule_truncates_only_between_complete_entries():
+    matches = []
+    for index in range(100):
+        match = _upcoming().model_copy(
+            update={
+                "match_id": str(index),
+                "team1_name": f"Team {index} " + ("A" * 100),
+                "team2_name": f"Opponent {index} " + ("B" * 100),
+                "tournament_name": "IEM " + ("C" * 250),
+            }
+        )
+        matches.append(match)
+
+    text = main.format_daily_schedule(
+        matches,
+        main.datetime.fromisoformat("2026-07-30T10:00:00+03:00"),
+    )
+
+    assert len(text) <= main.MAX_TELEGRAM_MESSAGE_LENGTH
+    assert "… и ещё " in text
+    assert text.count("<b>") == text.count("</b>")
+
+
+def test_schedule_dry_run_returns_preview_without_sending(monkeypatch):
+    sent = []
+
+    async def fake_fetch(start, end):
+        assert start.isoformat() == "2026-07-29T21:00:00+00:00"
+        assert end.isoformat() == "2026-07-30T21:00:00+00:00"
+        return [_upcoming()]
+
+    monkeypatch.setattr(
+        main,
+        "_local_day_window",
+        lambda: (
+            main.datetime.fromisoformat("2026-07-29T21:00:00+00:00"),
+            main.datetime.fromisoformat("2026-07-30T21:00:00+00:00"),
+            main.datetime.fromisoformat("2026-07-30T10:00:00+03:00"),
+        ),
+    )
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent.append(args))
+
+    response = main.handler({"job": "schedule", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["matches_selected"] == 1
+    assert body["messages_sent"] == 1
+    assert "14:00" in body["preview"]
+    assert sent == []
+
+
+def test_digest_skips_publication_when_no_tier1_results(monkeypatch):
+    async def fake_fetch(limit, start=None, end=None):
+        match = _match()
+        match.is_tier1_lan = False
+        match.tournament_name = "Small Online Cup"
+        return [match]
+
+    monkeypatch.setattr(main, "fetch_pandascore_finished_matches", fake_fetch)
+
+    response = main.handler({"job": "digest", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["messages_sent"] == 0
+    assert body["matches_selected"] == 0
+
+
+def test_invalid_job_is_rejected():
+    response = main.handler({"job": "hourly", "dry_run": True}, None)
+
+    assert response["statusCode"] == 400
+
+
+def test_yandex_timer_payload_is_unwrapped(monkeypatch):
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    event = {
+        "messages": [
+            {
+                "details": {
+                    "payload": json.dumps({"job": "schedule", "dry_run": True})
+                }
+            }
+        ]
+    }
+
+    response = main.handler(event, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["job"] == "schedule"
+
+
+def test_invalid_yandex_timer_payload_is_rejected():
+    event = {"messages": [{"details": {"payload": "not-json"}}]}
+
+    response = main.handler(event, None)
+
+    assert response["statusCode"] == 400

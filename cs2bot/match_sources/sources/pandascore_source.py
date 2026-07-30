@@ -9,12 +9,14 @@ import aiohttp
 from pydantic import ValidationError
 
 from .. import config as source_config
-from ..models import MatchNormalized, SourceUnavailableError
+from ..filters import is_featured_upcoming
+from ..models import MatchNormalized, SourceUnavailableError, UpcomingMatchNormalized
 from .http_utils import read_limited_response
 
 logger = logging.getLogger(__name__)
 
 PANDASCORE_PAST_MATCHES_PATH = "/csgo/matches/past"
+PANDASCORE_UPCOMING_MATCHES_PATH = "/csgo/matches/upcoming"
 MIN_PANDASCORE_QUERY_WINDOW_HOURS = 24 * 7
 
 
@@ -49,6 +51,15 @@ def _competition_key(item: dict[str, Any]) -> str | None:
     return _name(item.get("serie")) or _name(item.get("league")) or _name(item.get("tournament"))
 
 
+def _utc_range(start: datetime, end: datetime) -> str:
+    values = []
+    for value in (start, end):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        values.append(value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"))
+    return ",".join(values)
+
+
 def _recent_match_range(now: datetime | None = None) -> str:
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
@@ -58,10 +69,7 @@ def _recent_match_range(now: datetime | None = None) -> str:
         hours=max(source_config.MAX_SOURCE_STALENESS_HOURS, MIN_PANDASCORE_QUERY_WINDOW_HOURS)
     )
     end = reference + timedelta(hours=source_config.MAX_SOURCE_FUTURE_SKEW_HOURS)
-    return ",".join(
-        value.isoformat(timespec="seconds").replace("+00:00", "Z")
-        for value in (start, end)
-    )
+    return _utc_range(start, end)
 
 
 def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
@@ -151,30 +159,70 @@ def _normalize_raw_matches(data: Any) -> list[MatchNormalized]:
     return matches
 
 
-async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
+def _normalize_upcoming_item(item: dict[str, Any]) -> UpcomingMatchNormalized | None:
+    if str(item.get("status") or "").strip().casefold() != "not_started":
+        return None
+    opponents = item.get("opponents")
+    if not isinstance(opponents, list) or len(opponents) != 2:
+        return None
+    teams: list[str] = []
+    for entry in opponents:
+        opponent = entry.get("opponent") if isinstance(entry, dict) else None
+        team_name = _name(opponent)
+        if not team_name:
+            return None
+        teams.append(team_name)
+    tournament_name = _tournament_name(item)
+    match_id = item.get("id")
+    scheduled_at = item.get("scheduled_at") or item.get("begin_at")
+    if not tournament_name or match_id is None or not scheduled_at:
+        return None
+    match = UpcomingMatchNormalized(
+        match_id=str(match_id),
+        tournament_name=tournament_name,
+        competition_key=_competition_key(item),
+        team1_name=teams[0],
+        team2_name=teams[1],
+        scheduled_at=str(scheduled_at),
+        best_of=_optional_int(item.get("number_of_games")),
+    )
+    featured, reason = is_featured_upcoming(match)
+    return match.model_copy(update={"is_featured": featured, "feature_reason": reason})
+
+
+def _normalize_raw_upcoming(data: Any) -> list[UpcomingMatchNormalized]:
+    if not isinstance(data, list):
+        raise SourceUnavailableError("PandaScore returned an unexpected response")
+    matches: list[UpcomingMatchNormalized] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        try:
+            match = _normalize_upcoming_item(item)
+        except (TypeError, ValueError, ValidationError):
+            logger.warning("source=pandascore upcoming_item_invalid keys=%s", sorted(item.keys()))
+            continue
+        if match:
+            matches.append(match)
+    return matches
+
+
+def _headers(token: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "User-Agent": "CS2ResultsBot/0.3 (https://github.com/vovakorn/CS2ResultsBot)",
+    }
+
+
+async def _fetch_json(path: str, params: dict[str, Any]) -> Any:
     token = source_config.PANDASCORE_API_TOKEN
     if not token:
         raise SourceUnavailableError("PandaScore credentials are not configured")
-
     timeout = aiohttp.ClientTimeout(total=source_config.REQUEST_TIMEOUT_SECONDS)
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "User-Agent": "CS2ResultsBot/0.2 (https://github.com/vovakorn/CS2ResultsBot)",
-    }
-    params = {
-        "filter[status]": "finished",
-        # PandaScore places undated records before fresh ones even for
-        # ``sort=-end_at``. An explicit begin_at range prevents an old/null
-        # page from hiding recent completed matches.
-        "range[begin_at]": _recent_match_range(),
-        "sort": "-begin_at",
-        "per_page": min(max(limit, 1), 100),
-    }
-    url = f"{source_config.PANDASCORE_API_BASE_URL.rstrip('/')}{PANDASCORE_PAST_MATCHES_PATH}"
-
+    url = f"{source_config.PANDASCORE_API_BASE_URL.rstrip('/')}{path}"
     try:
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+        async with aiohttp.ClientSession(timeout=timeout, headers=_headers(token)) as session:
             async with session.get(url, params=params, allow_redirects=False) as response:
                 if response.status >= 300:
                     raise SourceUnavailableError(f"PandaScore returned HTTP {response.status}")
@@ -183,12 +231,45 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
                     source_config.MAX_SOURCE_RESPONSE_BYTES,
                     "PandaScore",
                 )
-                data = json.loads(raw)
+                return json.loads(raw)
     except SourceUnavailableError:
         raise
     except Exception as exc:
         raise SourceUnavailableError(f"PandaScore request failed: {type(exc).__name__}") from exc
 
+
+async def fetch_finished_matches(
+    limit: int = 30,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[MatchNormalized]:
+    params = {
+        "filter[status]": "finished",
+        # PandaScore places undated records before fresh ones even for
+        # ``sort=-end_at``. An explicit begin_at range prevents an old/null
+        # page from hiding recent completed matches.
+        "range[begin_at]": _utc_range(start, end) if start and end else _recent_match_range(),
+        "sort": "-begin_at",
+        "per_page": min(max(limit, 1), 100),
+    }
+    data = await _fetch_json(PANDASCORE_PAST_MATCHES_PATH, params)
+
     matches = _normalize_raw_matches(data)
     logger.info("source=pandascore normalized=%s", len(matches))
+    return matches[:limit]
+
+
+async def fetch_upcoming_matches(
+    start: datetime,
+    end: datetime,
+    limit: int = 100,
+) -> list[UpcomingMatchNormalized]:
+    params = {
+        "range[begin_at]": _utc_range(start, end),
+        "sort": "begin_at",
+        "per_page": min(max(limit, 1), 100),
+    }
+    data = await _fetch_json(PANDASCORE_UPCOMING_MATCHES_PATH, params)
+    matches = _normalize_raw_upcoming(data)
+    logger.info("source=pandascore upcoming_normalized=%s", len(matches))
     return matches[:limit]

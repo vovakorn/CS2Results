@@ -105,3 +105,20 @@ class MatchNormalized(BaseModel):
     @property
     def match_uid(self) -> str:
         return self.canonical_match_uid
+
+
+class UpcomingMatchNormalized(BaseModel):
+    """A not-yet-started match used in the daily schedule."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source: Literal["pandascore"] = "pandascore"
+    match_id: str = Field(min_length=1, max_length=200)
+    tournament_name: str = Field(min_length=1, max_length=300)
+    competition_key: str | None = Field(default=None, max_length=300)
+    team1_name: str = Field(min_length=1, max_length=200)
+    team2_name: str = Field(min_length=1, max_length=200)
+    scheduled_at: str = Field(min_length=1, max_length=100)
+    best_of: Literal[1, 3, 5] | None = None
+    is_featured: bool = False
+    feature_reason: str | None = Field(default=None, max_length=200)

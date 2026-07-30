@@ -4,13 +4,14 @@ import re
 
 from .config import (
     ONLINE_LOCATION_MARKERS,
+    POPULAR_TEAMS,
     TEAM_EXCLUSION_PATTERNS,
     TIER1_PRIZE_POOL_THRESHOLD_USD,
     TIER1_TOURNAMENT_PATTERNS,
     TOURNAMENT_EXCLUSION_PATTERNS,
     TRUSTED_LAN_TOURNAMENT_PATTERNS,
 )
-from .models import MatchNormalized
+from .models import MatchNormalized, UpcomingMatchNormalized
 
 
 def _contains_pattern(value: str | None, patterns: list[str]) -> bool:
@@ -111,3 +112,28 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     if not lan_confirmed:
         return False, lan_reason
     return False, "not_tier1"
+
+
+def is_featured_upcoming(match: UpcomingMatchNormalized) -> tuple[bool, str | None]:
+    """Include Tier-1 events and notable teams, excluding low-signal fixtures."""
+    if _contains_pattern(match.tournament_name, TOURNAMENT_EXCLUSION_PATTERNS):
+        return False, "excluded_tournament"
+    if _contains_pattern(
+        f"{match.team1_name} {match.team2_name}",
+        TEAM_EXCLUSION_PATTERNS,
+    ):
+        return False, "excluded_team"
+    if _contains_pattern(match.tournament_name, TIER1_TOURNAMENT_PATTERNS):
+        return True, "tier1_tournament"
+
+    normalized_teams = {
+        MatchNormalized._identity_part(match.team1_name),
+        MatchNormalized._identity_part(match.team2_name),
+    }
+    normalized_popular = {
+        MatchNormalized._identity_part(team)
+        for team in POPULAR_TEAMS
+    }
+    if normalized_teams & normalized_popular:
+        return True, "popular_team"
+    return False, "not_featured"

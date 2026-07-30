@@ -42,6 +42,23 @@
     "youth",
     "junior"
   ],
+  "popular_teams": [
+    "Natus Vincere",
+    "NAVI",
+    "Team Spirit",
+    "Vitality",
+    "MOUZ",
+    "FaZe",
+    "G2",
+    "Falcons",
+    "Team Liquid",
+    "FURIA",
+    "The MongolZ",
+    "Astralis",
+    "Virtus.pro",
+    "Aurora",
+    "HEROIC"
+  ],
   "team_aliases": {
     "natus vincere": "navi",
     "navi": "navi",

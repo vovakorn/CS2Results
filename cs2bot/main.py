@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, time as datetime_time, timezone
 from typing import Any, Dict, Iterable, List, Sequence
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -30,12 +30,18 @@ from .match_sources.config import (
     OBJECT_STORAGE_BUCKET,
     PANDASCORE_API_TOKEN,
 )
-from .match_sources.match_fetcher import SourceName, get_new_finished_matches
-from .match_sources.models import MatchNormalized
+from .match_sources.match_fetcher import SourceName, apply_quality_filters, get_new_finished_matches
+from .match_sources.models import MatchNormalized, UpcomingMatchNormalized
+from .match_sources.sources.pandascore_source import (
+    fetch_finished_matches as fetch_pandascore_finished_matches,
+    fetch_upcoming_matches,
+)
 from .match_sources.storage import (
     claim_admin_alert,
     claim_channel_delivery,
+    claim_content_delivery,
     mark_channel_processed,
+    mark_content_processed,
     release_delivery_claim,
 )
 
@@ -74,6 +80,7 @@ RUSSIAN_MONTHS = (
     "ноября",
     "декабря",
 )
+CONTENT_JOBS = {"results", "schedule", "digest"}
 
 
 class TelegramDeliveryError(RuntimeError):
@@ -293,6 +300,113 @@ def format_match(match: Any) -> str:
     return message
 
 
+def _local_day_window(now: datetime | None = None) -> tuple[datetime, datetime, datetime]:
+    try:
+        local_timezone = ZoneInfo(DISPLAY_TIMEZONE)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError("DISPLAY_TIMEZONE is invalid") from exc
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    local_now = reference.astimezone(local_timezone)
+    start = datetime.combine(local_now.date(), datetime_time.min, tzinfo=local_timezone)
+    end = datetime.combine(local_now.date().fromordinal(local_now.date().toordinal() + 1), datetime_time.min, tzinfo=local_timezone)
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc), local_now
+
+
+def _display_day(local_now: datetime) -> str:
+    return f"{local_now.day} {RUSSIAN_MONTHS[local_now.month]}"
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def format_daily_schedule(
+    matches: Sequence[UpcomingMatchNormalized],
+    local_now: datetime,
+) -> str:
+    """Build one compact Moscow-time schedule message."""
+    timezone_info = ZoneInfo(DISPLAY_TIMEZONE)
+    header = [
+        f"📅 <b>Матчи CS2 сегодня — {_display_day(local_now)}</b>",
+        "Время московское",
+        "",
+    ]
+    entries: list[list[str]] = []
+    sorted_matches = sorted(
+        matches,
+        key=lambda item: _parse_datetime(item.scheduled_at) or datetime.max.replace(tzinfo=timezone.utc),
+    )
+    for match in sorted_matches:
+        parsed = _parse_datetime(match.scheduled_at)
+        local_time = parsed.astimezone(timezone_info).strftime("%H:%M") if parsed else "—"
+        entries.append(
+            [
+                f"🕙 {local_time} — <b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>",
+                f"🏆 {html.escape(match.tournament_name)}",
+                "",
+            ]
+        )
+    footer = ["Источник: PandaScore", "", "#CS2 #РасписаниеМатчей"]
+    lines = list(header)
+    omitted = 0
+    for index, entry in enumerate(entries):
+        remaining = len(entries) - index - 1
+        suffix = ([f"… и ещё {remaining + 1} матчей", ""] if remaining >= 0 else []) + footer
+        if len("\n".join(lines + entry + suffix).strip()) > MAX_TELEGRAM_MESSAGE_LENGTH:
+            omitted = remaining + 1
+            break
+        lines.extend(entry)
+    if omitted:
+        lines.extend([f"… и ещё {omitted} матчей", ""])
+    lines.extend(footer)
+    return "\n".join(lines).strip()
+
+
+def format_daily_digest(matches: Sequence[MatchNormalized], local_now: datetime) -> str:
+    """Build a short evening recap with scores hidden as spoilers."""
+    header = [f"🌙 <b>Итоги дня — {_display_day(local_now)}</b>", ""]
+    entries: list[list[str]] = []
+    sorted_matches = sorted(
+        matches,
+        key=lambda item: _parse_datetime(item.end_date or item.date) or datetime.min.replace(tzinfo=timezone.utc),
+    )
+    for match in sorted_matches:
+        score = f"{match.score1}:{match.score2}"
+        if TELEGRAM_SPOILERS:
+            score = f"<tg-spoiler>{score}</tg-spoiler>"
+        entries.append(
+            [
+                f"⚔️ <b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>",
+                f"📊 {score} · {html.escape(match.tournament_name)}",
+                "",
+            ]
+        )
+    footer = ["Источник: PandaScore", "", "#CS2 #ИтогиДня"]
+    lines = list(header)
+    omitted = 0
+    for index, entry in enumerate(entries):
+        remaining = len(entries) - index - 1
+        suffix = ([f"… и ещё {remaining + 1} матчей", ""] if remaining >= 0 else []) + footer
+        if len("\n".join(lines + entry + suffix).strip()) > MAX_TELEGRAM_MESSAGE_LENGTH:
+            omitted = remaining + 1
+            break
+        lines.extend(entry)
+    if omitted:
+        lines.extend([f"… и ещё {omitted} матчей", ""])
+    lines.extend(footer)
+    return "\n".join(lines).strip()
+
+
 def _match_matches_channel(match: Any, teams: Sequence[str] | None) -> bool:
     """Return True if match should be sent to channel configured with ``teams``."""
     if not teams:
@@ -357,6 +471,113 @@ def _error_response(status_code: int, code: str) -> Dict[str, Any]:
     }
 
 
+def _unwrap_timer_event(event: Dict[str, Any] | None) -> Dict[str, Any]:
+    """Return the JSON payload from a Yandex timer event, or the direct event."""
+    if not isinstance(event, dict):
+        return {}
+    messages = event.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return event
+    first = messages[0]
+    details = first.get("details") if isinstance(first, dict) else None
+    payload = details.get("payload") if isinstance(details, dict) else None
+    if not isinstance(payload, str):
+        raise ValueError("timer payload must be a JSON string")
+    decoded = json.loads(payload)
+    if not isinstance(decoded, dict):
+        raise ValueError("timer payload must contain a JSON object")
+    return decoded
+
+
+def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
+    start, end, local_now = _local_day_window()
+    try:
+        if job == "schedule":
+            fetched = asyncio.run(fetch_upcoming_matches(start, end))
+            selected = [match for match in fetched if match.is_featured]
+            text = format_daily_schedule(selected, local_now) if selected else ""
+        else:
+            fetched_results = asyncio.run(fetch_pandascore_finished_matches(100, start=start, end=end))
+            selected_results, _, _ = apply_quality_filters(fetched_results)
+            selected = [match for match in selected_results if match.is_tier1_lan]
+            text = format_daily_digest(selected, local_now) if selected else ""
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "content_fetch_failed",
+            job=job,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        _notify_admin(f"{job}_source_unavailable", f"Не удалось подготовить выпуск «{job}».")
+        return _error_response(502, "match_source_unavailable")
+
+    if not text:
+        body = {
+            "job": job,
+            "matches_received": len(fetched if job == "schedule" else fetched_results),
+            "matches_selected": 0,
+            "messages_sent": 0,
+            "duplicates_skipped": 0,
+            "delivery_failures": 0,
+            "dry_run": dry_run,
+        }
+        return {"statusCode": 200, "body": json.dumps(body)}
+
+    sent = 0
+    duplicates = 0
+    failures = 0
+    preview = text if dry_run else None
+    day_key = local_now.date().isoformat()
+    for channel in _iter_channels():
+        if dry_run:
+            sent += 1
+            continue
+        channel_id = str(channel.get("id") or channel.get("name", "unknown"))
+        content_uid = f"{job}_{day_key}_{channel_id}"
+        claim = None
+        try:
+            claim = asyncio.run(claim_content_delivery(content_uid))
+            if claim is None:
+                duplicates += 1
+                continue
+            send_to_telegram(channel["chat_id"], text)
+            asyncio.run(mark_content_processed(content_uid, job))
+            sent += 1
+        except Exception as exc:
+            failures += 1
+            if claim is not None:
+                try:
+                    asyncio.run(release_delivery_claim(claim))
+                except Exception:
+                    pass
+            log_event(
+                logger,
+                logging.ERROR,
+                "content_publish_failed",
+                job=job,
+                channel=channel_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+
+    if failures:
+        _notify_admin("delivery_failed", f"Не доставлен выпуск «{job}»: ошибок {failures}.")
+    body = {
+        "job": job,
+        "matches_received": len(fetched if job == "schedule" else fetched_results),
+        "matches_selected": len(selected),
+        "messages_sent": sent,
+        "duplicates_skipped": duplicates,
+        "delivery_failures": failures,
+        "dry_run": dry_run,
+    }
+    if preview is not None:
+        body["preview"] = preview
+    return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
+
+
 def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     """Yandex Cloud Functions entry point."""
 
@@ -366,8 +587,14 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     mode = _parse_mode(None)
     dry_run = False
     include_filtered = False
+    job = "results"
     try:
+        event = _unwrap_timer_event(event)
         if isinstance(event, dict):
+            requested_job = event.get("job", "results")
+            if requested_job not in CONTENT_JOBS:
+                raise ValueError("job must be results, schedule, or digest")
+            job = requested_job
             requested = event.get("limit")
             if isinstance(requested, int) and not isinstance(requested, bool):
                 limit = max(MIN_MATCHES, min(MAX_MATCHES, requested))
@@ -395,7 +622,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             missing_config.append("object_storage_bucket")
         if not any(True for _ in _iter_channels()):
             missing_config.append("delivery_channels")
-        if source == "pandascore" and not PANDASCORE_API_TOKEN:
+        if job in {"schedule", "digest"} and not PANDASCORE_API_TOKEN:
+            missing_config.append("match_source_credentials")
+        elif source == "pandascore" and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
         elif source == "liquipedia" and not LIQUIPEDIA_API_KEY:
             missing_config.append("match_source_credentials")
@@ -412,6 +641,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             )
             _notify_admin("configuration_invalid", "Конфигурация функции неполна.")
             return _error_response(503, "configuration_error")
+
+    if job in {"schedule", "digest"}:
+        return _handle_content_job(job, dry_run)
 
     try:
         log_event(logger, logging.INFO, "handler_start", limit=limit, source=source, mode=mode, dry_run=dry_run)
