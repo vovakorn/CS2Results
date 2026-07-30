@@ -5,10 +5,20 @@
     "PGL",
     "BLAST Open",
     "BLAST Rivals",
+    "BLAST Bounty",
     "Esports World Cup",
     "FISSURE Playground",
     "CS Asia Championships",
     "Major"
+  ],
+  "featured_tier2_tournament_patterns": [
+    "CCT",
+    "Thunderpick World Championship",
+    "BetBoom Dacha",
+    "YaLLa Compass",
+    "StarLadder",
+    "RES Regional",
+    "Skyesports Masters"
   ],
   "online_location_markers": [
     "online",
