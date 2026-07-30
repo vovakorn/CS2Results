@@ -1,8 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from cs2bot.match_sources.filters import detect_operator, is_tier1_lan, is_valid_match
-from cs2bot.match_sources.models import MatchNormalized
+from cs2bot.match_sources.filters import (
+    detect_operator,
+    is_featured_upcoming,
+    is_tier1_lan,
+    is_valid_match,
+)
+from cs2bot.match_sources.models import MatchNormalized, UpcomingMatchNormalized
 
 
 def _match(**kwargs):
@@ -19,6 +24,16 @@ def _match(**kwargs):
     }
     data.update(kwargs)
     return MatchNormalized(**data)
+
+
+def _upcoming(tournament_name, team1_name="NAVI", team2_name="FaZe"):
+    return UpcomingMatchNormalized(
+        match_id="upcoming-1",
+        tournament_name=tournament_name,
+        team1_name=team1_name,
+        team2_name=team2_name,
+        scheduled_at="2026-07-30T11:00:00Z",
+    )
 
 
 def test_valid_match_passes():
@@ -142,3 +157,30 @@ def test_known_operators_are_detected():
     assert detect_operator("BLAST Open Rotterdam 2026") == "BLAST"
     assert detect_operator("Esports World Cup 2026") == "Esports World Cup"
     assert detect_operator("FISSURE Playground") == "FISSURE"
+
+
+def test_upcoming_tier1_event_is_featured():
+    assert is_featured_upcoming(_upcoming("BLAST Bounty — Summer 2026")) == (
+        True,
+        "tier1_tournament",
+    )
+
+
+def test_popular_team_in_small_event_is_not_featured():
+    assert is_featured_upcoming(_upcoming("CIS LAN Championship — Season 6")) == (
+        False,
+        "not_featured",
+    )
+
+
+def test_popular_team_in_named_tier2_event_is_featured():
+    assert is_featured_upcoming(_upcoming("CCT Season 4 Europe")) == (
+        True,
+        "popular_team",
+    )
+
+
+def test_tier2_event_without_popular_team_is_not_featured():
+    assert is_featured_upcoming(
+        _upcoming("CCT Season 4 Europe", team1_name="Team A", team2_name="Team B")
+    ) == (False, "not_featured")

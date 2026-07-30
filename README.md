@@ -61,6 +61,7 @@ MAX_SOURCE_RESPONSE_BYTES=5000000
 ```json
 {
   "tournament_patterns": ["IEM", "ESL Pro League", "Major"],
+  "featured_tier2_tournament_patterns": ["CCT", "Thunderpick World Championship", "BetBoom Dacha"],
   "online_location_markers": ["online", "remote"],
   "trusted_lan_tournament_patterns": ["Major", "IEM Cologne", "IEM Katowice"],
   "tournament_exclusion_patterns": ["qualifier", "showmatch", "academy league"],
@@ -141,7 +142,7 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 
 Primary source `pandascore` использует документированный endpoint `GET /csgo/matches/past` и передаёт токен в заголовке `Authorization`. Адаптер принимает только записи со статусом `finished`. Валидатор блокирует `0:0`, ничьи без подтверждённого победителя и невозможный итог BO1/BO3/BO5. Бесплатный Fixtures-план предоставляет итог серии, команды и турнир; карты не являются обязательной частью MVP.
 
-Для утреннего расписания используется документированный endpoint `GET /csgo/matches/upcoming`. Окно запроса соответствует текущему календарному дню в `DISPLAY_TIMEZONE`. В расписание попадают Tier-1 турниры, а также матчи популярных команд; qualifiers, showmatch и молодёжные составы исключаются. Список популярных команд настраивается через `popular_teams` в Tier-1 конфиге.
+Для утреннего расписания используется документированный endpoint `GET /csgo/matches/upcoming`. Окно запроса соответствует текущему календарному дню в `DISPLAY_TIMEZONE`. В расписание попадают Tier-1 турниры, а также матчи популярных команд на явно перечисленных крупных Tier-2 турнирах; qualifiers, showmatch, мелкие турниры и молодёжные составы исключаются. Списки популярных команд и заметных Tier-2 турниров настраиваются через `popular_teams` и `featured_tier2_tournament_patterns`.
 
 Если PandaScore вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на одобренный LiquipediaDB API при `ENABLE_LIQUIPEDIA_FALLBACK=1`. Liquipedia вызывается через `https://api.liquipedia.net/api/v3/match` с `Authorization: Apikey ...`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует.
 

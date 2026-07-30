@@ -11,10 +11,20 @@ DEFAULT_TIER1_TOURNAMENT_PATTERNS = [
     "PGL",
     "BLAST Open",
     "BLAST Rivals",
+    "BLAST Bounty",
     "Esports World Cup",
     "FISSURE Playground",
     "CS Asia Championships",
     "Major",
+]
+DEFAULT_FEATURED_TIER2_TOURNAMENT_PATTERNS = [
+    "CCT",
+    "Thunderpick World Championship",
+    "BetBoom Dacha",
+    "YaLLa Compass",
+    "StarLadder",
+    "RES Regional",
+    "Skyesports Masters",
 ]
 
 DEFAULT_ONLINE_LOCATION_MARKERS = ["online", "remote"]
@@ -146,6 +156,10 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 TIER1_TOURNAMENT_PATTERNS = _list_setting("tournament_patterns", DEFAULT_TIER1_TOURNAMENT_PATTERNS)
+FEATURED_TIER2_TOURNAMENT_PATTERNS = _list_setting(
+    "featured_tier2_tournament_patterns",
+    DEFAULT_FEATURED_TIER2_TOURNAMENT_PATTERNS,
+)
 ONLINE_LOCATION_MARKERS = _list_setting("online_location_markers", DEFAULT_ONLINE_LOCATION_MARKERS)
 TRUSTED_LAN_TOURNAMENT_PATTERNS = _list_setting(
     "trusted_lan_tournament_patterns",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from .config import (
+    FEATURED_TIER2_TOURNAMENT_PATTERNS,
     ONLINE_LOCATION_MARKERS,
     POPULAR_TEAMS,
     TEAM_EXCLUSION_PATTERNS,
@@ -134,6 +135,9 @@ def is_featured_upcoming(match: UpcomingMatchNormalized) -> tuple[bool, str | No
         MatchNormalized._identity_part(team)
         for team in POPULAR_TEAMS
     }
-    if normalized_teams & normalized_popular:
+    if (
+        normalized_teams & normalized_popular
+        and _contains_pattern(match.tournament_name, FEATURED_TIER2_TOURNAMENT_PATTERNS)
+    ):
         return True, "popular_team"
     return False, "not_featured"
