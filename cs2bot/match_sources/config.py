@@ -58,6 +58,24 @@ DEFAULT_TEAM_ALIASES = {
     "g2 esports": "g2",
     "g2": "g2",
 }
+DEFAULT_POPULAR_TEAMS = [
+    "Natus Vincere",
+    "NAVI",
+    "Team Spirit",
+    "Vitality",
+    "MOUZ",
+    "FaZe",
+    "G2",
+    "Falcons",
+    "Team Liquid",
+    "Liquid",
+    "FURIA",
+    "The MongolZ",
+    "Astralis",
+    "Virtus.pro",
+    "Aurora",
+    "HEROIC",
+]
 
 
 def _load_json_config(env_name: str) -> dict:
@@ -142,6 +160,7 @@ TEAM_EXCLUSION_PATTERNS = _list_setting(
     DEFAULT_TEAM_EXCLUSION_PATTERNS,
 )
 TEAM_ALIASES = _dict_setting("team_aliases", DEFAULT_TEAM_ALIASES)
+POPULAR_TEAMS = _list_setting("popular_teams", DEFAULT_POPULAR_TEAMS)
 TIER1_PRIZE_POOL_THRESHOLD_USD = _int_setting(
     "TIER1_PRIZE_POOL_THRESHOLD_USD",
     500000,

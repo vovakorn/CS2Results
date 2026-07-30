@@ -29,6 +29,14 @@
     "youth",
     "junior"
   ],
+  "popular_teams": [
+    "NAVI",
+    "Team Spirit",
+    "Vitality",
+    "MOUZ",
+    "FaZe",
+    "G2"
+  ],
   "team_aliases": {
     "natus vincere": "navi",
     "navi": "navi",

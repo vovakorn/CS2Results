@@ -265,6 +265,86 @@ async def claim_channel_delivery(
         raise StorageUnavailableError(f"claim reclaim failed for {key}") from exc
 
 
+async def claim_content_delivery(
+    content_uid: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> DeliveryClaim | None:
+    """Atomically reserve a daily schedule or digest publication."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    uid = f"content_{safe_storage_part(content_uid)}"
+    if await is_processed(uid, client=s3, bucket=bucket_name):
+        return None
+
+    key = claim_key(uid)
+    reference = now or datetime.now(timezone.utc)
+    expires_at = reference + timedelta(seconds=DELIVERY_CLAIM_TTL_SECONDS)
+    claim_id = uuid.uuid4().hex
+    body = json.dumps(
+        {
+            "content_uid": uid,
+            "claim_id": claim_id,
+            "status": "sending",
+            "claimed_at": reference.isoformat().replace("+00:00", "Z"),
+            "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+        }
+    ).encode("utf-8")
+    metadata = {"expires-at": str(int(expires_at.timestamp())), "claim-id": claim_id}
+
+    def _put(if_none_match: bool = False, etag: str | None = None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket_name,
+            "Key": key,
+            "Body": body,
+            "ContentType": "application/json",
+            "Metadata": metadata,
+        }
+        if if_none_match:
+            kwargs["IfNoneMatch"] = "*"
+        if etag:
+            kwargs["IfMatch"] = etag
+        return s3.put_object(**kwargs)
+
+    try:
+        response = await asyncio.to_thread(_put, True, None)
+        return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
+    except ClientError as exc:
+        if not _is_precondition_failed(exc):
+            raise StorageUnavailableError(f"content claim put failed for {key}") from exc
+
+    try:
+        existing = await asyncio.to_thread(
+            s3.head_object,
+            Bucket=bucket_name,
+            Key=key,
+        )
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return await claim_content_delivery(
+                content_uid,
+                client=s3,
+                bucket=bucket_name,
+                now=reference,
+            )
+        raise StorageUnavailableError(f"content claim head failed for {key}") from exc
+
+    try:
+        existing_expiry = int(existing.get("Metadata", {}).get("expires-at"))
+    except (TypeError, ValueError):
+        existing_expiry = int((reference + timedelta(seconds=DELIVERY_CLAIM_TTL_SECONDS)).timestamp())
+    if existing_expiry > int(reference.timestamp()):
+        return None
+    try:
+        response = await asyncio.to_thread(_put, False, existing.get("ETag"))
+        return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return None
+        raise StorageUnavailableError(f"content claim reclaim failed for {key}") from exc
+
+
 async def release_delivery_claim(
     claim: DeliveryClaim,
     client: Any | None = None,
@@ -373,3 +453,34 @@ async def mark_channel_processed(
     except ClientError as exc:
         logger.error('storage_error="put_object failed" key="%s" error="%s"', key, exc)
         raise StorageUnavailableError(f"put_object failed for {key}") from exc
+
+
+async def mark_content_processed(
+    content_uid: str,
+    content_type: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> None:
+    """Persist completion only after Telegram accepted the daily publication."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    uid = f"content_{safe_storage_part(content_uid)}"
+    key = processed_key(uid)
+    payload = {
+        "content_uid": uid,
+        "content_type": content_type,
+        "processed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+
+    def _put() -> None:
+        s3.put_object(
+            Bucket=bucket_name,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+        )
+
+    try:
+        await asyncio.to_thread(_put)
+    except ClientError as exc:
+        raise StorageUnavailableError(f"content put_object failed for {key}") from exc

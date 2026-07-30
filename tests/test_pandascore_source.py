@@ -28,6 +28,16 @@ def _sample_match():
     }
 
 
+def _sample_upcoming():
+    item = _sample_match()
+    item["id"] = 67890
+    item["status"] = "not_started"
+    item["scheduled_at"] = "2026-07-30T11:00:00Z"
+    item["end_at"] = None
+    item["results"] = []
+    return item
+
+
 def test_pandascore_normalizes_series_result_by_team_id():
     matches = pandascore_source._normalize_raw_matches([_sample_match()])
 
@@ -84,3 +94,30 @@ def test_pandascore_requires_token(monkeypatch):
 
     with pytest.raises(SourceUnavailableError, match="credentials"):
         asyncio.run(pandascore_source.fetch_finished_matches())
+
+
+def test_pandascore_normalizes_featured_upcoming_match():
+    matches = pandascore_source._normalize_raw_upcoming([_sample_upcoming()])
+
+    assert len(matches) == 1
+    match = matches[0]
+    assert match.match_id == "67890"
+    assert match.scheduled_at == "2026-07-30T11:00:00Z"
+    assert match.is_featured is True
+    assert match.feature_reason == "tier1_tournament"
+
+
+def test_pandascore_upcoming_rejects_running_match():
+    item = _sample_upcoming()
+    item["status"] = "running"
+
+    assert pandascore_source._normalize_raw_upcoming([item]) == []
+
+
+def test_pandascore_utc_range_normalizes_timezone():
+    result = pandascore_source._utc_range(
+        datetime.fromisoformat("2026-07-30T00:00:00+03:00"),
+        datetime.fromisoformat("2026-07-31T00:00:00+03:00"),
+    )
+
+    assert result == "2026-07-29T21:00:00Z,2026-07-30T21:00:00Z"
