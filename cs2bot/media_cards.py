@@ -234,6 +234,7 @@ def _draw_logo(
     team_name: str,
     logo_url: str | None,
     accent: tuple[int, int, int],
+    fallback_logo_url: str | None = None,
 ) -> None:
     x, y = center
     draw.ellipse(
@@ -242,16 +243,24 @@ def _draw_logo(
         outline=(*accent, 190),
         width=max(3, diameter // 45),
     )
-    try:
-        logo = fetch_team_logo(logo_url)
-    except MediaCardError as exc:
+    logo = None
+    failures: list[str] = []
+    logo_urls = list(dict.fromkeys(url for url in (logo_url, fallback_logo_url) if url))
+    for candidate_url in logo_urls:
+        try:
+            logo = fetch_team_logo(candidate_url)
+        except MediaCardError as exc:
+            failures.append(str(exc))
+            continue
+        if logo is not None:
+            break
+    if logo is None and logo_urls:
         logger.warning(
-            "team_logo_fallback team=%s host=%s error=%s",
+            "team_logo_fallback team=%s hosts=%s errors=%s",
             team_name,
-            urlparse(logo_url or "").hostname or "missing",
-            str(exc),
+            [urlparse(url).hostname or "missing" for url in logo_urls],
+            failures or ["unavailable"],
         )
-        logo = None
     if logo is not None:
         contained = ImageOps.contain(logo, (int(diameter * 0.68), int(diameter * 0.68)))
         canvas.alpha_composite(contained, (x - contained.width // 2, y - contained.height // 2))
@@ -306,8 +315,26 @@ def render_result_card(match: MatchNormalized) -> bytes:
     )
 
     draw.rounded_rectangle((90, 255, 990, 825), radius=36, fill=(7, 18, 35, 220))
-    _draw_logo(canvas, draw, (285, 455), 250, match.team1_name, match.team1_logo_url, CYAN)
-    _draw_logo(canvas, draw, (795, 455), 250, match.team2_name, match.team2_logo_url, AMBER)
+    _draw_logo(
+        canvas,
+        draw,
+        (285, 455),
+        250,
+        match.team1_name,
+        match.team1_logo_url,
+        CYAN,
+        match.team1_logo_fallback_url,
+    )
+    _draw_logo(
+        canvas,
+        draw,
+        (795, 455),
+        250,
+        match.team2_name,
+        match.team2_logo_url,
+        AMBER,
+        match.team2_logo_fallback_url,
+    )
 
     score = f"{match.score1}:{match.score2}"
     score_font = _fit_font(draw, score, 270, 144, 96)
@@ -390,8 +417,26 @@ def render_schedule_card(
         y1 = y0 + row_height - 14
         center_y = (y0 + y1) // 2
         draw.rounded_rectangle((70, y0, width - 70, y1), radius=28, fill=(8, 21, 41, 225))
-        _draw_logo(canvas, draw, (145, center_y), 94, match.team1_name, match.team1_logo_url, CYAN)
-        _draw_logo(canvas, draw, (935, center_y), 94, match.team2_name, match.team2_logo_url, AMBER)
+        _draw_logo(
+            canvas,
+            draw,
+            (145, center_y),
+            94,
+            match.team1_name,
+            match.team1_logo_url,
+            CYAN,
+            match.team1_logo_fallback_url,
+        )
+        _draw_logo(
+            canvas,
+            draw,
+            (935, center_y),
+            94,
+            match.team2_name,
+            match.team2_logo_url,
+            AMBER,
+            match.team2_logo_fallback_url,
+        )
 
         try:
             parsed = datetime.fromisoformat(match.scheduled_at.replace("Z", "+00:00"))

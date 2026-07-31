@@ -122,7 +122,10 @@ def _upcoming_diagnostic(match: UpcomingMatchNormalized) -> Dict[str, Any]:
         "tournament": match.tournament_name,
         "competition_key": match.competition_key,
         "teams": [match.team1_name, match.team2_name],
-        "team_logos_present": [bool(match.team1_logo_url), bool(match.team2_logo_url)],
+        "team_logos_present": [
+            bool(match.team1_logo_url or match.team1_logo_fallback_url),
+            bool(match.team2_logo_url or match.team2_logo_fallback_url),
+        ],
         "scheduled_at": match.scheduled_at,
         "feature_reason": match.feature_reason,
     }
