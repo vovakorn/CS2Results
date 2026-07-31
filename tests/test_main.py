@@ -50,13 +50,15 @@ def _upcoming():
 
 def test_format_match_uses_normalized_fields():
     text = main.format_match(_match())
-    assert "⚔️ <b>NAVI — FaZe</b>" in text
-    assert "Счёт: <tg-spoiler>2:1</tg-spoiler>" in text
-    assert "Победитель: <tg-spoiler>NAVI</tg-spoiler>" in text
-    assert "🏆 <b>IEM Cologne 2026</b>" in text
+    assert "<b>NAVI</b>  <tg-spoiler>2 : 1</tg-spoiler>  <b>FAZE</b>" in text
+    assert "Победитель: <tg-spoiler><b>NAVI</b></tg-spoiler>" in text
+    assert "<b>IEM COLOGNE 2026</b>" in text
     assert "Match ID" not in text
-    assert "Источник: PandaScore" in text
-    assert "#CS2 #РезультатыМатчей" in text
+    assert "PandaScore · #CS2 #РезультатыМатчей" in text
+    assert "🏆" not in text
+    assert "⚔️" not in text
+    assert "📊" not in text
+    assert "✅" not in text
 
 
 def test_format_match_omits_match_time():
@@ -82,7 +84,7 @@ def test_format_match_includes_maps_and_omits_time():
 
     assert "Дата:" not in text
     assert "12:40" not in text
-    assert "Карты: Mirage 13:11, Ancient 7:13" in text
+    assert "Карты — Mirage 13:11 · Ancient 7:13" in text
 
 
 def test_format_match_drops_untrusted_source_url():
@@ -100,7 +102,7 @@ def test_format_match_allows_expected_source_url():
     match.match_url = "https://liquipedia.net/counterstrike/IEM_Cologne/Matches"
 
     assert match.match_url in main.format_match(match)
-    assert "Источник: <a href=" in main.format_match(match)
+    assert '<a href="https://liquipedia.net/' in main.format_match(match)
 
 
 def test_format_match_escapes_untrusted_html():
@@ -110,8 +112,8 @@ def test_format_match_escapes_untrusted_html():
     text = main.format_match(match)
 
     assert "<script>" not in text
-    assert "&lt;script&gt;" in text
-    assert "&lt;b&gt;Fake&lt;/b&gt;" in text
+    assert "&lt;SCRIPT&gt;" in text
+    assert "&lt;B&gt;FAKE&lt;/B&gt;" in text
 
 
 def test_format_match_can_disable_spoilers(monkeypatch):
@@ -120,7 +122,7 @@ def test_format_match_can_disable_spoilers(monkeypatch):
     text = main.format_match(_match())
 
     assert "<tg-spoiler>" not in text
-    assert "Счёт: 2:1" in text
+    assert "<b>NAVI</b>  2 : 1  <b>FAZE</b>" in text
 
 
 def test_format_match_caps_telegram_message_length():
@@ -211,7 +213,7 @@ def test_result_uses_spoiler_photo_when_media_cards_enabled(monkeypatch):
     assert sent_text == []
     assert sent_photos[0][0][1] == b"card"
     assert sent_photos[0][1]["has_spoiler"] is True
-    assert "<tg-spoiler>2:1</tg-spoiler>" in sent_photos[0][0][2]
+    assert "<tg-spoiler>2 : 1</tg-spoiler>" in sent_photos[0][0][2]
 
 
 def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):
@@ -248,7 +250,7 @@ def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):
 
     assert response["statusCode"] == 200
     assert sent_text[0][0] == "chat"
-    assert "NAVI — FaZe" in sent_text[0][1]
+    assert "<b>NAVI</b>  <tg-spoiler>2 : 1</tg-spoiler>  <b>FAZE</b>" in sent_text[0][1]
 
 
 def test_handler_dry_run_reports_rejected_match_diagnostics(monkeypatch):
