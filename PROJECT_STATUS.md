@@ -17,14 +17,17 @@
 
 - MVP работает в production на Yandex Cloud Functions.
 - Основная ветка GitHub: `main`.
-- Текущий commit: `f62c144` (`Mirror schedule header lines (#42)`).
-- Последняя проверка: 167 тестов успешно.
+- Текущий commit: `4aeb650` (`Make Yandex function deploy fail closed (#46)`).
+- Последняя проверка: 176 тестов успешно.
 - GitHub Actions проверяет Python 3.11 и 3.12, зависимости, безопасность и сборку архива.
 - Последняя активная версия Cloud Function: `d4eqfr5ou7j3dmaihjbh`.
 - Function ID: `d4e6e13rlrl7go01m2q2`.
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
 - Production runtime: Python 3.12.
 - Handler: `cs2bot.main.handler`.
+- Версия `d4eqfr5ou7j3dmaihjbh` закреплена стабильным тегом `production`.
+- Все три timer trigger вызывают тег `production`, а не автоматически меняющийся
+  `$latest`.
 
 ## Автоматические публикации
 
@@ -83,6 +86,11 @@
 - При ошибке карточки бот возвращается к текстовому сообщению.
 - Критические ошибки отправляются администратору Telegram с cooldown.
 - Telegram admin chat ID настроен; его значение не следует публиковать в документации.
+- `yc CLI` установлен и настроен для read-only проверок без браузера.
+- Deploy-скрипт переносит environment variables и ссылки Lockbox из production,
+  проверяет candidate через `dry_run` и только затем переключает production-тег.
+- Deploy останавливается до создания версии, если таймеры не закреплены на
+  `production`, отсутствуют обязательные настройки или Lockbox-привязки.
 
 ## Что уже завершено
 
@@ -95,6 +103,8 @@
 - Спойлеры для результатов.
 - Канал оформлен: название, аватар, описание и приветственный закреплённый пост.
 - GitHub CI, Dependabot и воспроизводимая сборка Cloud Function.
+- Безопасный CLI deploy с candidate-проверкой, стабильным production-тегом и
+  автоматическими fail-closed тестами.
 
 ## Что проверить после запуска
 
@@ -149,4 +159,5 @@
 - `docs/yandex-cloud-deploy.md` — развёртывание.
 - `docs/object-storage-lifecycle.md` — lifecycle состояния.
 - `scripts/build_function_zip.sh` — сборка архива функции.
+- `scripts/deploy_yandex_function.sh` — безопасная проверка и deploy через `yc`.
 - `.github/workflows/tests.yml` — CI.
