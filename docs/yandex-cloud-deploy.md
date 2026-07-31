@@ -103,7 +103,7 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 ```json
 {
   "trusted_lan_tournament_phase_patterns": {
-    "BLAST Bounty": ["Finals"]
+    "BLAST Bounty": ["Finals", "Playoffs"]
   }
 }
 ```
