@@ -166,6 +166,16 @@ def test_pandascore_prefers_dark_mode_team_logo():
     match = pandascore_source._normalize_raw_upcoming([item])[0]
 
     assert match.team1_logo_url.endswith("/10/navi-dark.png")
+    assert match.team1_logo_fallback_url.endswith("/10/navi.png")
+
+
+def test_pandascore_uses_default_logo_without_dark_mode_variant():
+    item = _sample_upcoming()
+
+    match = pandascore_source._normalize_raw_upcoming([item])[0]
+
+    assert match.team1_logo_url.endswith("/10/navi.png")
+    assert match.team1_logo_fallback_url is None
 
 
 def test_pandascore_upcoming_rejects_running_match():

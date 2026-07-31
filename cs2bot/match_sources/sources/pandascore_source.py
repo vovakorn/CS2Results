@@ -38,14 +38,18 @@ def _name(value: Any) -> str | None:
     return None
 
 
-def _image_url(value: Any) -> str | None:
+def _image_urls(value: Any) -> tuple[str | None, str | None]:
     if not isinstance(value, dict):
-        return None
+        return None, None
+    urls: list[str] = []
     for field in ("dark_mode_image_url", "image_url"):
         image_url = value.get(field)
         if isinstance(image_url, str) and image_url.strip():
-            return image_url.strip()
-    return None
+            cleaned = image_url.strip()
+            if cleaned not in urls:
+                urls.append(cleaned)
+    urls.extend([None, None])
+    return urls[0], urls[1]
 
 
 def _tournament_name(item: dict[str, Any]) -> str | None:
@@ -90,14 +94,15 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
     if not isinstance(opponents, list) or len(opponents) != 2:
         return None
 
-    normalized_opponents: list[tuple[str, int | None, str | None]] = []
+    normalized_opponents: list[tuple[str, int | None, str | None, str | None]] = []
     for entry in opponents:
         opponent = entry.get("opponent") if isinstance(entry, dict) else None
         team_name = _name(opponent)
         team_id = _optional_int(opponent.get("id")) if isinstance(opponent, dict) else None
         if not team_name:
             return None
-        normalized_opponents.append((team_name, team_id, _image_url(opponent)))
+        logo_url, logo_fallback_url = _image_urls(opponent)
+        normalized_opponents.append((team_name, team_id, logo_url, logo_fallback_url))
 
     scores_by_team: dict[int, int] = {}
     results = item.get("results")
@@ -134,6 +139,8 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         team2_name=normalized_opponents[1][0],
         team1_logo_url=normalized_opponents[0][2],
         team2_logo_url=normalized_opponents[1][2],
+        team1_logo_fallback_url=normalized_opponents[0][3],
+        team2_logo_fallback_url=normalized_opponents[1][3],
         score1=score1,
         score2=score2,
         status="finished",
@@ -177,13 +184,14 @@ def _normalize_upcoming_item(item: dict[str, Any]) -> UpcomingMatchNormalized | 
     opponents = item.get("opponents")
     if not isinstance(opponents, list) or len(opponents) != 2:
         return None
-    teams: list[tuple[str, str | None]] = []
+    teams: list[tuple[str, str | None, str | None]] = []
     for entry in opponents:
         opponent = entry.get("opponent") if isinstance(entry, dict) else None
         team_name = _name(opponent)
         if not team_name:
             return None
-        teams.append((team_name, _image_url(opponent)))
+        logo_url, logo_fallback_url = _image_urls(opponent)
+        teams.append((team_name, logo_url, logo_fallback_url))
     tournament_name = _tournament_name(item)
     match_id = item.get("id")
     scheduled_at = item.get("scheduled_at") or item.get("begin_at")
@@ -197,6 +205,8 @@ def _normalize_upcoming_item(item: dict[str, Any]) -> UpcomingMatchNormalized | 
         team2_name=teams[1][0],
         team1_logo_url=teams[0][1],
         team2_logo_url=teams[1][1],
+        team1_logo_fallback_url=teams[0][2],
+        team2_logo_fallback_url=teams[1][2],
         scheduled_at=str(scheduled_at),
         best_of=_optional_int(item.get("number_of_games")),
     )

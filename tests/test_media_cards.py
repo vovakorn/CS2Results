@@ -199,3 +199,37 @@ def test_schedule_uses_full_tournament_name_not_competition_key(monkeypatch):
 
     assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" in drawn
     assert "BLAST BOUNTY 2026" not in drawn
+
+
+def test_schedule_falls_back_to_default_logo_when_dark_variant_fails(monkeypatch):
+    match = _upcoming()
+    match = match.model_copy(
+        update={
+            "team1_logo_url": "https://cdn-api.pandascore.co/images/team/image/1/dark.svg",
+            "team1_logo_fallback_url": (
+                "https://cdn-api.pandascore.co/images/team/image/1/default.png"
+            ),
+        }
+    )
+    requested = []
+
+    def fake_fetch(url):
+        requested.append(url)
+        if url.endswith("dark.svg"):
+            raise media_cards.MediaCardError("unsupported dark logo")
+        if url.endswith("default.png"):
+            return Image.new("RGBA", (20, 20), (255, 0, 0, 255))
+        return None
+
+    monkeypatch.setattr(media_cards, "fetch_team_logo", fake_fetch)
+
+    media_cards.render_schedule_card(
+        [match],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert requested[:2] == [
+        "https://cdn-api.pandascore.co/images/team/image/1/dark.svg",
+        "https://cdn-api.pandascore.co/images/team/image/1/default.png",
+    ]
