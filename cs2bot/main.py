@@ -30,6 +30,7 @@ from .match_sources.config import (
     OBJECT_STORAGE_BUCKET,
     PANDASCORE_API_TOKEN,
 )
+from .match_sources.filters import is_tier1_candidate
 from .match_sources.match_fetcher import SourceName, apply_quality_filters, get_new_finished_matches
 from .match_sources.models import MatchNormalized, UpcomingMatchNormalized
 from .match_sources.sources.pandascore_source import (
@@ -615,6 +616,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
     try:
         log_event(logger, logging.INFO, "handler_start", limit=limit, source=source, mode=mode, dry_run=dry_run)
+        rejected_matches: List[MatchNormalized] = []
         matches = asyncio.run(
             get_new_finished_matches(
                 limit=limit,
@@ -622,6 +624,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 dry_run=dry_run,
                 include_filtered=include_filtered,
                 check_processed=False,
+                rejected_matches=rejected_matches,
             )
         )
     except Exception as exc:
@@ -637,6 +640,31 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             "Источник матчей недоступен, пуст или не обновлялся более 48 часов.",
         )
         return _error_response(502, "match_source_unavailable")
+
+    unconfirmed_tier1 = [
+        match
+        for match in rejected_matches
+        if match.filter_reason == "lan_unconfirmed" and is_tier1_candidate(match)
+    ]
+    if unconfirmed_tier1 and not dry_run:
+        examples = "; ".join(
+            f"{match.team1_name} — {match.team2_name} ({match.tournament_name})"
+            for match in unconfirmed_tier1[:3]
+        )
+        log_event(
+            logger,
+            logging.WARNING,
+            "tier1_lan_unconfirmed",
+            matches=len(unconfirmed_tier1),
+            examples=examples,
+        )
+        _notify_admin(
+            "tier1_lan_unconfirmed",
+            (
+                f"Найдены Tier-1 матчи без подтверждения LAN: {len(unconfirmed_tier1)}. "
+                f"Публикация остановлена. Примеры: {examples}"
+            ),
+        )
 
     channel_stats: Dict[str, int] = {}
     skipped_duplicates = 0
@@ -743,6 +771,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
     metrics = {
         "matches_received": len(matches),
+        "tier1_lan_unconfirmed": len(unconfirmed_tier1),
         "messages_sent": sent_messages,
         "duplicates_skipped": skipped_duplicates,
         "filtered_skipped": skipped_filtered,
@@ -758,6 +787,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     body = {
         "requested_limit": limit,
         "matches_received": len(matches),
+        "tier1_lan_unconfirmed": len(unconfirmed_tier1),
         "messages_sent": sent_messages,
         "per_channel": channel_stats,
         "duplicates_skipped": skipped_duplicates,

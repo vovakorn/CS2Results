@@ -64,6 +64,7 @@ MAX_SOURCE_RESPONSE_BYTES=5000000
   "featured_tier2_tournament_patterns": ["CCT", "Thunderpick World Championship", "BetBoom Dacha"],
   "online_location_markers": ["online", "remote"],
   "trusted_lan_tournament_patterns": ["Major", "IEM Cologne", "IEM Katowice"],
+  "trusted_lan_tournament_phase_patterns": {"BLAST Bounty": ["Finals"]},
   "tournament_exclusion_patterns": ["qualifier", "showmatch", "academy league"],
   "team_exclusion_patterns": ["academy", "youth", "junior"],
   "popular_teams": ["NAVI", "Team Spirit", "Vitality", "MOUZ", "FaZe", "G2"],
@@ -125,6 +126,12 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 - `job=results`: новые подтверждённые Tier-1 LAN результаты.
 - `job=schedule`: один утренний выпуск с Tier-1 матчами и матчами популярных команд.
 - `job=digest`: один вечерний выпуск с итогами Tier-1 LAN; пустой выпуск не публикуется.
+
+Для турниров со смешанным форматом можно доверять только конкретной LAN-фазе.
+Например, `{"BLAST Bounty": ["Finals"]}` пропускает финалы, но не считает
+предшествующую онлайн-стадию LAN-турниром. Если матч выглядит как Tier-1, но
+LAN-статус подтвердить невозможно, публичная отправка блокируется, а
+администратор получает ограниченный по частоте технический алерт.
 
 Пример события для ручного запуска Cloud Function:
 
