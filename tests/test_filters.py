@@ -133,9 +133,30 @@ def test_pandascore_blast_bounty_playoffs_pass_without_location():
     assert is_tier1_lan(match) == (True, None)
 
 
-def test_blast_bounty_online_stage_does_not_inherit_final_lan_status():
+def test_blast_bounty_online_stage_is_included_by_configured_exception():
     match = _match(
         tournament_name="BLAST Bounty — 2026 Season 2 — Online Stage",
+        location=None,
+    )
+
+    assert is_tier1_candidate(match) is True
+    assert is_tier1_lan(match) == (True, None)
+
+
+def test_unlisted_online_tournament_remains_blocked():
+    match = _match(
+        tournament_name="Regional Online Stage",
+        location=None,
+        prize_pool_usd=500000,
+    )
+
+    assert is_tier1_candidate(match) is True
+    assert is_tier1_lan(match) == (False, "online_tournament")
+
+
+def test_blast_bounty_online_qualifier_remains_blocked():
+    match = _match(
+        tournament_name="BLAST Bounty — Online Qualifier — Online Stage",
         location=None,
     )
 

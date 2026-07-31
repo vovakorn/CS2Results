@@ -12,6 +12,7 @@ from .config import (
     TOURNAMENT_EXCLUSION_PATTERNS,
     TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS,
     TRUSTED_LAN_TOURNAMENT_PATTERNS,
+    TRUSTED_ONLINE_TIER1_TOURNAMENT_PHASE_PATTERNS,
 )
 from .models import MatchNormalized, UpcomingMatchNormalized
 
@@ -23,11 +24,14 @@ def _contains_pattern(value: str | None, patterns: list[str]) -> bool:
     return any(pattern.casefold() in lowered for pattern in patterns)
 
 
-def _matches_trusted_lan_phase(tournament_name: str | None) -> bool:
+def _matches_trusted_phase(
+    tournament_name: str | None,
+    phase_config: dict[str, list[str]],
+) -> bool:
     return any(
         _contains_pattern(tournament_name, [tournament_pattern])
         and _contains_pattern(tournament_name, phase_patterns)
-        for tournament_pattern, phase_patterns in TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS.items()
+        for tournament_pattern, phase_patterns in phase_config.items()
     )
 
 
@@ -89,6 +93,11 @@ def detect_operator(tournament_name: str) -> str | None:
 
 
 def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
+    """Select Tier-1 results, including narrowly configured online event phases.
+
+    The function name is retained for compatibility with existing normalized
+    records and storage state.
+    """
     location = match.location or ""
     location_lower = location.casefold()
     tournament_lower = match.tournament_name.casefold()
@@ -100,6 +109,13 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
 
     if excluded_team:
         return False, "excluded_team"
+
+    tier1_confirmed = is_tier1_candidate(match)
+    if not excluded and tier1_confirmed and _matches_trusted_phase(
+        match.tournament_name,
+        TRUSTED_ONLINE_TIER1_TOURNAMENT_PHASE_PATTERNS,
+    ):
+        return True, None
 
     if match.is_lan is False:
         lan_confirmed = False
@@ -122,14 +138,15 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     elif _contains_pattern(
         match.tournament_name,
         TRUSTED_LAN_TOURNAMENT_PATTERNS,
-    ) or _matches_trusted_lan_phase(match.tournament_name):
+    ) or _matches_trusted_phase(
+        match.tournament_name,
+        TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS,
+    ):
         lan_confirmed = True
         lan_reason = None
     else:
         lan_confirmed = False
         lan_reason = "lan_unconfirmed"
-
-    tier1_confirmed = is_tier1_candidate(match)
 
     if lan_confirmed and tier1_confirmed:
         return True, None

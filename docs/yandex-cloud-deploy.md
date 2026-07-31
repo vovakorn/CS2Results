@@ -104,12 +104,15 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 {
   "trusted_lan_tournament_phase_patterns": {
     "BLAST Bounty": ["Finals", "Playoffs"]
+  },
+  "trusted_online_tier1_tournament_phase_patterns": {
+    "BLAST Bounty": ["Online Stage"]
   }
 }
 ```
 
-Так онлайн-часть BLAST Bounty останется заблокированной, а результаты LAN-финалов
-пройдут фильтр даже при отсутствии `location` в ответе PandaScore.
+Так LAN-финалы и явно выбранная онлайн-стадия BLAST Bounty пройдут фильтр,
+а остальные онлайн-турниры останутся заблокированы.
 
 ## 6. Проверка
 

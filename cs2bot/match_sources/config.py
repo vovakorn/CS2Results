@@ -44,6 +44,9 @@ DEFAULT_TRUSTED_LAN_TOURNAMENT_PATTERNS = [
 DEFAULT_TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS = {
     "BLAST Bounty": ["Finals", "Playoffs"],
 }
+DEFAULT_TRUSTED_ONLINE_TIER1_TOURNAMENT_PHASE_PATTERNS = {
+    "BLAST Bounty": ["Online Stage"],
+}
 DEFAULT_TOURNAMENT_EXCLUSION_PATTERNS = [
     "qualifier",
     "open qualifier",
@@ -183,6 +186,10 @@ TRUSTED_LAN_TOURNAMENT_PATTERNS = _list_setting(
 TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS = _dict_list_setting(
     "trusted_lan_tournament_phase_patterns",
     DEFAULT_TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS,
+)
+TRUSTED_ONLINE_TIER1_TOURNAMENT_PHASE_PATTERNS = _dict_list_setting(
+    "trusted_online_tier1_tournament_phase_patterns",
+    DEFAULT_TRUSTED_ONLINE_TIER1_TOURNAMENT_PHASE_PATTERNS,
 )
 TOURNAMENT_EXCLUSION_PATTERNS = _list_setting(
     "tournament_exclusion_patterns",

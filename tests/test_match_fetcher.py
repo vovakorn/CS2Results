@@ -168,16 +168,16 @@ def test_include_filtered_returns_filtered_reason(monkeypatch):
     assert matches[0].filter_reason == "not_tier1"
 
 
-def test_rejected_matches_are_reported_without_entering_public_output(monkeypatch):
-    rejected = _match(
+def test_configured_online_tier1_stage_enters_public_output(monkeypatch):
+    selected = _match(
         source="pandascore",
         tournament_name="BLAST Bounty — 2026 Season 2 — Online Stage",
     )
-    rejected.location = None
-    rejected.end_date = datetime.now(timezone.utc).isoformat()
+    selected.location = None
+    selected.end_date = datetime.now(timezone.utc).isoformat()
 
     async def fake_fetch(source, limit):
-        return [rejected]
+        return [selected]
 
     monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
     diagnostics = []
@@ -191,9 +191,10 @@ def test_rejected_matches_are_reported_without_entering_public_output(monkeypatc
         )
     )
 
-    assert matches == []
-    assert diagnostics == [rejected]
-    assert diagnostics[0].filter_reason == "online_tournament"
+    assert matches == [selected]
+    assert selected.is_tier1_lan is True
+    assert selected.filter_reason is None
+    assert diagnostics == []
 
 
 def test_log_source_freshness_warns_when_latest_match_is_stale(monkeypatch, caplog):

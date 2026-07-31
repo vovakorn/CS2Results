@@ -65,6 +65,7 @@ MAX_SOURCE_RESPONSE_BYTES=5000000
   "online_location_markers": ["online", "remote"],
   "trusted_lan_tournament_patterns": ["Major", "IEM Cologne", "IEM Katowice"],
   "trusted_lan_tournament_phase_patterns": {"BLAST Bounty": ["Finals", "Playoffs"]},
+  "trusted_online_tier1_tournament_phase_patterns": {"BLAST Bounty": ["Online Stage"]},
   "tournament_exclusion_patterns": ["qualifier", "showmatch", "academy league"],
   "team_exclusion_patterns": ["academy", "youth", "junior"],
   "popular_teams": ["NAVI", "Team Spirit", "Vitality", "MOUZ", "FaZe", "G2"],
@@ -130,8 +131,11 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 Для турниров со смешанным форматом можно доверять только конкретной LAN-фазе.
 Например, `{"BLAST Bounty": ["Finals", "Playoffs"]}` пропускает LAN-финалы
 (`Playoffs` — название этой стадии в PandaScore), но не считает
-предшествующую онлайн-стадию LAN-турниром. Если матч выглядит как Tier-1, но
-LAN-статус подтвердить невозможно, публичная отправка блокируется, а
+предшествующую онлайн-стадию LAN-турниром. Отдельный параметр
+`trusted_online_tier1_tournament_phase_patterns` позволяет явно публиковать
+выбранные онлайн-стадии Tier-1 событий, не открывая остальные онлайн-турниры.
+Если матч выглядит как Tier-1, но не относится ни к подтверждённой LAN-фазе,
+ни к настроенному онлайн-исключению, публичная отправка блокируется, а
 администратор получает ограниченный по частоте технический алерт.
 
 Пример события для ручного запуска Cloud Function:
