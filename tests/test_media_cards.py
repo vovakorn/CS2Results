@@ -272,6 +272,90 @@ def test_schedule_header_is_centered_on_canvas(monkeypatch):
     assert (canvas_center, "31 ИЮЛЯ") in drawn
 
 
+def test_schedule_channel_logo_is_centered_at_top(monkeypatch):
+    drawn = []
+
+    def capture(canvas, draw, center, diameter):
+        drawn.append((center, diameter))
+
+    monkeypatch.setattr(media_cards, "_draw_channel_logo", capture)
+
+    media_cards.render_schedule_card(
+        [_upcoming()],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert drawn == [((media_cards.SCHEDULE_CARD_SIZE[0] // 2, 98), 100)]
+
+
+def test_schedule_team_names_are_aligned_to_outer_edges(monkeypatch):
+    drawn = []
+    original = media_cards._aligned_text
+
+    def capture(draw, edge_x, y, text, font, fill, alignment):
+        drawn.append((edge_x, text, alignment))
+        return original(draw, edge_x, y, text, font, fill, alignment)
+
+    monkeypatch.setattr(media_cards, "_aligned_text", capture)
+    match = _upcoming().model_copy(
+        update={
+            "team1_name": "Natus Vincere Junior",
+            "team2_name": "Gaimin Gladiators Academy",
+        }
+    )
+
+    media_cards.render_schedule_card(
+        [match],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert (108, "NATUS VINCERE JUNIOR", "left") in drawn
+    assert (972, "GAIMIN GLADIATORS ACADEMY", "right") in drawn
+
+
+def test_ten_match_schedule_keeps_outer_team_alignment(monkeypatch):
+    drawn = []
+    logos = []
+    original = media_cards._aligned_text
+
+    def capture(draw, edge_x, y, text, font, fill, alignment):
+        drawn.append((edge_x, y, text, alignment))
+        return original(draw, edge_x, y, text, font, fill, alignment)
+
+    def capture_logo(canvas, draw, center, diameter, *args):
+        logos.append((center, diameter))
+
+    monkeypatch.setattr(media_cards, "_aligned_text", capture)
+    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
+    matches = [
+        _upcoming(str(index)).model_copy(
+            update={
+                "team1_name": f"Long Left Team {index}",
+                "team2_name": f"Long Right Team {index}",
+            }
+        )
+        for index in range(10)
+    ]
+
+    media_cards.render_schedule_card(
+        matches,
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert len(drawn) == 20
+    assert [alignment for _, _, _, alignment in drawn] == ["left", "right"] * 10
+    for index in range(10):
+        left_logo, right_logo = logos[index * 2 : index * 2 + 2]
+        left_name, right_name = drawn[index * 2 : index * 2 + 2]
+        assert left_logo[0][0] - left_logo[1] // 2 == left_name[0]
+        assert right_logo[0][0] + right_logo[1] // 2 == right_name[0]
+        assert left_name[1] - (left_logo[0][1] + left_logo[1] // 2) >= 8
+        assert right_name[1] - (right_logo[0][1] + right_logo[1] // 2) >= 8
+
+
 def test_schedule_uses_fallback_logo_when_primary_variant_fails(monkeypatch):
     match = _upcoming()
     match = match.model_copy(

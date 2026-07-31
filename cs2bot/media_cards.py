@@ -71,7 +71,7 @@ def _header_accent_segments(width: int) -> tuple[tuple[int, int], tuple[int, int
     )
 
 
-def _background(size: tuple[int, int]) -> Image.Image:
+def _background(size: tuple[int, int], *, header_accent_y: int = 58) -> Image.Image:
     width, height = size
     image = Image.new("RGB", size, NAVY)
     pixels = image.load()
@@ -96,7 +96,7 @@ def _background(size: tuple[int, int]) -> Image.Image:
     )
     accent_segments = _header_accent_segments(width)
     for (x0, x1), color in zip(accent_segments, (CYAN, AMBER), strict=True):
-        draw.line((x0, 58, x1, 58), fill=(*color, 220), width=8)
+        draw.line((x0, header_accent_y, x1, header_accent_y), fill=(*color, 220), width=8)
     for index in range(7):
         x = -180 + index * 225
         draw.line((x, height, x + 520, 0), fill=(39, 75, 119, 25), width=2)
@@ -130,6 +130,26 @@ def _centered_text(
 ) -> None:
     box = draw.textbbox((0, 0), text, font=font)
     draw.text((center_x - (box[2] - box[0]) / 2, y), text, font=font, fill=fill)
+
+
+def _aligned_text(
+    draw: ImageDraw.ImageDraw,
+    edge_x: int,
+    y: int,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    fill: tuple[int, int, int],
+    alignment: str,
+) -> None:
+    """Draw text against a fixed outer edge so long team names grow inward."""
+    box = draw.textbbox((0, 0), text, font=font)
+    if alignment == "left":
+        text_x = edge_x - box[0]
+    elif alignment == "right":
+        text_x = edge_x - box[2]
+    else:
+        raise ValueError("alignment must be left or right")
+    draw.text((text_x, y), text, font=font, fill=fill)
 
 
 def _safe_logo_url(value: str | None) -> str | None:
@@ -414,16 +434,18 @@ def _draw_wide_schedule_match(
 ) -> None:
     x0, y0, x1, y1 = box
     height = y1 - y0
-    center_y = (y0 + y1) // 2
     draw.rounded_rectangle(box, radius=30, fill=(*PANEL, 237))
     draw.line((x0 + 28, y0 + 1, x0 + 168, y0 + 1), fill=(*CYAN, 190), width=3)
     draw.line((x1 - 168, y0 + 1, x1 - 28, y0 + 1), fill=(*AMBER, 190), width=3)
 
-    logo_diameter = min(142, max(88, int(height * 0.44)))
+    logo_diameter = min(142, max(88, int(height * 0.42)))
+    logo_y = y0 + int(height * 0.34)
+    team1_x = x0 + 135
+    team2_x = x1 - 135
     _draw_logo(
         canvas,
         draw,
-        (x0 + 88, center_y),
+        (team1_x, logo_y),
         logo_diameter,
         match.team1_name,
         match.team1_logo_url,
@@ -433,7 +455,7 @@ def _draw_wide_schedule_match(
     _draw_logo(
         canvas,
         draw,
-        (x1 - 88, center_y),
+        (team2_x, logo_y),
         logo_diameter,
         match.team2_name,
         match.team2_logo_url,
@@ -447,33 +469,38 @@ def _draw_wide_schedule_match(
     _centered_text(
         draw,
         (x0 + x1) // 2,
-        center_y - (76 if height >= 300 else 62),
+        y0 + int(height * 0.27),
         _schedule_time(match, display_timezone),
         _font(time_size),
         AMBER,
     )
-    team_width = 205
-    _centered_text(
+    team_width = (x1 - x0) // 2 - 80
+    team_y = y0 + int(height * 0.61)
+    team1 = match.team1_name.upper()
+    team2 = match.team2_name.upper()
+    _aligned_text(
         draw,
-        x0 + 300,
-        center_y + 2,
-        match.team1_name.upper(),
-        _fit_font(draw, match.team1_name.upper(), team_width, team_size, 20),
+        x0 + 48,
+        team_y,
+        team1,
+        _fit_font(draw, team1, team_width, team_size, 18),
         WHITE,
+        "left",
     )
-    _centered_text(
+    _aligned_text(
         draw,
-        x1 - 300,
-        center_y + 2,
-        match.team2_name.upper(),
-        _fit_font(draw, match.team2_name.upper(), team_width, team_size, 20),
+        x1 - 48,
+        team_y,
+        team2,
+        _fit_font(draw, team2, team_width, team_size, 18),
         WHITE,
+        "right",
     )
     event = match.tournament_name.upper()
     _centered_text(
         draw,
         (x0 + x1) // 2,
-        center_y + (78 if height >= 300 else 62),
+        y1 - (54 if height >= 300 else 46),
         event,
         _fit_font(draw, event, x1 - x0 - 300, event_size, 14, display=True),
         MUTED,
@@ -497,16 +524,17 @@ def _draw_compact_schedule_match(
 
     if height >= 210:
         logo_diameter, time_size, team_size, event_size = 68, 42, 24, 15
-        time_y, logo_y, team_y, event_y = y0 + 19, y0 + 98, y0 + 140, y1 - 46
+        time_y, logo_y, team_y, event_y = y0 + 19, y0 + 92, y0 + 137, y1 - 46
     elif height >= 165:
         logo_diameter, time_size, team_size, event_size = 52, 34, 20, 13
         time_y, logo_y, team_y, event_y = y0 + 12, y0 + 70, y0 + 104, y1 - 34
     else:
-        logo_diameter, time_size, team_size, event_size = 42, 28, 17, 11
-        time_y, logo_y, team_y, event_y = y0 + 7, y0 + 53, y0 + 78, y1 - 27
+        logo_diameter, time_size, team_size, event_size = 36, 25, 15, 10
+        time_y, logo_y, team_y, event_y = y0 + 3, y0 + 45, y0 + 72, y1 - 19
 
-    team1_x = x0 + int((x1 - x0) * 0.27)
-    team2_x = x1 - int((x1 - x0) * 0.27)
+    logo_radius = logo_diameter // 2
+    team1_x = x0 + 22 + logo_radius
+    team2_x = x1 - 22 - logo_radius
     _draw_logo(
         canvas,
         draw,
@@ -536,24 +564,26 @@ def _draw_compact_schedule_match(
         _font(time_size),
         AMBER,
     )
-    name_width = 166 if height >= 210 else 154 if height >= 165 else 146
+    name_width = 194 if height >= 210 else 184 if height >= 165 else 174
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    _centered_text(
+    _aligned_text(
         draw,
-        team1_x,
+        x0 + 22,
         team_y,
         team1,
-        _fit_font(draw, team1, name_width, team_size, 13),
+        _fit_font(draw, team1, name_width, team_size, 11),
         WHITE,
+        "left",
     )
-    _centered_text(
+    _aligned_text(
         draw,
-        team2_x,
+        x1 - 22,
         team_y,
         team2,
-        _fit_font(draw, team2, name_width, team_size, 13),
+        _fit_font(draw, team2, name_width, team_size, 11),
         WHITE,
+        "right",
     )
 
     event = match.tournament_name.upper()
@@ -663,7 +693,7 @@ def render_schedule_card(
     except Exception as exc:
         raise MediaCardError("Schedule timezone is invalid") from exc
 
-    canvas = _background(SCHEDULE_CARD_SIZE).convert("RGBA")
+    canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
     width, height = SCHEDULE_CARD_SIZE
     month_names = (
@@ -681,13 +711,13 @@ def render_schedule_card(
         "НОЯБРЯ",
         "ДЕКАБРЯ",
     )
-    _draw_channel_logo(canvas, draw, (105, 118), 88)
+    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
     header_center = width // 2
-    _centered_text(draw, header_center, 75, "МАТЧИ CS2 СЕГОДНЯ", _font(44, display=True), WHITE)
+    _centered_text(draw, header_center, 207, "МАТЧИ CS2 СЕГОДНЯ", _font(44, display=True), WHITE)
     _centered_text(
         draw,
         header_center,
-        138,
+        286,
         f"{local_now.day} {month_names[local_now.month]}",
         _font(27, display=True),
         CYAN,
@@ -696,12 +726,12 @@ def render_schedule_card(
     sorted_matches = sorted(matches, key=lambda item: item.scheduled_at)
     columns = 1 if len(sorted_matches) <= 3 else 2
     rows = math.ceil(len(sorted_matches) / columns)
-    area_top = 222
+    area_top = 340
     area_bottom = 960
     gap = 14
     available_height = area_bottom - area_top - gap * (rows - 1)
     if columns == 1:
-        max_row_height = {1: 330, 2: 280, 3: 235}[len(sorted_matches)]
+        max_row_height = {1: 390, 2: 280, 3: 195}[len(sorted_matches)]
     else:
         max_row_height = 230
     row_height = min(max_row_height, available_height // rows)
