@@ -324,28 +324,29 @@ def format_match(match: Any) -> str:
     source = _get_attr(match, "source")
     maps = getattr(match, "maps", None)
 
-    safe_team1 = html.escape(team1)
-    safe_team2 = html.escape(team2)
-    safe_event = html.escape(event)
+    safe_team1 = html.escape(team1.upper())
+    safe_team2 = html.escape(team2.upper())
+    safe_event = html.escape(event.upper())
     pieces: List[str] = []
     if event:
-        pieces.append(f"🏆 <b>{safe_event}</b>")
+        pieces.append(f"<b>{safe_event}</b>")
         pieces.append("")
-    pieces.append(f"⚔️ <b>{safe_team1} — {safe_team2}</b>")
     if score1 != "" and score2 != "":
-        safe_score = f"{html.escape(score1)}:{html.escape(score2)}"
+        safe_score = f"{html.escape(score1)} : {html.escape(score2)}"
         try:
             winner = team1 if int(score1) > int(score2) else team2 if int(score2) > int(score1) else ""
         except ValueError:
             winner = ""
         if TELEGRAM_SPOILERS:
             safe_score = f"<tg-spoiler>{safe_score}</tg-spoiler>"
-        pieces.append(f"📊 Счёт: {safe_score}")
+        pieces.append(f"<b>{safe_team1}</b>  {safe_score}  <b>{safe_team2}</b>")
         if winner:
-            safe_winner = html.escape(winner)
+            safe_winner = f"<b>{html.escape(winner.upper())}</b>"
             if TELEGRAM_SPOILERS:
                 safe_winner = f"<tg-spoiler>{safe_winner}</tg-spoiler>"
-            pieces.append(f"✅ Победитель: {safe_winner}")
+            pieces.append(f"Победитель: {safe_winner}")
+    else:
+        pieces.append(f"<b>{safe_team1}</b> — <b>{safe_team2}</b>")
     if maps:
         map_lines = []
         for item in maps:
@@ -359,15 +360,15 @@ def format_match(match: Any) -> str:
             elif name:
                 map_lines.append(html.escape(name))
         if map_lines:
-            pieces.append("🗺 Карты: " + ", ".join(map_lines))
+            pieces.append("Карты — " + " · ".join(map_lines))
     if source:
         source_label = html.escape(SOURCE_LABELS.get(source, source))
         safe_url = _safe_match_url(match_url, source)
         if safe_url:
-            pieces.append(f'Источник: <a href="{html.escape(safe_url, quote=True)}">{source_label}</a>')
-        else:
-            pieces.append(f"Источник: {source_label}")
-    pieces.extend(["", "#CS2 #РезультатыМатчей"])
+            source_label = f'<a href="{html.escape(safe_url, quote=True)}">{source_label}</a>'
+        pieces.extend(["", f"{source_label} · #CS2 #РезультатыМатчей"])
+    else:
+        pieces.extend(["", "#CS2 #РезультатыМатчей"])
 
     message = "\n".join(pieces)
     if len(message) > MAX_TELEGRAM_MESSAGE_LENGTH:
