@@ -178,6 +178,79 @@ def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
     assert marked == []
 
 
+def test_result_uses_spoiler_photo_when_media_cards_enabled(monkeypatch):
+    sent_photos = []
+    sent_text = []
+    match = _match()
+
+    async def fake_get_new_finished_matches(**kwargs):
+        return [match]
+
+    async def fake_claim(*args, **kwargs):
+        return _claim(match, "global")
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent_text.append(args))
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: sent_photos.append((args, kwargs)),
+    )
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 200
+    assert sent_text == []
+    assert sent_photos[0][0][1] == b"card"
+    assert sent_photos[0][1]["has_spoiler"] is True
+    assert "<tg-spoiler>2:1</tg-spoiler>" in sent_photos[0][0][2]
+
+
+def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):
+    sent_text = []
+    match = _match()
+
+    async def fake_get_new_finished_matches(**kwargs):
+        return [match]
+
+    async def fake_claim(*args, **kwargs):
+        return _claim(match, "global")
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: (_ for _ in ()).throw(main.TelegramDeliveryError("failed")),
+    )
+    monkeypatch.setattr(
+        main,
+        "send_to_telegram",
+        lambda chat_id, text, **kwargs: sent_text.append((chat_id, text)),
+    )
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 200
+    assert sent_text[0][0] == "chat"
+    assert "NAVI — FaZe" in sent_text[0][1]
+
+
 def test_handler_dry_run_reports_rejected_match_diagnostics(monkeypatch):
     rejected = _match(team1="Liquid", team2="Spirit")
     rejected.tournament_name = "BLAST Bounty 2026 Season 2"
@@ -531,6 +604,46 @@ def test_telegram_uses_html_parse_mode(monkeypatch):
 
     assert seen["json"]["parse_mode"] == "HTML"
     assert seen["json"]["disable_web_page_preview"] is True
+
+
+def test_telegram_photo_uses_media_spoiler_and_multipart(monkeypatch):
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(main.requests, "post", fake_post)
+
+    main.send_photo_to_telegram(
+        "chat",
+        b"png-data",
+        "<b>result</b>",
+        has_spoiler=True,
+        max_attempts=1,
+    )
+
+    assert seen["url"].endswith("/sendPhoto")
+    assert seen["data"]["parse_mode"] == "HTML"
+    assert seen["data"]["has_spoiler"] == "true"
+    assert seen["files"]["photo"][1] == b"png-data"
+    assert seen["allow_redirects"] is False
+
+
+def test_telegram_photo_rejects_caption_over_limit():
+    with pytest.raises(main.TelegramDeliveryError, match="too long"):
+        main.send_photo_to_telegram(
+            "chat",
+            b"png-data",
+            "x" * (main.MAX_TELEGRAM_CAPTION_LENGTH + 1),
+        )
 
 
 def test_telegram_network_exception_never_exposes_token(monkeypatch):
