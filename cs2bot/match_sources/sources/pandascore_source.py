@@ -42,7 +42,7 @@ def _image_urls(value: Any) -> tuple[str | None, str | None]:
     if not isinstance(value, dict):
         return None, None
     urls: list[str] = []
-    for field in ("dark_mode_image_url", "image_url"):
+    for field in ("image_url", "dark_mode_image_url"):
         image_url = value.get(field)
         if isinstance(image_url, str) and image_url.strip():
             cleaned = image_url.strip()
