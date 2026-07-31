@@ -115,6 +115,19 @@ def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
     }
 
 
+def _upcoming_diagnostic(match: UpcomingMatchNormalized) -> Dict[str, Any]:
+    """Return public schedule fields without exposing full remote image URLs."""
+    return {
+        "match_id": match.match_id,
+        "tournament": match.tournament_name,
+        "competition_key": match.competition_key,
+        "teams": [match.team1_name, match.team2_name],
+        "team_logos_present": [bool(match.team1_logo_url), bool(match.team2_logo_url)],
+        "scheduled_at": match.scheduled_at,
+        "feature_reason": match.feature_reason,
+    }
+
+
 def _notify_admin(alert_code: str, message: str) -> None:
     """Send a rate-limited operational alert without affecting public delivery."""
     if not TELEGRAM_ADMIN_CHAT_ID or not TELEGRAM_TOKEN:
@@ -701,6 +714,8 @@ def _handle_content_job(
         body["test_run_id"] = test_run_id
     if preview is not None:
         body["preview"] = preview
+        if job == "schedule":
+            body["diagnostics"] = [_upcoming_diagnostic(match) for match in selected]
         body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
         body["media_card_ready"] = media_card is not None
         if media_card_error:

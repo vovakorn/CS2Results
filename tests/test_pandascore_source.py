@@ -157,6 +157,17 @@ def test_pandascore_normalizes_featured_upcoming_match():
     assert match.feature_reason == "tier1_tournament"
 
 
+def test_pandascore_prefers_dark_mode_team_logo():
+    item = _sample_upcoming()
+    item["opponents"][0]["opponent"]["dark_mode_image_url"] = (
+        "https://cdn.pandascore.co/images/team/image/10/navi-dark.png"
+    )
+
+    match = pandascore_source._normalize_raw_upcoming([item])[0]
+
+    assert match.team1_logo_url.endswith("/10/navi-dark.png")
+
+
 def test_pandascore_upcoming_rejects_running_match():
     item = _sample_upcoming()
     item["status"] = "running"
