@@ -42,7 +42,7 @@ DEFAULT_TRUSTED_LAN_TOURNAMENT_PATTERNS = [
     "CS Asia Championships",
 ]
 DEFAULT_TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS = {
-    "BLAST Bounty": ["Finals"],
+    "BLAST Bounty": ["Finals", "Playoffs"],
 }
 DEFAULT_TOURNAMENT_EXCLUSION_PATTERNS = [
     "qualifier",

@@ -123,6 +123,16 @@ def test_blast_bounty_finals_pass_without_location():
     assert is_tier1_lan(match) == (True, None)
 
 
+def test_pandascore_blast_bounty_playoffs_pass_without_location():
+    match = _match(
+        tournament_name="BLAST Bounty — Summer 2026 — Playoffs",
+        location=None,
+    )
+
+    assert is_tier1_candidate(match) is True
+    assert is_tier1_lan(match) == (True, None)
+
+
 def test_blast_bounty_online_stage_does_not_inherit_final_lan_status():
     match = _match(
         tournament_name="BLAST Bounty — 2026 Season 2 — Online Stage",

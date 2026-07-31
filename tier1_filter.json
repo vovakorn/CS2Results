@@ -39,7 +39,8 @@
   ],
   "trusted_lan_tournament_phase_patterns": {
     "BLAST Bounty": [
-      "Finals"
+      "Finals",
+      "Playoffs"
     ]
   },
   "tournament_exclusion_patterns": [
