@@ -815,6 +815,60 @@ def test_schedule_dry_run_returns_preview_without_sending(monkeypatch):
     assert sent == []
 
 
+def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
+    claimed = []
+    sent_photos = []
+
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+
+    async def fake_claim(content_uid):
+        claimed.append(content_uid)
+        return "claim"
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_schedule_card", lambda *args, **kwargs: b"card")
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: sent_photos.append((args, kwargs)),
+    )
+
+    response = main.handler(
+        {"job": "schedule", "test_run_id": "media-card-20260731"},
+        None,
+    )
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["messages_sent"] == 1
+    assert body["test_run_id"] == "media-card-20260731"
+    assert claimed[0].endswith("_test_media-card-20260731")
+    assert sent_photos[0][0][1] == b"card"
+    assert sent_photos[0][0][2].startswith("🧪 <b>Тестовая карточка</b>")
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"job": "results", "test_run_id": "manual"},
+        {"job": "schedule", "test_run_id": "../manual"},
+        {"job": "schedule", "test_run_id": ""},
+    ],
+)
+def test_invalid_test_run_id_is_rejected(event):
+    response = main.handler(event, None)
+
+    assert response["statusCode"] == 400
+
+
 def test_digest_skips_publication_when_no_tier1_results(monkeypatch):
     async def fake_fetch(limit, start=None, end=None):
         match = _match()

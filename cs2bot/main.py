@@ -89,6 +89,7 @@ RUSSIAN_MONTHS = (
     "декабря",
 )
 CONTENT_JOBS = {"results", "schedule", "digest"}
+TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 class TelegramDeliveryError(RuntimeError):
@@ -562,7 +563,11 @@ def _unwrap_timer_event(event: Dict[str, Any] | None) -> Dict[str, Any]:
     return decoded
 
 
-def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
+def _handle_content_job(
+    job: str,
+    dry_run: bool,
+    test_run_id: str | None = None,
+) -> Dict[str, Any]:
     start, end, local_now = _local_day_window()
     try:
         if job == "schedule":
@@ -629,6 +634,8 @@ def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
             continue
         channel_id = str(channel.get("id") or channel.get("name", "unknown"))
         content_uid = f"{job}_{day_key}_{channel_id}"
+        if test_run_id:
+            content_uid = f"{content_uid}_test_{test_run_id}"
         claim = None
         try:
             claim = asyncio.run(claim_content_delivery(content_uid))
@@ -637,10 +644,13 @@ def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
                 continue
             if media_card is not None:
                 try:
+                    caption = format_schedule_photo_caption(local_now, len(selected))
+                    if test_run_id:
+                        caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
                     send_photo_to_telegram(
                         channel["chat_id"],
                         media_card,
-                        format_schedule_photo_caption(local_now, len(selected)),
+                        caption,
                         filename=f"cs2-schedule-{day_key}.png",
                     )
                 except Exception as exc:
@@ -687,6 +697,8 @@ def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
         "delivery_failures": failures,
         "dry_run": dry_run,
     }
+    if test_run_id:
+        body["test_run_id"] = test_run_id
     if preview is not None:
         body["preview"] = preview
         body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
@@ -706,6 +718,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     dry_run = False
     include_filtered = False
     job = "results"
+    test_run_id: str | None = None
     try:
         event = _unwrap_timer_event(event)
         if isinstance(event, dict):
@@ -713,6 +726,15 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             if requested_job not in CONTENT_JOBS:
                 raise ValueError("job must be results, schedule, or digest")
             job = requested_job
+            requested_test_run_id = event.get("test_run_id")
+            if requested_test_run_id is not None:
+                if job != "schedule":
+                    raise ValueError("test_run_id is supported only for schedule")
+                if not isinstance(requested_test_run_id, str) or not TEST_RUN_ID_PATTERN.fullmatch(
+                    requested_test_run_id
+                ):
+                    raise ValueError("test_run_id is invalid")
+                test_run_id = requested_test_run_id
             requested = event.get("limit")
             if isinstance(requested, int) and not isinstance(requested, bool):
                 limit = max(MIN_MATCHES, min(MAX_MATCHES, requested))
@@ -761,7 +783,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             return _error_response(503, "configuration_error")
 
     if job in {"schedule", "digest"}:
-        return _handle_content_job(job, dry_run)
+        return _handle_content_job(job, dry_run, test_run_id)
 
     try:
         log_event(logger, logging.INFO, "handler_start", limit=limit, source=source, mode=mode, dry_run=dry_run)
