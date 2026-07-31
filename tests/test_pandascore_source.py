@@ -157,7 +157,7 @@ def test_pandascore_normalizes_featured_upcoming_match():
     assert match.feature_reason == "tier1_tournament"
 
 
-def test_pandascore_prefers_dark_mode_team_logo():
+def test_pandascore_keeps_dark_mode_team_logo_as_fallback():
     item = _sample_upcoming()
     item["opponents"][0]["opponent"]["dark_mode_image_url"] = (
         "https://cdn.pandascore.co/images/team/image/10/navi-dark.png"
@@ -165,8 +165,8 @@ def test_pandascore_prefers_dark_mode_team_logo():
 
     match = pandascore_source._normalize_raw_upcoming([item])[0]
 
-    assert match.team1_logo_url.endswith("/10/navi-dark.png")
-    assert match.team1_logo_fallback_url.endswith("/10/navi.png")
+    assert match.team1_logo_url.endswith("/10/navi.png")
+    assert match.team1_logo_fallback_url.endswith("/10/navi-dark.png")
 
 
 def test_pandascore_uses_default_logo_without_dark_mode_variant():

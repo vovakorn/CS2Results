@@ -201,13 +201,13 @@ def test_schedule_uses_full_tournament_name_not_competition_key(monkeypatch):
     assert "BLAST BOUNTY 2026" not in drawn
 
 
-def test_schedule_falls_back_to_default_logo_when_dark_variant_fails(monkeypatch):
+def test_schedule_uses_fallback_logo_when_primary_variant_fails(monkeypatch):
     match = _upcoming()
     match = match.model_copy(
         update={
-            "team1_logo_url": "https://cdn-api.pandascore.co/images/team/image/1/dark.svg",
+            "team1_logo_url": "https://cdn-api.pandascore.co/images/team/image/1/default.svg",
             "team1_logo_fallback_url": (
-                "https://cdn-api.pandascore.co/images/team/image/1/default.png"
+                "https://cdn-api.pandascore.co/images/team/image/1/fallback.png"
             ),
         }
     )
@@ -215,9 +215,9 @@ def test_schedule_falls_back_to_default_logo_when_dark_variant_fails(monkeypatch
 
     def fake_fetch(url):
         requested.append(url)
-        if url.endswith("dark.svg"):
-            raise media_cards.MediaCardError("unsupported dark logo")
-        if url.endswith("default.png"):
+        if url.endswith("default.svg"):
+            raise media_cards.MediaCardError("unsupported primary logo")
+        if url.endswith("fallback.png"):
             return Image.new("RGBA", (20, 20), (255, 0, 0, 255))
         return None
 
@@ -230,6 +230,6 @@ def test_schedule_falls_back_to_default_logo_when_dark_variant_fails(monkeypatch
     )
 
     assert requested[:2] == [
-        "https://cdn-api.pandascore.co/images/team/image/1/dark.svg",
-        "https://cdn-api.pandascore.co/images/team/image/1/default.png",
+        "https://cdn-api.pandascore.co/images/team/image/1/default.svg",
+        "https://cdn-api.pandascore.co/images/team/image/1/fallback.png",
     ]
