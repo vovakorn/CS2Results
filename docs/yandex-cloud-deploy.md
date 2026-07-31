@@ -205,7 +205,12 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 
 ## 8. Rollback
 
-Для rollback оставьте предыдущую версию функции активной или загрузите предыдущий архив `function.zip`.
+Deploy-скрипт выводит ID предыдущей и новой production-версии. Для rollback
+перенесите стабильный тег на предыдущую версию:
+
+```bash
+yc serverless function version set-tag --id <previous_version_id> --tag production
+```
 
 После rollback проверьте:
 
@@ -215,17 +220,73 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 
 ## 9. Deploy script
 
-Если установлен и настроен `yc`, можно создать новую версию функции одной командой:
+Скрипт использует версию с тегом `production` как единственный источник настроек.
+Он переносит runtime, handler, память, timeout, service account, concurrency,
+обычные переменные окружения, параметры логирования и закреплённые ссылки
+Lockbox. Значения секретов скрипт не читает и не выводит.
+
+### Одноразовая подготовка
+
+Новая версия автоматически получает `$latest`. Поэтому все production-триггеры
+должны вызывать стабильный тег `production`; иначе непроверенная версия может
+начать получать задания сразу после создания.
+
+Сначала назначьте тег текущей рабочей версии:
 
 ```bash
-YC_FUNCTION_NAME=cs2-results-bot \
-YC_SERVICE_ACCOUNT_ID=... \
-scripts/deploy_yandex_function.sh
+yc serverless function version set-tag \
+  --id <current_version_id> \
+  --tag production
 ```
 
-Опционально:
+Затем переведите каждый timer trigger на этот тег:
+
+```bash
+yc serverless trigger update timer <trigger_name> \
+  --new-invoke-function-tag production
+```
+
+Скрипт проверяет это условие и отказывается создавать новую версию, если хотя бы
+один trigger функции по-прежнему использует `$latest`.
+
+### Read-only проверка
+
+```bash
+YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
+```
+
+Команда проверяет каталог, production-тег, обязательные environment variables,
+четыре закреплённые привязки Lockbox и теги таймеров. Код и облачные ресурсы она
+не меняет.
+
+### Deploy
+
+Только после явного утверждения production-релиза:
+
+```bash
+YC_FUNCTION_ID=<function_id> \
+YC_DEPLOY_APPROVED=1 \
+scripts/deploy_yandex_function.sh deploy
+```
+
+Последовательность безопасного deploy:
+
+1. Повторная read-only проверка production-конфигурации и таймеров.
+2. Сборка ZIP.
+3. Создание версии с тегом `candidate` и полной копией настроек.
+4. Вызов `candidate` с `dry_run=true`.
+5. Перенос тега `production` только при `statusCode=200` и подтверждённом
+   `dry_run=true`.
+6. Проверка, что production-тег указывает на новую версию.
+
+Настраиваемые параметры:
 
 ```text
-YC_MEMORY=512m
-YC_TIMEOUT=60s
+YC_FOLDER_ID=<expected_folder_id>
+YC_PRODUCTION_TAG=production
+YC_CANDIDATE_TAG=candidate
+YC_DRY_RUN_PAYLOAD={"limit":1,"dry_run":true}
 ```
+
+Память, timeout и service account вручную не задаются: они копируются из
+действующей production-версии, что исключает случайное расхождение конфигурации.
