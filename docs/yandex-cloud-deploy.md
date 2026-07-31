@@ -38,6 +38,7 @@ TELEGRAM_TOKEN=...
 TELEGRAM_CHAT_ID=@your_channel
 TELEGRAM_ADMIN_CHAT_ID=private_chat_id
 TELEGRAM_SPOILERS=1
+TELEGRAM_MEDIA_CARDS=0
 ```
 
 Для нескольких каналов используйте:
@@ -86,7 +87,14 @@ DELIVERY_CLAIM_TTL_SECONDS=300
 ALERT_COOLDOWN_SECONDS=21600
 DISPLAY_TIMEZONE=Europe/Moscow
 MAX_SOURCE_RESPONSE_BYTES=5000000
+TELEGRAM_MEDIA_CARDS=0
 ```
+
+Для первого теста оставьте `TELEGRAM_MEDIA_CARDS=0`. После проверки новой
+версии функции включите `TELEGRAM_MEDIA_CARDS=1`: расписание начнёт приходить
+вертикальной карточкой, а результаты — квадратной карточкой с Telegram-спойлером.
+При проблеме с изображением функция автоматически отправит прежний текстовый
+формат.
 
 Храните API-токены в Lockbox и подключайте их к версии функции как секреты. Если Lockbox пока не используется, ограничьте доступ к чтению и редактированию версии функции и не передавайте секреты в event payload.
 

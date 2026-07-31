@@ -25,6 +25,7 @@ def _bool_env(name: str, default: bool) -> bool:
 
 
 TELEGRAM_SPOILERS = _bool_env("TELEGRAM_SPOILERS", True)
+TELEGRAM_MEDIA_CARDS = _bool_env("TELEGRAM_MEDIA_CARDS", False)
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
 
 

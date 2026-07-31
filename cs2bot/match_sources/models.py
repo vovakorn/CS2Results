@@ -43,6 +43,8 @@ class MatchNormalized(BaseModel):
     competition_key: str | None = Field(default=None, max_length=300)
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
+    team1_logo_url: str | None = Field(default=None, max_length=2048)
+    team2_logo_url: str | None = Field(default=None, max_length=2048)
 
     score1: int | None = Field(ge=0, le=100)
     score2: int | None = Field(ge=0, le=100)
@@ -118,6 +120,8 @@ class UpcomingMatchNormalized(BaseModel):
     competition_key: str | None = Field(default=None, max_length=300)
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
+    team1_logo_url: str | None = Field(default=None, max_length=2048)
+    team2_logo_url: str | None = Field(default=None, max_length=2048)
     scheduled_at: str = Field(min_length=1, max_length=100)
     best_of: Literal[1, 3, 5] | None = None
     is_featured: bool = False

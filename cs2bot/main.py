@@ -18,10 +18,16 @@ from .config import (
     BOT_MODE,
     CHANNELS,
     TELEGRAM_ADMIN_CHAT_ID,
+    TELEGRAM_MEDIA_CARDS,
     TELEGRAM_SPOILERS,
     TELEGRAM_TOKEN,
 )
 from .logging_utils import log_event
+from .media_cards import (
+    MAX_SCHEDULE_MATCHES,
+    render_result_card,
+    render_schedule_card,
+)
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
     ENABLE_LIQUIPEDIA_FALLBACK,
@@ -54,6 +60,7 @@ TELEGRAM_METHOD = "sendMessage"
 MIN_MATCHES = 1
 MAX_MATCHES = 30
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
+MAX_TELEGRAM_CAPTION_LENGTH = 1024
 MATCH_URL_HOSTS = {
     "pandascore": {"pandascore.co", "www.pandascore.co"},
     "liquipedia": {"liquipedia.net", "www.liquipedia.net"},
@@ -195,6 +202,69 @@ def send_to_telegram(
         return data
 
     raise TelegramDeliveryError("Telegram request failed")
+
+
+def send_photo_to_telegram(
+    chat_id: str | int,
+    photo: bytes,
+    caption: str,
+    *,
+    has_spoiler: bool = False,
+    filename: str = "cs2-match.png",
+    timeout: int = 10,
+    max_attempts: int = 3,
+) -> Dict[str, Any]:
+    """Send an in-memory PNG through Telegram without exposing credentials."""
+    if not TELEGRAM_TOKEN:
+        raise TelegramDeliveryError("Telegram credentials are not configured")
+    if not photo:
+        raise TelegramDeliveryError("Telegram photo is empty")
+    if len(caption) > MAX_TELEGRAM_CAPTION_LENGTH:
+        raise TelegramDeliveryError("Telegram photo caption is too long")
+
+    url = f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/sendPhoto"
+    payload = {
+        "chat_id": str(chat_id),
+        "caption": caption,
+        "parse_mode": "HTML",
+        "has_spoiler": "true" if has_spoiler else "false",
+    }
+    attempts = max(1, max_attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.post(
+                url,
+                data=payload,
+                files={"photo": (filename, photo, "image/png")},
+                timeout=timeout,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            if attempt < attempts:
+                time.sleep(min(2 ** (attempt - 1), 4))
+                continue
+            raise TelegramDeliveryError("Telegram photo request failed") from exc
+
+        if response.status_code == 429 or response.status_code >= 500:
+            if attempt < attempts:
+                retry_after = 0
+                try:
+                    retry_after = int(response.json().get("parameters", {}).get("retry_after", 0))
+                except (TypeError, ValueError, AttributeError, requests.JSONDecodeError):
+                    retry_after = 0
+                time.sleep(min(max(retry_after, 2 ** (attempt - 1)), 5))
+                continue
+        if response.status_code >= 300:
+            raise TelegramDeliveryError(f"Telegram API returned HTTP {response.status_code}")
+        try:
+            data = response.json()
+        except requests.JSONDecodeError as exc:
+            raise TelegramDeliveryError("Telegram API returned invalid JSON") from exc
+        if not isinstance(data, dict) or data.get("ok") is not True:
+            raise TelegramDeliveryError("Telegram API rejected the photo")
+        return data
+
+    raise TelegramDeliveryError("Telegram photo request failed")
 
 
 def _get_attr(obj: Any, key: str, default: str = "") -> str:
@@ -360,6 +430,21 @@ def format_daily_schedule(
     return "\n".join(lines).strip()
 
 
+def format_schedule_photo_caption(local_now: datetime, match_count: int) -> str:
+    """Build a deliberately short caption; the detailed schedule lives on the card."""
+    noun = "матч" if match_count == 1 else "матча" if 2 <= match_count <= 4 else "матчей"
+    return "\n".join(
+        [
+            f"📅 <b>Матчи CS2 сегодня — {_display_day(local_now)}</b>",
+            f"{match_count} {noun} · время московское",
+            "",
+            "Источник: PandaScore",
+            "",
+            "#CS2 #РасписаниеМатчей",
+        ]
+    )
+
+
 def format_daily_digest(matches: Sequence[MatchNormalized], local_now: datetime) -> str:
     """Build a short evening recap with scores hidden as spoilers."""
     header = [f"🌙 <b>Итоги дня — {_display_day(local_now)}</b>", ""]
@@ -513,6 +598,26 @@ def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
         }
         return {"statusCode": 200, "body": json.dumps(body)}
 
+    media_card: bytes | None = None
+    media_card_error: str | None = None
+    if (
+        job == "schedule"
+        and TELEGRAM_MEDIA_CARDS
+        and 1 <= len(selected) <= MAX_SCHEDULE_MATCHES
+    ):
+        try:
+            media_card = render_schedule_card(selected, local_now, DISPLAY_TIMEZONE)
+        except Exception as exc:
+            media_card_error = type(exc).__name__
+            log_event(
+                logger,
+                logging.WARNING,
+                "media_card_fallback",
+                job=job,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+
     sent = 0
     duplicates = 0
     failures = 0
@@ -530,7 +635,28 @@ def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
             if claim is None:
                 duplicates += 1
                 continue
-            send_to_telegram(channel["chat_id"], text)
+            if media_card is not None:
+                try:
+                    send_photo_to_telegram(
+                        channel["chat_id"],
+                        media_card,
+                        format_schedule_photo_caption(local_now, len(selected)),
+                        filename=f"cs2-schedule-{day_key}.png",
+                    )
+                except Exception as exc:
+                    media_card_error = type(exc).__name__
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "media_card_delivery_fallback",
+                        job=job,
+                        channel=channel_id,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
+                    send_to_telegram(channel["chat_id"], text)
+            else:
+                send_to_telegram(channel["chat_id"], text)
             asyncio.run(mark_content_processed(content_uid, job))
             sent += 1
         except Exception as exc:
@@ -563,6 +689,10 @@ def _handle_content_job(job: str, dry_run: bool) -> Dict[str, Any]:
     }
     if preview is not None:
         body["preview"] = preview
+        body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
+        body["media_card_ready"] = media_card is not None
+        if media_card_error:
+            body["media_card_error"] = media_card_error
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
@@ -696,6 +826,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             skipped_filtered += 1
             continue
 
+        result_card: bytes | None = None
+        result_card_attempted = False
+
         for channel in _iter_channels():
             name = str(channel.get("name", "unknown"))
             channel_id = str(channel.get("id") or name)
@@ -745,9 +878,46 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 )
                 continue
 
+            if TELEGRAM_MEDIA_CARDS and not result_card_attempted:
+                result_card_attempted = True
+                try:
+                    result_card = render_result_card(match)
+                except Exception as exc:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "media_card_fallback",
+                        job="results",
+                        match_uid=match.match_uid,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
+
             try:
                 text = format_match(match)
-                send_to_telegram(channel["chat_id"], text)
+                if result_card is not None:
+                    try:
+                        send_photo_to_telegram(
+                            channel["chat_id"],
+                            result_card,
+                            text,
+                            has_spoiler=TELEGRAM_SPOILERS,
+                            filename=f"cs2-result-{match.match_id or 'match'}.png",
+                        )
+                    except Exception as exc:
+                        log_event(
+                            logger,
+                            logging.WARNING,
+                            "media_card_delivery_fallback",
+                            job="results",
+                            channel=name,
+                            match_uid=match.match_uid,
+                            error_type=type(exc).__name__,
+                            error=_safe_error_message(exc),
+                        )
+                        send_to_telegram(channel["chat_id"], text)
+                else:
+                    send_to_telegram(channel["chat_id"], text)
                 channel_stats[name] += 1
                 sent_messages += 1
             except Exception as exc:

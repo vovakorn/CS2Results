@@ -19,8 +19,20 @@ def _sample_match():
         "serie": {"id": 2, "full_name": "IEM Cologne 2026"},
         "tournament": {"id": 3, "name": "Playoffs"},
         "opponents": [
-            {"opponent": {"id": 10, "name": "NAVI"}},
-            {"opponent": {"id": 20, "name": "FaZe"}},
+            {
+                "opponent": {
+                    "id": 10,
+                    "name": "NAVI",
+                    "image_url": "https://cdn.pandascore.co/images/team/image/10/navi.png",
+                }
+            },
+            {
+                "opponent": {
+                    "id": 20,
+                    "name": "FaZe",
+                    "image_url": "https://cdn.pandascore.co/images/team/image/20/faze.png",
+                }
+            },
         ],
         "results": [
             {"team_id": 20, "score": 1},
@@ -48,6 +60,8 @@ def test_pandascore_normalizes_series_result_by_team_id():
     assert match.match_id == "12345"
     assert match.team1_name == "NAVI"
     assert match.team2_name == "FaZe"
+    assert match.team1_logo_url.endswith("/10/navi.png")
+    assert match.team2_logo_url.endswith("/20/faze.png")
     assert (match.score1, match.score2) == (2, 1)
     assert match.status == "finished"
     assert match.best_of == 3
@@ -137,6 +151,8 @@ def test_pandascore_normalizes_featured_upcoming_match():
     match = matches[0]
     assert match.match_id == "67890"
     assert match.scheduled_at == "2026-07-30T11:00:00Z"
+    assert match.team1_logo_url.endswith("/10/navi.png")
+    assert match.team2_logo_url.endswith("/20/faze.png")
     assert match.is_featured is True
     assert match.feature_reason == "tier1_tournament"
 
