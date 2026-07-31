@@ -307,13 +307,16 @@ scripts/build_function_zip.sh
 
 Не добавляйте в архив локальные `site-packages`: бинарные wheels с macOS/Windows несовместимы с Linux runtime Cloud Functions.
 
-Или создать новую версию функции через `yc`:
+Безопасный deploy через `yc` выполняется только после read-only проверки:
 
 ```bash
-YC_FUNCTION_NAME=cs2-results-bot \
-YC_SERVICE_ACCOUNT_ID=... \
-scripts/deploy_yandex_function.sh
+YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
+YC_FUNCTION_ID=<function_id> YC_DEPLOY_APPROVED=1 scripts/deploy_yandex_function.sh deploy
 ```
+
+Скрипт копирует конфигурацию и ссылки Lockbox из версии с тегом `production`,
+проверяет candidate через `dry_run` и только затем переносит production-тег.
+Таймеры должны быть заранее привязаны к тегу `production`, а не к `$latest`.
 
 ## Архитектурные контракты
 
