@@ -32,13 +32,15 @@ ALLOWED_LOGO_TYPES = {
 
 logger = logging.getLogger(__name__)
 
-NAVY = (5, 11, 24)
-PANEL = (10, 25, 47)
-PANEL_LIGHT = (14, 38, 69)
+NAVY = (7, 17, 32)
+PANEL = (18, 38, 61)
+PANEL_LIGHT = (24, 49, 76)
 WHITE = (244, 247, 251)
 MUTED = (150, 168, 191)
 CYAN = (22, 199, 255)
 AMBER = (255, 159, 28)
+LOGO_PLATE_DARK = (10, 24, 43)
+LOGO_PLATE_LIGHT = (220, 230, 240)
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
 DISPLAY_FONT = ASSET_DIR / "RussoOne-Regular.ttf"
@@ -68,9 +70,9 @@ def _background(size: tuple[int, int]) -> Image.Image:
             horizontal = abs(x - width / 2) / (width / 2)
             glow = max(0.0, 1.0 - math.hypot(horizontal * 0.8, (vertical - 0.35) * 1.2))
             pixels[x, y] = (
-                int(5 + 4 * glow),
-                int(11 + 17 * glow),
-                int(24 + 30 * glow),
+                int(NAVY[0] + 7 * glow),
+                int(NAVY[1] + 20 * glow),
+                int(NAVY[2] + 31 * glow),
             )
 
     draw = ImageDraw.Draw(image, "RGBA")
@@ -226,6 +228,87 @@ def _initials(name: str) -> str:
     return name[:2].upper()
 
 
+def _relative_luminance(rgb: tuple[int, int, int]) -> float:
+    """Return WCAG relative luminance for an sRGB colour."""
+    channels = []
+    for value in rgb:
+        channel = value / 255
+        channels.append(
+            channel / 12.92
+            if channel <= 0.04045
+            else ((channel + 0.055) / 1.055) ** 2.4
+        )
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _logo_plate_fill(logo: Image.Image) -> tuple[int, int, int]:
+    """Choose the plate that keeps the largest part of a logo legible.
+
+    Team marks often combine transparent padding with black, white and saturated
+    colours. Scoring their visible pixels against both approved plates is more
+    reliable than treating the image's average colour as the logo colour.
+    """
+    sample = ImageOps.contain(logo.convert("RGBA"), (96, 96))
+    pixels = sample.load()
+    visible_pixels = [
+        pixels[x, y]
+        for y in range(sample.height)
+        for x in range(sample.width)
+        if pixels[x, y][3] >= 32
+    ]
+    if not visible_pixels:
+        return LOGO_PLATE_DARK
+
+    def contrast_score(background: tuple[int, int, int]) -> float:
+        background_luminance = _relative_luminance(background)
+        weighted_score = 0.0
+        total_weight = 0.0
+        for red, green, blue, alpha in visible_pixels:
+            foreground_luminance = _relative_luminance((red, green, blue))
+            lighter = max(foreground_luminance, background_luminance)
+            darker = min(foreground_luminance, background_luminance)
+            contrast = (lighter + 0.05) / (darker + 0.05)
+            weight = alpha / 255
+            # Capping prevents a few pure black/white pixels from outweighing
+            # the main shape of a multi-colour emblem.
+            weighted_score += min(contrast, 7.0) * weight
+            total_weight += weight
+        return weighted_score / total_weight
+
+    dark_score = contrast_score(LOGO_PLATE_DARK)
+    light_score = contrast_score(LOGO_PLATE_LIGHT)
+    return LOGO_PLATE_LIGHT if light_score > dark_score else LOGO_PLATE_DARK
+
+
+def _draw_logo_plate(
+    draw: ImageDraw.ImageDraw,
+    center: tuple[int, int],
+    diameter: int,
+    accent: tuple[int, int, int],
+    fill: tuple[int, int, int],
+) -> None:
+    x, y = center
+    radius = diameter // 2
+    line_width = max(3, diameter // 45)
+    draw.ellipse(
+        (x - radius + 2, y - radius + 7, x + radius + 2, y + radius + 7),
+        fill=(0, 4, 12, 105),
+    )
+    draw.ellipse(
+        (x - radius, y - radius, x + radius, y + radius),
+        fill=(*fill, 250),
+        outline=(*accent, 225),
+        width=line_width,
+    )
+    inset = line_width + max(2, diameter // 60)
+    inner_outline = (255, 255, 255, 65) if fill == LOGO_PLATE_LIGHT else (84, 119, 157, 90)
+    draw.ellipse(
+        (x - radius + inset, y - radius + inset, x + radius - inset, y + radius - inset),
+        outline=inner_outline,
+        width=max(1, line_width // 2),
+    )
+
+
 def _draw_logo(
     canvas: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -237,12 +320,6 @@ def _draw_logo(
     fallback_logo_url: str | None = None,
 ) -> None:
     x, y = center
-    draw.ellipse(
-        (x - diameter // 2, y - diameter // 2, x + diameter // 2, y + diameter // 2),
-        fill=(7, 16, 31, 235),
-        outline=(*accent, 190),
-        width=max(3, diameter // 45),
-    )
     logo = None
     failures: list[str] = []
     logo_urls = list(dict.fromkeys(url for url in (logo_url, fallback_logo_url) if url))
@@ -262,9 +339,11 @@ def _draw_logo(
             failures or ["unavailable"],
         )
     if logo is not None:
-        contained = ImageOps.contain(logo, (int(diameter * 0.68), int(diameter * 0.68)))
+        _draw_logo_plate(draw, center, diameter, accent, _logo_plate_fill(logo))
+        contained = ImageOps.contain(logo, (int(diameter * 0.64), int(diameter * 0.64)))
         canvas.alpha_composite(contained, (x - contained.width // 2, y - contained.height // 2))
         return
+    _draw_logo_plate(draw, center, diameter, accent, LOGO_PLATE_DARK)
     initials_font = _fit_font(
         draw,
         _initials(team_name),
@@ -314,7 +393,7 @@ def render_result_card(match: MatchNormalized) -> bytes:
         WHITE,
     )
 
-    draw.rounded_rectangle((90, 255, 990, 825), radius=36, fill=(7, 18, 35, 220))
+    draw.rounded_rectangle((90, 255, 990, 825), radius=36, fill=(*PANEL, 232))
     _draw_logo(
         canvas,
         draw,
@@ -416,7 +495,7 @@ def render_schedule_card(
         y0 = top + index * row_height
         y1 = y0 + row_height - 14
         center_y = (y0 + y1) // 2
-        draw.rounded_rectangle((70, y0, width - 70, y1), radius=28, fill=(8, 21, 41, 225))
+        draw.rounded_rectangle((70, y0, width - 70, y1), radius=28, fill=(*PANEL, 235))
         _draw_logo(
             canvas,
             draw,

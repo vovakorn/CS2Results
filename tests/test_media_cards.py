@@ -63,6 +63,36 @@ def test_schedule_card_rejects_more_than_six_matches():
         )
 
 
+def test_dark_logo_gets_light_contrast_plate():
+    logo = Image.new("RGBA", (100, 100), (8, 10, 14, 255))
+
+    assert media_cards._logo_plate_fill(logo) == media_cards.LOGO_PLATE_LIGHT
+
+
+def test_white_logo_gets_dark_contrast_plate():
+    logo = Image.new("RGBA", (100, 100), (248, 248, 248, 255))
+
+    assert media_cards._logo_plate_fill(logo) == media_cards.LOGO_PLATE_DARK
+
+
+def test_transparent_padding_does_not_change_logo_plate_choice():
+    logo = Image.new("RGBA", (100, 100), (255, 255, 255, 0))
+    for x in range(35, 65):
+        for y in range(35, 65):
+            logo.putpixel((x, y), (4, 6, 9, 255))
+
+    assert media_cards._logo_plate_fill(logo) == media_cards.LOGO_PLATE_LIGHT
+
+
+def test_mixed_black_and_red_logo_gets_light_plate():
+    logo = Image.new("RGBA", (100, 100), (12, 12, 14, 255))
+    for x in range(60, 100):
+        for y in range(100):
+            logo.putpixel((x, y), (218, 28, 44, 255))
+
+    assert media_cards._logo_plate_fill(logo) == media_cards.LOGO_PLATE_LIGHT
+
+
 def test_logo_download_rejects_non_pandascore_host_without_request(monkeypatch):
     called = False
 
