@@ -74,6 +74,14 @@ def test_schedule_card_rejects_more_than_ten_matches():
         )
 
 
+def test_header_accent_lines_are_mirrored_to_the_outer_edges():
+    cyan, amber = media_cards._header_accent_segments(1080)
+
+    assert cyan == (55, 485)
+    assert amber == (595, 1025)
+    assert cyan[1] - cyan[0] == amber[1] - amber[0]
+
+
 def test_dark_logo_gets_light_contrast_plate():
     logo = Image.new("RGBA", (100, 100), (8, 10, 14, 255))
 
