@@ -820,7 +820,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     if dry_run:
         diagnostic_matches: List[MatchNormalized] = []
         seen_match_uids: set[str] = set()
-        for match in [*matches, *rejected_matches]:
+        for match in [*unconfirmed_tier1, *matches, *rejected_matches]:
             if not isinstance(match, MatchNormalized) or match.match_uid in seen_match_uids:
                 continue
             diagnostic_matches.append(match)
