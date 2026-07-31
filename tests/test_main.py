@@ -760,7 +760,17 @@ def test_schedule_is_formatted_in_moscow_time():
 
     assert "Матчи CS2 сегодня — 30 июля" in text
     assert "14:00 — <b>NAVI — FaZe</b>" in text
-    assert "Время московское" in text
+    assert "московск" not in text.casefold()
+
+
+def test_schedule_photo_caption_omits_timezone_label():
+    caption = main.format_schedule_photo_caption(
+        main.datetime.fromisoformat("2026-07-30T10:00:00+03:00"),
+        4,
+    )
+
+    assert "4 матча" in caption
+    assert "московск" not in caption.casefold()
 
 
 def test_schedule_truncates_only_between_complete_entries():
