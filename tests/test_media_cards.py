@@ -42,7 +42,7 @@ def test_result_card_is_valid_square_png_without_logos():
     assert image.size == media_cards.RESULT_CARD_SIZE
 
 
-def test_schedule_card_is_valid_portrait_png():
+def test_schedule_card_is_valid_square_png():
     data = media_cards.render_schedule_card(
         [_upcoming()],
         media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
@@ -54,10 +54,21 @@ def test_schedule_card_is_valid_portrait_png():
     assert image.size == media_cards.SCHEDULE_CARD_SIZE
 
 
-def test_schedule_card_rejects_more_than_six_matches():
-    with pytest.raises(media_cards.MediaCardError, match="six"):
+def test_schedule_card_supports_ten_matches():
+    data = media_cards.render_schedule_card(
+        [_upcoming(str(index)) for index in range(10)],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    image = Image.open(io.BytesIO(data))
+    assert image.size == (1080, 1080)
+
+
+def test_schedule_card_rejects_more_than_ten_matches():
+    with pytest.raises(media_cards.MediaCardError, match="ten"):
         media_cards.render_schedule_card(
-            [_upcoming(str(index)) for index in range(7)],
+            [_upcoming(str(index)) for index in range(11)],
             media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
             "Europe/Moscow",
         )
@@ -229,6 +240,7 @@ def test_schedule_uses_full_tournament_name_not_competition_key(monkeypatch):
 
     assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" in drawn
     assert "BLAST BOUNTY 2026" not in drawn
+    assert all("ВРЕМЯ МСК" not in text for text in drawn)
 
 
 def test_schedule_uses_fallback_logo_when_primary_variant_fails(monkeypatch):
@@ -263,3 +275,36 @@ def test_schedule_uses_fallback_logo_when_primary_variant_fails(monkeypatch):
         "https://cdn-api.pandascore.co/images/team/image/1/default.svg",
         "https://cdn-api.pandascore.co/images/team/image/1/fallback.png",
     ]
+
+
+def test_compact_schedule_requests_team_logos_for_every_match(monkeypatch):
+    requested = []
+    matches = []
+    for index in range(4):
+        matches.append(
+            _upcoming(str(index)).model_copy(
+                update={
+                    "team1_logo_url": (
+                        f"https://cdn.pandascore.co/images/team/image/{index * 2 + 1}/left.png"
+                    ),
+                    "team2_logo_url": (
+                        f"https://cdn.pandascore.co/images/team/image/{index * 2 + 2}/right.png"
+                    ),
+                }
+            )
+        )
+
+    def fake_fetch(url):
+        requested.append(url)
+        return Image.new("RGBA", (20, 20), (255, 255, 255, 255))
+
+    monkeypatch.setattr(media_cards, "fetch_team_logo", fake_fetch)
+
+    media_cards.render_schedule_card(
+        matches,
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert len(requested) == 8
+    assert all(url.startswith("https://cdn.pandascore.co/images/team/image/") for url in requested)
