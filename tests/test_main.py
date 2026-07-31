@@ -157,8 +157,59 @@ def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
     assert response["statusCode"] == 200
     assert body["matches_received"] == 1
     assert body["messages_sent"] == 1
+    assert body["diagnostics"] == [
+        {
+            "source": "pandascore",
+            "match_id": "1",
+            "tournament": "IEM Cologne 2026",
+            "competition_key": None,
+            "teams": ["NAVI", "FaZe"],
+            "score": [2, 1],
+            "date": "2026-02-17",
+            "start_date": None,
+            "end_date": None,
+            "is_lan": None,
+            "location": None,
+            "is_tier1_lan": True,
+            "filter_reason": None,
+        }
+    ]
     assert sent == []
     assert marked == []
+
+
+def test_handler_dry_run_reports_rejected_match_diagnostics(monkeypatch):
+    rejected = _match(team1="Liquid", team2="Spirit")
+    rejected.tournament_name = "BLAST Bounty 2026 Season 2"
+    rejected.is_tier1_lan = False
+    rejected.filter_reason = "lan_unconfirmed"
+
+    async def fake_get_new_finished_matches(**kwargs):
+        kwargs["rejected_matches"].append(rejected)
+        return []
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+
+    response = main.handler({"limit": 30, "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert body["matches_received"] == 0
+    assert body["tier1_lan_unconfirmed"] == 1
+    assert body["diagnostics"][0]["tournament"] == "BLAST Bounty 2026 Season 2"
+    assert body["diagnostics"][0]["teams"] == ["Liquid", "Spirit"]
+    assert body["diagnostics"][0]["filter_reason"] == "lan_unconfirmed"
+
+
+def test_handler_production_response_omits_match_diagnostics(monkeypatch):
+    async def fake_get_new_finished_matches(**kwargs):
+        return []
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+
+    response = main.handler({}, None)
+    body = json.loads(response["body"])
+
+    assert "diagnostics" not in body
 
 
 def test_handler_marks_processed_after_successful_send(monkeypatch):

@@ -88,6 +88,25 @@ class TelegramDeliveryError(RuntimeError):
     """A safe Telegram failure that never contains the bot token or request URL."""
 
 
+def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
+    """Return public source fields that are safe to expose in dry-run output."""
+    return {
+        "source": match.source,
+        "match_id": match.match_id,
+        "tournament": match.tournament_name,
+        "competition_key": match.competition_key,
+        "teams": [match.team1_name, match.team2_name],
+        "score": [match.score1, match.score2],
+        "date": match.date,
+        "start_date": match.start_date,
+        "end_date": match.end_date,
+        "is_lan": match.is_lan,
+        "location": match.location,
+        "is_tier1_lan": match.is_tier1_lan,
+        "filter_reason": match.filter_reason,
+    }
+
+
 def _notify_admin(alert_code: str, message: str) -> None:
     """Send a rate-limited operational alert without affecting public delivery."""
     if not TELEGRAM_ADMIN_CHAT_ID or not TELEGRAM_TOKEN:
@@ -798,6 +817,17 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "mode": mode,
         "source": source,
     }
+    if dry_run:
+        diagnostic_matches: List[MatchNormalized] = []
+        seen_match_uids: set[str] = set()
+        for match in [*matches, *rejected_matches]:
+            if not isinstance(match, MatchNormalized) or match.match_uid in seen_match_uids:
+                continue
+            diagnostic_matches.append(match)
+            seen_match_uids.add(match.match_uid)
+        body["diagnostics"] = [
+            _match_diagnostic(match) for match in diagnostic_matches[:MAX_MATCHES]
+        ]
     return {
         "statusCode": 502 if failed_messages else 200,
         "body": json.dumps(body),
