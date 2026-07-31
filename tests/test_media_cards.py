@@ -243,6 +243,27 @@ def test_schedule_uses_full_tournament_name_not_competition_key(monkeypatch):
     assert all("ВРЕМЯ МСК" not in text for text in drawn)
 
 
+def test_schedule_header_is_centered_on_canvas(monkeypatch):
+    drawn = []
+    original = media_cards._centered_text
+
+    def capture(draw, center_x, y, text, font, fill):
+        drawn.append((center_x, text))
+        return original(draw, center_x, y, text, font, fill)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture)
+
+    media_cards.render_schedule_card(
+        [_upcoming()],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    canvas_center = media_cards.SCHEDULE_CARD_SIZE[0] // 2
+    assert (canvas_center, "МАТЧИ CS2 СЕГОДНЯ") in drawn
+    assert (canvas_center, "31 ИЮЛЯ") in drawn
+
+
 def test_schedule_uses_fallback_logo_when_primary_variant_fails(monkeypatch):
     match = _upcoming()
     match = match.model_copy(
