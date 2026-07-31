@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import math
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,14 @@ MAX_SCHEDULE_MATCHES = 6
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
 LOGO_HOSTS = {"cdn.pandascore.co"}
-ALLOWED_LOGO_TYPES = {"image/png", "image/jpeg", "image/webp"}
+ALLOWED_LOGO_TYPES = {
+    "application/octet-stream",
+    "image/png",
+    "image/jpeg",
+    "image/webp",
+}
+
+logger = logging.getLogger(__name__)
 
 NAVY = (5, 11, 24)
 PANEL = (10, 25, 47)
@@ -129,58 +137,81 @@ def _safe_logo_url(value: str | None) -> str | None:
     return value
 
 
+def _logo_candidates(url: str) -> list[str]:
+    """Prefer PandaScore's small official thumbnail, then the original logo."""
+    parsed = urlparse(url)
+    path_parts = parsed.path.rsplit("/", 1)
+    if len(path_parts) != 2 or path_parts[1].startswith(("thumb_", "normal_")):
+        return [url]
+    thumbnail_path = f"{path_parts[0]}/thumb_{path_parts[1]}"
+    thumbnail = parsed._replace(path=thumbnail_path).geturl()
+    return [thumbnail, url]
+
+
 def fetch_team_logo(url: str | None, timeout: int = 5) -> Image.Image | None:
     """Download and validate a PandaScore team logo without following redirects."""
     safe_url = _safe_logo_url(url)
     if not safe_url:
         return None
-    try:
-        response = requests.get(
-            safe_url,
-            timeout=timeout,
-            allow_redirects=False,
-            stream=True,
-            headers={"User-Agent": "CS2ResultsBot/0.4"},
-        )
-    except requests.RequestException as exc:
-        raise MediaCardError("Team logo request failed") from exc
+    last_error: MediaCardError | None = None
+    for candidate_url in _logo_candidates(safe_url):
+        try:
+            response = requests.get(
+                candidate_url,
+                timeout=timeout,
+                allow_redirects=False,
+                stream=True,
+                headers={"User-Agent": "CS2ResultsBot/0.5"},
+            )
+        except requests.RequestException as exc:
+            last_error = MediaCardError("Team logo request failed")
+            last_error.__cause__ = exc
+            continue
 
-    try:
-        if response.status_code >= 300:
-            raise MediaCardError(f"Team logo returned HTTP {response.status_code}")
-        content_type = response.headers.get("Content-Type", "").split(";", 1)[0].casefold()
-        if content_type not in ALLOWED_LOGO_TYPES:
-            raise MediaCardError("Team logo content type is not allowed")
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                if int(content_length) > MAX_LOGO_BYTES:
+        try:
+            if response.status_code >= 300:
+                raise MediaCardError(f"Team logo returned HTTP {response.status_code}")
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].casefold()
+            if content_type not in ALLOWED_LOGO_TYPES:
+                raise MediaCardError("Team logo content type is not allowed")
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_LOGO_BYTES:
+                        raise MediaCardError("Team logo is too large")
+                except ValueError as exc:
+                    raise MediaCardError("Team logo content length is invalid") from exc
+
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_content(64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_LOGO_BYTES:
                     raise MediaCardError("Team logo is too large")
-            except ValueError as exc:
-                raise MediaCardError("Team logo content length is invalid") from exc
+                chunks.append(chunk)
+        except MediaCardError as exc:
+            last_error = exc
+            continue
+        finally:
+            response.close()
 
-        chunks: list[bytes] = []
-        total = 0
-        for chunk in response.iter_content(64 * 1024):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > MAX_LOGO_BYTES:
-                raise MediaCardError("Team logo is too large")
-            chunks.append(chunk)
-    finally:
-        response.close()
+        raw = b"".join(chunks)
+        try:
+            with Image.open(io.BytesIO(raw)) as probe:
+                if probe.width * probe.height > MAX_LOGO_PIXELS:
+                    raise MediaCardError("Team logo dimensions are too large")
+                probe.verify()
+            logo = Image.open(io.BytesIO(raw))
+            logo.load()
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            last_error = MediaCardError("Team logo is not a valid image")
+            last_error.__cause__ = exc
+            continue
+        return logo.convert("RGBA")
 
-    try:
-        with Image.open(io.BytesIO(b"".join(chunks))) as probe:
-            if probe.width * probe.height > MAX_LOGO_PIXELS:
-                raise MediaCardError("Team logo dimensions are too large")
-            probe.verify()
-        logo = Image.open(io.BytesIO(b"".join(chunks)))
-        logo.load()
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise MediaCardError("Team logo is not a valid image") from exc
-    return logo.convert("RGBA")
+    raise last_error or MediaCardError("Team logo is unavailable")
 
 
 def _initials(name: str) -> str:
@@ -208,7 +239,13 @@ def _draw_logo(
     )
     try:
         logo = fetch_team_logo(logo_url)
-    except MediaCardError:
+    except MediaCardError as exc:
+        logger.warning(
+            "team_logo_fallback team=%s host=%s error=%s",
+            team_name,
+            urlparse(logo_url or "").hostname or "missing",
+            str(exc),
+        )
         logo = None
     if logo is not None:
         contained = ImageOps.contain(logo, (int(diameter * 0.68), int(diameter * 0.68)))
@@ -364,7 +401,7 @@ def render_schedule_card(
         _centered_text(draw, 320, center_y - 31, match.team1_name.upper(), team1_font, WHITE)
         _centered_text(draw, 760, center_y - 31, match.team2_name.upper(), team2_font, WHITE)
 
-        event = match.competition_key or match.tournament_name
+        event = match.tournament_name
         event_font = _fit_font(draw, event.upper(), 700, 22, 16, display=True)
         _centered_text(draw, width // 2, center_y + 29, event.upper(), event_font, MUTED)
 

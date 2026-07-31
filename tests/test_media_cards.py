@@ -115,3 +115,55 @@ def test_logo_download_accepts_small_png(monkeypatch):
 
     assert logo is not None
     assert logo.size == (20, 20)
+
+
+def test_logo_download_prefers_official_thumbnail(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGBA", (20, 20), (255, 0, 0, 255)).save(output, "PNG")
+    raw = output.getvalue()
+    requested = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"Content-Type": "application/octet-stream"}
+
+        def iter_content(self, size):
+            yield raw
+
+        def close(self):
+            pass
+
+    def fake_get(url, **kwargs):
+        requested.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(media_cards.requests, "get", fake_get)
+
+    logo = media_cards.fetch_team_logo(
+        "https://cdn.pandascore.co/images/team/image/1/logo.png"
+    )
+
+    assert logo is not None
+    assert requested == [
+        "https://cdn.pandascore.co/images/team/image/1/thumb_logo.png"
+    ]
+
+
+def test_schedule_uses_full_tournament_name_not_competition_key(monkeypatch):
+    drawn = []
+    original = media_cards._centered_text
+
+    def capture(draw, center_x, y, text, font, fill):
+        drawn.append(text)
+        return original(draw, center_x, y, text, font, fill)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture)
+
+    media_cards.render_schedule_card(
+        [_upcoming()],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" in drawn
+    assert "BLAST BOUNTY 2026" not in drawn

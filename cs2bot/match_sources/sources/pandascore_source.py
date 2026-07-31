@@ -41,9 +41,10 @@ def _name(value: Any) -> str | None:
 def _image_url(value: Any) -> str | None:
     if not isinstance(value, dict):
         return None
-    image_url = value.get("image_url")
-    if isinstance(image_url, str) and image_url.strip():
-        return image_url.strip()
+    for field in ("dark_mode_image_url", "image_url"):
+        image_url = value.get(field)
+        if isinstance(image_url, str) and image_url.strip():
+            return image_url.strip()
     return None
 
 
