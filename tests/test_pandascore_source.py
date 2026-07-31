@@ -80,7 +80,7 @@ def test_pandascore_blast_bounty_finals_are_recognized_as_tier1_lan():
     assert is_tier1_lan(match) == (True, None)
 
 
-def test_pandascore_blast_bounty_online_stage_remains_unconfirmed():
+def test_pandascore_blast_bounty_online_stage_is_selected():
     item = _sample_match()
     item["league"] = {"id": 11, "name": "BLAST Bounty"}
     item["serie"] = {"id": 12, "full_name": "2026 Season 2"}
@@ -88,7 +88,7 @@ def test_pandascore_blast_bounty_online_stage_remains_unconfirmed():
 
     match = pandascore_source._normalize_raw_matches([item])[0]
 
-    assert is_tier1_lan(match) == (False, "online_tournament")
+    assert is_tier1_lan(match) == (True, None)
 
 
 def test_pandascore_skips_incomplete_match_without_two_opponents():

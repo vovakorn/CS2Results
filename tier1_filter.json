@@ -43,6 +43,11 @@
       "Playoffs"
     ]
   },
+  "trusted_online_tier1_tournament_phase_patterns": {
+    "BLAST Bounty": [
+      "Online Stage"
+    ]
+  },
   "tournament_exclusion_patterns": [
     "qualifier",
     "open qualifier",
