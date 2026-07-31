@@ -10,6 +10,7 @@ from .config import (
     TIER1_PRIZE_POOL_THRESHOLD_USD,
     TIER1_TOURNAMENT_PATTERNS,
     TOURNAMENT_EXCLUSION_PATTERNS,
+    TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS,
     TRUSTED_LAN_TOURNAMENT_PATTERNS,
 )
 from .models import MatchNormalized, UpcomingMatchNormalized
@@ -20,6 +21,25 @@ def _contains_pattern(value: str | None, patterns: list[str]) -> bool:
         return False
     lowered = value.casefold()
     return any(pattern.casefold() in lowered for pattern in patterns)
+
+
+def _matches_trusted_lan_phase(tournament_name: str | None) -> bool:
+    return any(
+        _contains_pattern(tournament_name, [tournament_pattern])
+        and _contains_pattern(tournament_name, phase_patterns)
+        for tournament_pattern, phase_patterns in TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS.items()
+    )
+
+
+def is_tier1_candidate(match: MatchNormalized) -> bool:
+    """Return whether the event looks Tier-1 independently of its LAN evidence."""
+    return bool(
+        (
+            match.prize_pool_usd is not None
+            and match.prize_pool_usd >= TIER1_PRIZE_POOL_THRESHOLD_USD
+        )
+        or _contains_pattern(match.tournament_name, TIER1_TOURNAMENT_PATTERNS)
+    )
 
 
 def is_valid_match(match: MatchNormalized) -> tuple[bool, str | None]:
@@ -71,6 +91,7 @@ def detect_operator(tournament_name: str) -> str | None:
 def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     location = match.location or ""
     location_lower = location.casefold()
+    tournament_lower = match.tournament_name.casefold()
     excluded = _contains_pattern(match.tournament_name, TOURNAMENT_EXCLUSION_PATTERNS)
     excluded_team = _contains_pattern(
         f"{match.team1_name} {match.team2_name}",
@@ -89,24 +110,26 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     elif any(marker in location_lower for marker in ONLINE_LOCATION_MARKERS):
         lan_confirmed = False
         lan_reason = "online_location"
+    elif any(marker in tournament_lower for marker in ONLINE_LOCATION_MARKERS):
+        lan_confirmed = False
+        lan_reason = "online_tournament"
     elif excluded:
         lan_confirmed = False
         lan_reason = "excluded_tournament"
     elif location.strip():
         lan_confirmed = True
         lan_reason = None
-    elif _contains_pattern(match.tournament_name, TRUSTED_LAN_TOURNAMENT_PATTERNS):
+    elif _contains_pattern(
+        match.tournament_name,
+        TRUSTED_LAN_TOURNAMENT_PATTERNS,
+    ) or _matches_trusted_lan_phase(match.tournament_name):
         lan_confirmed = True
         lan_reason = None
     else:
         lan_confirmed = False
         lan_reason = "lan_unconfirmed"
 
-    tier1_confirmed = False
-    if match.prize_pool_usd is not None and match.prize_pool_usd >= TIER1_PRIZE_POOL_THRESHOLD_USD:
-        tier1_confirmed = True
-    elif _contains_pattern(match.tournament_name, TIER1_TOURNAMENT_PATTERNS):
-        tier1_confirmed = True
+    tier1_confirmed = is_tier1_candidate(match)
 
     if lan_confirmed and tier1_confirmed:
         return True, None

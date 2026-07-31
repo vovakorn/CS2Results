@@ -96,6 +96,21 @@ MAX_SOURCE_RESPONSE_BYTES=5000000
 TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 ```
 
+Для турниров, у которых онлайн-стадия и LAN-финалы используют общее название,
+задавайте доверенную пару «турнир → фаза», а не добавляйте весь турнир в
+`trusted_lan_tournament_patterns`:
+
+```json
+{
+  "trusted_lan_tournament_phase_patterns": {
+    "BLAST Bounty": ["Finals"]
+  }
+}
+```
+
+Так онлайн-часть BLAST Bounty останется заблокированной, а результаты LAN-финалов
+пройдут фильтр даже при отсутствии `location` в ответе PandaScore.
+
 ## 6. Проверка
 
 Сначала запустите функцию вручную:

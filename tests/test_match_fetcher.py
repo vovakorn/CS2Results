@@ -168,6 +168,34 @@ def test_include_filtered_returns_filtered_reason(monkeypatch):
     assert matches[0].filter_reason == "not_tier1"
 
 
+def test_rejected_matches_are_reported_without_entering_public_output(monkeypatch):
+    rejected = _match(
+        source="pandascore",
+        tournament_name="BLAST Bounty — 2026 Season 2 — Online Stage",
+    )
+    rejected.location = None
+    rejected.end_date = datetime.now(timezone.utc).isoformat()
+
+    async def fake_fetch(source, limit):
+        return [rejected]
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+    diagnostics = []
+
+    matches = asyncio.run(
+        match_fetcher.get_new_finished_matches(
+            source="pandascore",
+            dry_run=False,
+            check_processed=False,
+            rejected_matches=diagnostics,
+        )
+    )
+
+    assert matches == []
+    assert diagnostics == [rejected]
+    assert diagnostics[0].filter_reason == "online_tournament"
+
+
 def test_log_source_freshness_warns_when_latest_match_is_stale(monkeypatch, caplog):
     monkeypatch.setattr(match_fetcher.source_config, "MAX_SOURCE_STALENESS_HOURS", 48)
     match = _match()

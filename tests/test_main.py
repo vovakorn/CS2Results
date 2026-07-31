@@ -328,6 +328,56 @@ def test_debug_mode_cannot_publish_filtered_matches(monkeypatch):
     assert sent == []
 
 
+def test_handler_alerts_admin_when_tier1_match_has_no_lan_evidence(monkeypatch):
+    rejected = _match(team1="Liquid", team2="Spirit")
+    rejected.tournament_name = "BLAST Bounty — 2026 Season 3"
+    rejected.is_tier1_lan = False
+    rejected.filter_reason = "lan_unconfirmed"
+    alerts = []
+
+    async def fake_get_new_finished_matches(**kwargs):
+        kwargs["rejected_matches"].append(rejected)
+        return []
+
+    def fake_notify(alert_code, message):
+        alerts.append((alert_code, message))
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "_notify_admin", fake_notify)
+
+    response = main.handler({"limit": 30}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["tier1_lan_unconfirmed"] == 1
+    assert alerts[0][0] == "tier1_lan_unconfirmed"
+    assert "Liquid — Spirit" in alerts[0][1]
+
+
+def test_handler_does_not_alert_for_non_tier1_lan_uncertainty(monkeypatch):
+    rejected = _match(team1="Local One", team2="Local Two")
+    rejected.tournament_name = "Regional Finals"
+    rejected.is_tier1_lan = False
+    rejected.filter_reason = "lan_unconfirmed"
+    alerts = []
+
+    async def fake_get_new_finished_matches(**kwargs):
+        kwargs["rejected_matches"].append(rejected)
+        return []
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
+
+    response = main.handler({"limit": 30}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["tier1_lan_unconfirmed"] == 0
+    assert alerts == []
+
+
 def test_handler_uses_match_source_from_environment_default(monkeypatch):
     seen = {}
 

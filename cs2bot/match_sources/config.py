@@ -41,6 +41,9 @@ DEFAULT_TRUSTED_LAN_TOURNAMENT_PATTERNS = [
     "FISSURE Playground",
     "CS Asia Championships",
 ]
+DEFAULT_TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS = {
+    "BLAST Bounty": ["Finals"],
+}
 DEFAULT_TOURNAMENT_EXCLUSION_PATTERNS = [
     "qualifier",
     "open qualifier",
@@ -132,6 +135,18 @@ def _dict_setting(name: str, default: dict[str, str]) -> dict[str, str]:
     return value
 
 
+def _dict_list_setting(name: str, default: dict[str, list[str]]) -> dict[str, list[str]]:
+    value = TIER1_FILTER_CONFIG.get(name, default)
+    if not isinstance(value, dict) or not all(
+        isinstance(key, str)
+        and isinstance(items, list)
+        and all(isinstance(item, str) for item in items)
+        for key, items in value.items()
+    ):
+        raise ValueError(f"TIER1_FILTER_CONFIG_JSON.{name} must map strings to string arrays")
+    return value
+
+
 def _int_setting(name: str, default: int, minimum: int = 1, config_name: str | None = None) -> int:
     raw = TIER1_FILTER_CONFIG.get(config_name or name, os.getenv(name, str(default)))
     try:
@@ -164,6 +179,10 @@ ONLINE_LOCATION_MARKERS = _list_setting("online_location_markers", DEFAULT_ONLIN
 TRUSTED_LAN_TOURNAMENT_PATTERNS = _list_setting(
     "trusted_lan_tournament_patterns",
     DEFAULT_TRUSTED_LAN_TOURNAMENT_PATTERNS,
+)
+TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS = _dict_list_setting(
+    "trusted_lan_tournament_phase_patterns",
+    DEFAULT_TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS,
 )
 TOURNAMENT_EXCLUSION_PATTERNS = _list_setting(
     "tournament_exclusion_patterns",

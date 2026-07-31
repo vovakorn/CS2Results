@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from cs2bot.match_sources.filters import (
     detect_operator,
     is_featured_upcoming,
+    is_tier1_candidate,
     is_tier1_lan,
     is_valid_match,
 )
@@ -110,6 +111,26 @@ def test_explicit_not_lan_overrides_tournament_heuristics():
 def test_trusted_lan_tournament_passes_without_location():
     match = _match(tournament_name="IEM Cologne 2026", location=None)
     assert is_tier1_lan(match) == (True, None)
+
+
+def test_blast_bounty_finals_pass_without_location():
+    match = _match(
+        tournament_name="BLAST Bounty — 2026 Season 2 Finals — Playoffs",
+        location=None,
+    )
+
+    assert is_tier1_candidate(match) is True
+    assert is_tier1_lan(match) == (True, None)
+
+
+def test_blast_bounty_online_stage_does_not_inherit_final_lan_status():
+    match = _match(
+        tournament_name="BLAST Bounty — 2026 Season 2 — Online Stage",
+        location=None,
+    )
+
+    assert is_tier1_candidate(match) is True
+    assert is_tier1_lan(match) == (False, "online_tournament")
 
 
 def test_qualifier_is_rejected_even_if_name_contains_trusted_event():

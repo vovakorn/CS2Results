@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from cs2bot.match_sources.filters import is_tier1_lan
 from cs2bot.match_sources.models import SourceUnavailableError
 from cs2bot.match_sources.sources import pandascore_source
 
@@ -55,6 +56,39 @@ def test_pandascore_normalizes_series_result_by_team_id():
     assert match.start_date == "2026-07-28T10:00:00Z"
     assert match.end_date == "2026-07-28T12:10:00Z"
     assert match.maps == []
+
+
+def test_pandascore_blast_bounty_finals_are_recognized_as_tier1_lan():
+    item = _sample_match()
+    item["league"] = {"id": 11, "name": "BLAST Bounty"}
+    item["serie"] = {"id": 12, "full_name": "2026 Season 2 Finals"}
+    item["tournament"] = {"id": 13, "name": "Playoffs"}
+    item["opponents"] = [
+        {"opponent": {"id": 10, "name": "3DMAX"}},
+        {"opponent": {"id": 20, "name": "MOUZ"}},
+    ]
+    item["results"] = [
+        {"team_id": 10, "score": 1},
+        {"team_id": 20, "score": 2},
+    ]
+
+    match = pandascore_source._normalize_raw_matches([item])[0]
+
+    assert match.tournament_name == "BLAST Bounty — 2026 Season 2 Finals — Playoffs"
+    assert match.location is None
+    assert match.is_lan is None
+    assert is_tier1_lan(match) == (True, None)
+
+
+def test_pandascore_blast_bounty_online_stage_remains_unconfirmed():
+    item = _sample_match()
+    item["league"] = {"id": 11, "name": "BLAST Bounty"}
+    item["serie"] = {"id": 12, "full_name": "2026 Season 2"}
+    item["tournament"] = {"id": 13, "name": "Online Stage"}
+
+    match = pandascore_source._normalize_raw_matches([item])[0]
+
+    assert is_tier1_lan(match) == (False, "online_tournament")
 
 
 def test_pandascore_skips_incomplete_match_without_two_opponents():

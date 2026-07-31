@@ -199,6 +199,7 @@ async def get_new_finished_matches(
     dry_run: bool = False,
     include_filtered: bool = False,
     check_processed: bool = True,
+    rejected_matches: list[MatchNormalized] | None = None,
 ) -> list[MatchNormalized]:
     selected_source = source or source_config.MATCH_SOURCE
     if selected_source not in {"auto", "pandascore", "liquipedia"}:
@@ -223,6 +224,8 @@ async def get_new_finished_matches(
             )
         fetched = fresh_matches
     filtered, valid_matches, tier1_lan_count = apply_quality_filters(fetched, include_filtered=include_filtered)
+    if rejected_matches is not None:
+        rejected_matches.extend(match for match in valid_matches if not match.is_tier1_lan)
 
     new_matches: list[MatchNormalized] = []
     for match in filtered[:limit]:

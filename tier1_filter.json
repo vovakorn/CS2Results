@@ -37,6 +37,11 @@
     "FISSURE Playground",
     "CS Asia Championships"
   ],
+  "trusted_lan_tournament_phase_patterns": {
+    "BLAST Bounty": [
+      "Finals"
+    ]
+  },
   "tournament_exclusion_patterns": [
     "qualifier",
     "open qualifier",
