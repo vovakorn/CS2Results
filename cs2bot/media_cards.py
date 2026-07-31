@@ -19,7 +19,10 @@ SCHEDULE_CARD_SIZE = (1080, 1350)
 MAX_SCHEDULE_MATCHES = 6
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
-LOGO_HOSTS = {"cdn.pandascore.co"}
+LOGO_HOSTS = {
+    "cdn-api.pandascore.co",
+    "cdn.pandascore.co",
+}
 ALLOWED_LOGO_TYPES = {
     "application/octet-stream",
     "image/png",
@@ -141,7 +144,9 @@ def _logo_candidates(url: str) -> list[str]:
     """Prefer PandaScore's small official thumbnail, then the original logo."""
     parsed = urlparse(url)
     path_parts = parsed.path.rsplit("/", 1)
-    if len(path_parts) != 2 or path_parts[1].startswith(("thumb_", "normal_")):
+    if len(path_parts) != 2 or path_parts[1].startswith(
+        ("thumb_", "normal_", "250px_", "800px_")
+    ):
         return [url]
     thumbnail_path = f"{path_parts[0]}/thumb_{path_parts[1]}"
     thumbnail = parsed._replace(path=thumbnail_path).geturl()

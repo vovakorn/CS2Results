@@ -76,6 +76,38 @@ def test_logo_download_rejects_non_pandascore_host_without_request(monkeypatch):
     assert called is False
 
 
+def test_logo_download_accepts_current_pandascore_cdn(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGBA", (20, 20), (255, 0, 0, 255)).save(output, "PNG")
+    raw = output.getvalue()
+    requested = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"Content-Type": "image/png", "Content-Length": str(len(raw))}
+
+        def iter_content(self, size):
+            yield raw
+
+        def close(self):
+            pass
+
+    def fake_get(url, **kwargs):
+        requested.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(media_cards.requests, "get", fake_get)
+
+    logo = media_cards.fetch_team_logo(
+        "https://cdn-api.pandascore.co/images/team/image/3210/250px_g2.png"
+    )
+
+    assert logo is not None
+    assert requested == [
+        "https://cdn-api.pandascore.co/images/team/image/3210/250px_g2.png"
+    ]
+
+
 def test_logo_download_rejects_redirect(monkeypatch):
     class FakeResponse:
         status_code = 302
