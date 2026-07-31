@@ -62,6 +62,15 @@ def _font(size: int, *, display: bool = False, medium: bool = False) -> ImageFon
         raise MediaCardError("Bundled media font is unavailable") from exc
 
 
+def _header_accent_segments(width: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    outer_margin = 55
+    center_gap = 110
+    return (
+        (outer_margin, width // 2 - center_gap // 2),
+        (width // 2 + center_gap // 2, width - outer_margin),
+    )
+
+
 def _background(size: tuple[int, int]) -> Image.Image:
     width, height = size
     image = Image.new("RGB", size, NAVY)
@@ -85,9 +94,8 @@ def _background(size: tuple[int, int]) -> Image.Image:
         outline=(52, 91, 139, 150),
         width=2,
     )
-    for offset, color in ((0, CYAN), (width // 2, AMBER)):
-        x0 = 55 + offset
-        x1 = min(width - 55, x0 + width // 3)
+    accent_segments = _header_accent_segments(width)
+    for (x0, x1), color in zip(accent_segments, (CYAN, AMBER), strict=True):
         draw.line((x0, 58, x1, 58), fill=(*color, 220), width=8)
     for index in range(7):
         x = -180 + index * 225
