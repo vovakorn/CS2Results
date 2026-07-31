@@ -414,7 +414,6 @@ def format_daily_schedule(
     timezone_info = ZoneInfo(DISPLAY_TIMEZONE)
     header = [
         f"📅 <b>Матчи CS2 сегодня — {_display_day(local_now)}</b>",
-        "Время московское",
         "",
     ]
     entries: list[list[str]] = []
@@ -454,7 +453,7 @@ def format_schedule_photo_caption(local_now: datetime, match_count: int) -> str:
     return "\n".join(
         [
             f"📅 <b>Матчи CS2 сегодня — {_display_day(local_now)}</b>",
-            f"{match_count} {noun} · время московское",
+            f"{match_count} {noun}",
             "",
             "Источник: PandaScore",
             "",
