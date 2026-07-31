@@ -200,6 +200,35 @@ def test_handler_dry_run_reports_rejected_match_diagnostics(monkeypatch):
     assert body["diagnostics"][0]["filter_reason"] == "lan_unconfirmed"
 
 
+def test_handler_dry_run_prioritizes_unconfirmed_tier1_diagnostics(monkeypatch):
+    ordinary = [
+        _match(match_id=str(index), team1=f"Local {index}", team2=f"Regional {index}")
+        for index in range(main.MAX_MATCHES)
+    ]
+    for match in ordinary:
+        match.tournament_name = "Regional League"
+        match.is_tier1_lan = False
+        match.filter_reason = "lan_unconfirmed"
+
+    tier1 = _match(match_id="tier1", team1="Liquid", team2="Spirit")
+    tier1.tournament_name = "BLAST Bounty — 2026 Season 2 — Playoffs"
+    tier1.is_tier1_lan = False
+    tier1.filter_reason = "lan_unconfirmed"
+
+    async def fake_get_new_finished_matches(**kwargs):
+        kwargs["rejected_matches"].extend([*ordinary, tier1])
+        return ordinary
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+
+    response = main.handler({"dry_run": True, "include_filtered": True}, None)
+    body = json.loads(response["body"])
+
+    assert len(body["diagnostics"]) == main.MAX_MATCHES
+    assert body["diagnostics"][0]["match_id"] == "tier1"
+    assert body["diagnostics"][0]["teams"] == ["Liquid", "Spirit"]
+
+
 def test_handler_production_response_omits_match_diagnostics(monkeypatch):
     async def fake_get_new_finished_matches(**kwargs):
         return []
