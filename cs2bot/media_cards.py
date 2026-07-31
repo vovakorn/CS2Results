@@ -674,7 +674,7 @@ def render_schedule_card(
         "ДЕКАБРЯ",
     )
     _draw_channel_logo(canvas, draw, (105, 118), 88)
-    header_center = 615
+    header_center = width // 2
     _centered_text(draw, header_center, 75, "МАТЧИ CS2 СЕГОДНЯ", _font(44, display=True), WHITE)
     _centered_text(
         draw,
