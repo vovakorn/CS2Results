@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -17,7 +18,7 @@ def _sample_match():
         "end_at": "2026-07-28T12:10:00Z",
         "league": {"id": 1, "name": "IEM"},
         "serie": {"id": 2, "full_name": "IEM Cologne 2026"},
-        "tournament": {"id": 3, "name": "Playoffs"},
+        "tournament": {"id": 3, "name": "Playoffs", "tier": "S"},
         "opponents": [
             {
                 "opponent": {
@@ -38,6 +39,10 @@ def _sample_match():
             {"team_id": 20, "score": 1},
             {"team_id": 10, "score": 2},
         ],
+        "winner_id": 10,
+        "rescheduled": True,
+        "original_scheduled_at": "2026-07-28T09:00:00Z",
+        "forfeit": False,
     }
 
 
@@ -48,6 +53,7 @@ def _sample_upcoming():
     item["scheduled_at"] = "2026-07-30T11:00:00Z"
     item["end_at"] = None
     item["results"] = []
+    item.pop("winner_id")
     return item
 
 
@@ -67,8 +73,20 @@ def test_pandascore_normalizes_series_result_by_team_id():
     assert match.best_of == 3
     assert match.tournament_name == "IEM — IEM Cologne 2026 — Playoffs"
     assert match.competition_key == "IEM Cologne 2026"
+    assert match.source_refs.model_dump() == {
+        "league_id": "1",
+        "serie_id": "2",
+        "tournament_id": "3",
+        "team1_id": "10",
+        "team2_id": "20",
+        "winner_team_id": "10",
+    }
+    assert match.tournament_tier == "s"
     assert match.start_date == "2026-07-28T10:00:00Z"
     assert match.end_date == "2026-07-28T12:10:00Z"
+    assert match.original_scheduled_at == "2026-07-28T09:00:00Z"
+    assert match.rescheduled is True
+    assert match.forfeit is False
     assert match.maps == []
 
 
@@ -153,6 +171,13 @@ def test_pandascore_normalizes_featured_upcoming_match():
     assert match.scheduled_at == "2026-07-30T11:00:00Z"
     assert match.team1_logo_url.endswith("/10/navi.png")
     assert match.team2_logo_url.endswith("/20/faze.png")
+    assert match.source_refs.team1_id == "10"
+    assert match.source_refs.team2_id == "20"
+    assert match.source_refs.winner_team_id is None
+    assert match.tournament_tier == "s"
+    assert match.original_scheduled_at == "2026-07-28T09:00:00Z"
+    assert match.rescheduled is True
+    assert match.forfeit is False
     assert match.is_featured is True
     assert match.feature_reason == "tier1_tournament"
 
@@ -192,3 +217,51 @@ def test_pandascore_utc_range_normalizes_timezone():
     )
 
     assert result == "2026-07-29T21:00:00Z,2026-07-30T21:00:00Z"
+
+
+def test_pandascore_enriches_missing_tiers_in_one_batched_request(monkeypatch):
+    first_item = _sample_match()
+    first_item["tournament"].pop("tier")
+    second_item = _sample_match()
+    second_item["id"] = 12346
+    second_item["tournament"] = {"id": 4, "name": "Group Stage"}
+    matches = pandascore_source._normalize_raw_matches([first_item, second_item])
+    calls = []
+
+    async def fake_fetch(path, params):
+        calls.append((path, params))
+        return [{"id": 3, "tier": "A"}, {"id": 4, "tier": "B"}]
+
+    pandascore_source._tournament_tier_cache.clear()
+    monkeypatch.setattr(pandascore_source, "_fetch_json", fake_fetch)
+
+    asyncio.run(pandascore_source._enrich_tournament_tiers(matches))
+
+    assert calls == [
+        (
+            "/tournaments",
+            {"filter[id]": "3,4", "per_page": 2},
+        )
+    ]
+    assert [match.tournament_tier for match in matches] == ["a", "b"]
+
+    asyncio.run(pandascore_source._enrich_tournament_tiers(matches))
+    assert len(calls) == 1
+
+
+def test_pandascore_tier_enrichment_failure_keeps_matches(monkeypatch, caplog):
+    item = _sample_match()
+    item["tournament"].pop("tier")
+    matches = pandascore_source._normalize_raw_matches([item])
+
+    async def fake_fetch(path, params):
+        raise SourceUnavailableError("temporary tournament error")
+
+    pandascore_source._tournament_tier_cache.clear()
+    monkeypatch.setattr(pandascore_source, "_fetch_json", fake_fetch)
+
+    with caplog.at_level(logging.WARNING):
+        asyncio.run(pandascore_source._enrich_tournament_tiers(matches))
+
+    assert matches[0].tournament_tier is None
+    assert "event=pandascore_tier_enrichment_failed" in caplog.text

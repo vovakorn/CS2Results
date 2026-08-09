@@ -168,6 +168,25 @@ def test_include_filtered_returns_filtered_reason(monkeypatch):
     assert matches[0].filter_reason == "not_tier1"
 
 
+def test_pandascore_tier_is_logged_as_shadow_diagnostic(caplog):
+    selected = _match(source="pandascore", tournament_name="IEM Cologne 2026")
+    selected.tournament_tier = "s"
+    rejected = _match(source="pandascore", tournament_name="Regional Finals")
+    rejected.tournament_tier = "a"
+
+    with caplog.at_level(logging.INFO):
+        output, valid, selected_count = match_fetcher.apply_quality_filters(
+            [selected, rejected]
+        )
+
+    assert output == [selected]
+    assert valid == [selected, rejected]
+    assert selected_count == 1
+    assert "event=pandascore_tier_diagnostics" in caplog.text
+    assert "s_selected=1" in caplog.text
+    assert "a_rejected=1" in caplog.text
+
+
 def test_configured_online_tier1_stage_enters_public_output(monkeypatch):
     selected = _match(
         source="pandascore",

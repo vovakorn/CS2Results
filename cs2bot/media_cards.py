@@ -16,6 +16,7 @@ from .match_sources.models import MatchNormalized, UpcomingMatchNormalized
 
 RESULT_CARD_SIZE = (1080, 1080)
 SCHEDULE_CARD_SIZE = (1080, 1080)
+MAX_RESULT_MATCHES = 10
 MAX_SCHEDULE_MATCHES = 10
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
@@ -41,6 +42,21 @@ CYAN = (22, 199, 255)
 AMBER = (255, 159, 28)
 LOGO_PLATE_DARK = (10, 24, 43)
 LOGO_PLATE_LIGHT = (220, 230, 240)
+MONTH_NAMES = (
+    "",
+    "ЯНВАРЯ",
+    "ФЕВРАЛЯ",
+    "МАРТА",
+    "АПРЕЛЯ",
+    "МАЯ",
+    "ИЮНЯ",
+    "ИЮЛЯ",
+    "АВГУСТА",
+    "СЕНТЯБРЯ",
+    "ОКТЯБРЯ",
+    "НОЯБРЯ",
+    "ДЕКАБРЯ",
+)
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 FONT_DIR = ASSET_DIR / "fonts"
@@ -606,36 +622,36 @@ def _as_png(image: Image.Image) -> bytes:
     return data
 
 
-def render_result_card(match: MatchNormalized) -> bytes:
-    """Render a square result card whose score is protected by Telegram media spoiler."""
-    canvas = _background(RESULT_CARD_SIZE).convert("RGBA")
-    draw = ImageDraw.Draw(canvas, "RGBA")
-    width, height = RESULT_CARD_SIZE
+def _winner_side(match: MatchNormalized) -> str | None:
+    if match.score1 is None or match.score2 is None or match.score1 == match.score2:
+        return None
+    return "left" if match.score1 > match.score2 else "right"
 
-    _centered_text(draw, width // 2, 92, "РЕЗУЛЬТАТ МАТЧА", _font(42, display=True), CYAN)
-    tournament_font = _fit_font(
-        draw,
-        match.tournament_name.upper(),
-        900,
-        38,
-        24,
-        display=True,
-    )
-    _centered_text(
-        draw,
-        width // 2,
-        160,
-        match.tournament_name.upper(),
-        tournament_font,
-        WHITE,
-    )
 
-    draw.rounded_rectangle((90, 255, 990, 825), radius=36, fill=(*PANEL, 232))
+def _draw_wide_result_match(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    match: MatchNormalized,
+    box: tuple[int, int, int, int],
+    *,
+    show_tournament: bool = True,
+) -> None:
+    x0, y0, x1, y1 = box
+    height = y1 - y0
+    draw.rounded_rectangle(box, radius=30, fill=(*PANEL, 237))
+    draw.line((x0 + 28, y0 + 1, x0 + 168, y0 + 1), fill=(*CYAN, 190), width=3)
+    draw.line((x1 - 168, y0 + 1, x1 - 28, y0 + 1), fill=(*AMBER, 190), width=3)
+
+    logo_diameter = min(210, max(88, int(height * 0.42)))
+    logo_radius = logo_diameter // 2
+    logo_y = y0 + int(height * 0.35)
+    team1_edge = x0 + 48
+    team2_edge = x1 - 48
     _draw_logo(
         canvas,
         draw,
-        (285, 455),
-        250,
+        (team1_edge + logo_radius, logo_y),
+        logo_diameter,
         match.team1_name,
         match.team1_logo_url,
         CYAN,
@@ -644,35 +660,266 @@ def render_result_card(match: MatchNormalized) -> bytes:
     _draw_logo(
         canvas,
         draw,
-        (795, 455),
-        250,
+        (team2_edge - logo_radius, logo_y),
+        logo_diameter,
         match.team2_name,
         match.team2_logo_url,
         AMBER,
         match.team2_logo_fallback_url,
     )
 
-    score = f"{match.score1}:{match.score2}"
-    score_font = _fit_font(draw, score, 270, 144, 96)
-    _centered_text(draw, width // 2, 375, score, score_font, WHITE)
-    _centered_text(draw, width // 2, 535, "BO" + str(match.best_of or "—"), _font(34), MUTED)
-
-    for center_x, name in ((285, match.team1_name), (795, match.team2_name)):
-        team_font = _fit_font(draw, name.upper(), 350, 48, 26)
-        _centered_text(draw, center_x, 625, name.upper(), team_font, WHITE)
-
-    winner = (
-        match.team1_name
-        if match.score1 is not None and match.score2 is not None and match.score1 > match.score2
-        else match.team2_name
+    if height >= 400:
+        score_size, team_size, event_size = 110, 48, 25
+    elif height >= 300:
+        score_size, team_size, event_size = 78, 42, 22
+    elif height >= 250:
+        score_size, team_size, event_size = 58, 36, 19
+    else:
+        score_size, team_size, event_size = 46, 28, 15
+    score = f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
+    _centered_text(
+        draw,
+        (x0 + x1) // 2,
+        y0 + int(height * 0.27),
+        score,
+        _fit_font(draw, score, 260, score_size, 36),
+        WHITE,
     )
-    _centered_text(draw, width // 2, 750, f"ПОБЕДИТЕЛЬ · {winner.upper()}", _font(32, display=True), AMBER)
+    if match.best_of is not None and height >= 250:
+        _centered_text(
+            draw,
+            (x0 + x1) // 2,
+            y0 + int(height * 0.49),
+            f"BO{match.best_of}",
+            _font(24 if height < 400 else 30),
+            MUTED,
+        )
+
+    winner_side = _winner_side(match)
+    name_gap = 30 if height >= 400 else 18 if height >= 250 else 10
+    team_y = logo_y + logo_radius + name_gap
+    team1 = match.team1_name.upper()
+    team2 = match.team2_name.upper()
+    name_width = (x1 - x0) // 2 - 105
+    _aligned_text(
+        draw,
+        team1_edge,
+        team_y,
+        team1,
+        _fit_font(draw, team1, name_width, team_size, 16),
+        AMBER if winner_side == "left" else WHITE,
+        "left",
+    )
+    _aligned_text(
+        draw,
+        team2_edge,
+        team_y,
+        team2,
+        _fit_font(draw, team2, name_width, team_size, 16),
+        AMBER if winner_side == "right" else WHITE,
+        "right",
+    )
+
+    if show_tournament:
+        footer_text = match.tournament_name.upper()
+        footer_fill = MUTED
+    else:
+        winner_name = match.team1_name if winner_side == "left" else match.team2_name
+        footer_text = f"ПОБЕДИТЕЛЬ · {winner_name.upper()}" if winner_side else "РЕЗУЛЬТАТ ЗАВЕРШЁН"
+        footer_fill = AMBER
+    _centered_text(
+        draw,
+        (x0 + x1) // 2,
+        y1 - (58 if height >= 300 else 43),
+        footer_text,
+        _fit_font(draw, footer_text, x1 - x0 - 160, event_size, 12, display=True),
+        footer_fill,
+    )
+
+
+def _draw_compact_result_match(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    match: MatchNormalized,
+    box: tuple[int, int, int, int],
+) -> None:
+    x0, y0, x1, y1 = box
+    height = y1 - y0
+    center_x = (x0 + x1) // 2
+    draw.rounded_rectangle(box, radius=min(26, height // 5), fill=(*PANEL, 237))
+    draw.line((x0 + 22, y0 + 1, center_x - 22, y0 + 1), fill=(*CYAN, 185), width=2)
+    draw.line((center_x + 22, y0 + 1, x1 - 22, y0 + 1), fill=(*AMBER, 185), width=2)
+
+    if height >= 210:
+        logo_diameter, score_size, team_size, event_size = 68, 42, 24, 15
+        score_y, logo_y, team_y, event_y = y0 + 19, y0 + 92, y0 + 137, y1 - 46
+    elif height >= 165:
+        logo_diameter, score_size, team_size, event_size = 52, 34, 20, 13
+        score_y, logo_y, team_y, event_y = y0 + 12, y0 + 70, y0 + 104, y1 - 34
+    else:
+        logo_diameter, score_size, team_size, event_size = 36, 25, 15, 10
+        score_y, logo_y, team_y, event_y = y0 + 3, y0 + 45, y0 + 72, y1 - 19
+
+    logo_radius = logo_diameter // 2
+    team1_edge = x0 + 22
+    team2_edge = x1 - 22
+    _draw_logo(
+        canvas,
+        draw,
+        (team1_edge + logo_radius, logo_y),
+        logo_diameter,
+        match.team1_name,
+        match.team1_logo_url,
+        CYAN,
+        match.team1_logo_fallback_url,
+    )
+    _draw_logo(
+        canvas,
+        draw,
+        (team2_edge - logo_radius, logo_y),
+        logo_diameter,
+        match.team2_name,
+        match.team2_logo_url,
+        AMBER,
+        match.team2_logo_fallback_url,
+    )
+
+    score = f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
+    _centered_text(draw, center_x, score_y, score, _font(score_size), WHITE)
+    winner_side = _winner_side(match)
+    name_width = 194 if height >= 210 else 184 if height >= 165 else 174
+    team1 = match.team1_name.upper()
+    team2 = match.team2_name.upper()
+    _aligned_text(
+        draw,
+        team1_edge,
+        team_y,
+        team1,
+        _fit_font(draw, team1, name_width, team_size, 11),
+        AMBER if winner_side == "left" else WHITE,
+        "left",
+    )
+    _aligned_text(
+        draw,
+        team2_edge,
+        team_y,
+        team2,
+        _fit_font(draw, team2, name_width, team_size, 11),
+        AMBER if winner_side == "right" else WHITE,
+        "right",
+    )
+    event = match.tournament_name.upper()
+    _centered_text(
+        draw,
+        center_x,
+        event_y,
+        event,
+        _fit_font(draw, event, x1 - x0 - 112, event_size, 10, display=True),
+        MUTED,
+    )
+
+
+def render_result_card(match: MatchNormalized) -> bytes:
+    """Render a square result card whose score is protected by Telegram media spoiler."""
+    canvas = _background(RESULT_CARD_SIZE, header_accent_y=98).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    width, height = RESULT_CARD_SIZE
+
+    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
+    _centered_text(draw, width // 2, 207, "РЕЗУЛЬТАТ МАТЧА", _font(44, display=True), WHITE)
+    tournament_font = _fit_font(
+        draw,
+        match.tournament_name.upper(),
+        900,
+        30,
+        18,
+        display=True,
+    )
     _centered_text(
         draw,
         width // 2,
-        932,
+        286,
+        match.tournament_name.upper(),
+        tournament_font,
+        CYAN,
+    )
+    _draw_wide_result_match(
+        canvas,
+        draw,
+        match,
+        (75, 340, 1005, 850),
+        show_tournament=False,
+    )
+    _centered_text(
+        draw,
+        width // 2,
+        1012,
         "CS2 TIER-1 · РЕЗУЛЬТАТЫ МАТЧЕЙ",
-        _font(24, display=True),
+        _font(20, display=True),
+        MUTED,
+    )
+    return _as_png(canvas)
+
+
+def render_results_card(
+    matches: Sequence[MatchNormalized],
+    local_now: datetime,
+) -> bytes:
+    """Render an adaptive daily results card with one to ten matches."""
+    if not matches or len(matches) > MAX_RESULT_MATCHES:
+        raise MediaCardError("Results card supports between one and ten matches")
+
+    canvas = _background(RESULT_CARD_SIZE, header_accent_y=98).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    width, height = RESULT_CARD_SIZE
+    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
+    _centered_text(draw, width // 2, 207, "ИТОГИ ДНЯ", _font(44, display=True), WHITE)
+    _centered_text(
+        draw,
+        width // 2,
+        286,
+        f"{local_now.day} {MONTH_NAMES[local_now.month]}",
+        _font(27, display=True),
+        CYAN,
+    )
+
+    sorted_matches = sorted(matches, key=lambda item: item.end_date or item.date or item.start_date or "")
+    columns = 1 if len(sorted_matches) <= 3 else 2
+    rows = math.ceil(len(sorted_matches) / columns)
+    area_top = 340
+    area_bottom = 960
+    gap = 14
+    available_height = area_bottom - area_top - gap * (rows - 1)
+    if columns == 1:
+        max_row_height = {1: 390, 2: 280, 3: 195}[len(sorted_matches)]
+    else:
+        max_row_height = 230
+    row_height = min(max_row_height, available_height // rows)
+    group_height = row_height * rows + gap * (rows - 1)
+    top = area_top + ((area_bottom - area_top) - group_height) // 2
+    card_width = 960 if columns == 1 else 468
+    column_gap = 24
+    left = 60
+    for index, match in enumerate(sorted_matches):
+        row = index // columns
+        column = index % columns
+        if columns == 2 and row == rows - 1 and len(sorted_matches) % 2 == 1:
+            x0 = (width - card_width) // 2
+        else:
+            x0 = left + column * (card_width + column_gap)
+        y0 = top + row * (row_height + gap)
+        box = (x0, y0, x0 + card_width, y0 + row_height)
+        if columns == 1:
+            _draw_wide_result_match(canvas, draw, match, box)
+        else:
+            _draw_compact_result_match(canvas, draw, match, box)
+
+    _centered_text(
+        draw,
+        width // 2,
+        1012,
+        "CS2 TIER-1 · РЕЗУЛЬТАТЫ МАТЧЕЙ",
+        _font(20, display=True),
         MUTED,
     )
     return _as_png(canvas)
@@ -696,21 +943,6 @@ def render_schedule_card(
     canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
     width, height = SCHEDULE_CARD_SIZE
-    month_names = (
-        "",
-        "ЯНВАРЯ",
-        "ФЕВРАЛЯ",
-        "МАРТА",
-        "АПРЕЛЯ",
-        "МАЯ",
-        "ИЮНЯ",
-        "ИЮЛЯ",
-        "АВГУСТА",
-        "СЕНТЯБРЯ",
-        "ОКТЯБРЯ",
-        "НОЯБРЯ",
-        "ДЕКАБРЯ",
-    )
     _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
     header_center = width // 2
     _centered_text(draw, header_center, 207, "МАТЧИ CS2 СЕГОДНЯ", _font(44, display=True), WHITE)
@@ -718,7 +950,7 @@ def render_schedule_card(
         draw,
         header_center,
         286,
-        f"{local_now.day} {month_names[local_now.month]}",
+        f"{local_now.day} {MONTH_NAMES[local_now.month]}",
         _font(27, display=True),
         CYAN,
     )

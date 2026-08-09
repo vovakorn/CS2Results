@@ -3,21 +3,31 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal, cast
 
 import aiohttp
 from pydantic import ValidationError
 
 from .. import config as source_config
 from ..filters import is_featured_upcoming
-from ..models import MatchNormalized, SourceUnavailableError, UpcomingMatchNormalized
+from ..models import (
+    MatchNormalized,
+    SourceReferences,
+    SourceUnavailableError,
+    UpcomingMatchNormalized,
+)
 from .http_utils import read_limited_response
 
 logger = logging.getLogger(__name__)
 
 PANDASCORE_PAST_MATCHES_PATH = "/csgo/matches/past"
 PANDASCORE_UPCOMING_MATCHES_PATH = "/csgo/matches/upcoming"
+PANDASCORE_TOURNAMENTS_PATH = "/tournaments"
 MIN_PANDASCORE_QUERY_WINDOW_HOURS = 24 * 7
+MAX_TOURNAMENT_TIER_CACHE_SIZE = 512
+
+TournamentTier = Literal["s", "a", "b", "c", "d"]
+_tournament_tier_cache: dict[str, TournamentTier | None] = {}
 
 
 def _optional_int(value: Any) -> int | None:
@@ -27,6 +37,31 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_source_id(value: Any) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+    result = str(value).strip()
+    return result or None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().casefold()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+    return None
+
+
+def _optional_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _name(value: Any) -> str | None:
@@ -63,6 +98,37 @@ def _tournament_name(item: dict[str, Any]) -> str | None:
 
 def _competition_key(item: dict[str, Any]) -> str | None:
     return _name(item.get("serie")) or _name(item.get("league")) or _name(item.get("tournament"))
+
+
+def _nested_id(value: Any) -> str | None:
+    return _optional_source_id(value.get("id")) if isinstance(value, dict) else None
+
+
+def _tournament_tier(value: Any) -> TournamentTier | None:
+    if not isinstance(value, dict):
+        return None
+    tier = value.get("tier")
+    if not isinstance(tier, str):
+        return None
+    normalized = tier.strip().casefold()
+    if normalized in {"s", "a", "b", "c", "d"}:
+        return cast(TournamentTier, normalized)
+    return None
+
+
+def _source_references(
+    item: dict[str, Any],
+    team1_id: int | None,
+    team2_id: int | None,
+) -> SourceReferences:
+    return SourceReferences(
+        league_id=_nested_id(item.get("league")),
+        serie_id=_nested_id(item.get("serie")),
+        tournament_id=_nested_id(item.get("tournament")),
+        team1_id=_optional_source_id(team1_id),
+        team2_id=_optional_source_id(team2_id),
+        winner_team_id=_optional_source_id(item.get("winner_id")),
+    )
 
 
 def _utc_range(start: datetime, end: datetime) -> str:
@@ -135,6 +201,12 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         match_url=None,
         tournament_name=tournament_name,
         competition_key=_competition_key(item),
+        source_refs=_source_references(
+            item,
+            normalized_opponents[0][1],
+            normalized_opponents[1][1],
+        ),
+        tournament_tier=_tournament_tier(item.get("tournament")),
         team1_name=normalized_opponents[0][0],
         team2_name=normalized_opponents[1][0],
         team1_logo_url=normalized_opponents[0][2],
@@ -149,6 +221,9 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         date=str(end_at or begin_at) if end_at or begin_at else None,
         start_date=str(begin_at) if begin_at else None,
         end_date=str(end_at) if end_at else None,
+        original_scheduled_at=_optional_text(item.get("original_scheduled_at")),
+        rescheduled=_optional_bool(item.get("rescheduled")),
+        forfeit=_optional_bool(item.get("forfeit")),
         is_lan=None,
         location=None,
         prize_pool_usd=None,
@@ -184,14 +259,15 @@ def _normalize_upcoming_item(item: dict[str, Any]) -> UpcomingMatchNormalized | 
     opponents = item.get("opponents")
     if not isinstance(opponents, list) or len(opponents) != 2:
         return None
-    teams: list[tuple[str, str | None, str | None]] = []
+    teams: list[tuple[str, int | None, str | None, str | None]] = []
     for entry in opponents:
         opponent = entry.get("opponent") if isinstance(entry, dict) else None
         team_name = _name(opponent)
+        team_id = _optional_int(opponent.get("id")) if isinstance(opponent, dict) else None
         if not team_name:
             return None
         logo_url, logo_fallback_url = _image_urls(opponent)
-        teams.append((team_name, logo_url, logo_fallback_url))
+        teams.append((team_name, team_id, logo_url, logo_fallback_url))
     tournament_name = _tournament_name(item)
     match_id = item.get("id")
     scheduled_at = item.get("scheduled_at") or item.get("begin_at")
@@ -201,13 +277,18 @@ def _normalize_upcoming_item(item: dict[str, Any]) -> UpcomingMatchNormalized | 
         match_id=str(match_id),
         tournament_name=tournament_name,
         competition_key=_competition_key(item),
+        source_refs=_source_references(item, teams[0][1], teams[1][1]),
+        tournament_tier=_tournament_tier(item.get("tournament")),
         team1_name=teams[0][0],
         team2_name=teams[1][0],
-        team1_logo_url=teams[0][1],
-        team2_logo_url=teams[1][1],
-        team1_logo_fallback_url=teams[0][2],
-        team2_logo_fallback_url=teams[1][2],
+        team1_logo_url=teams[0][2],
+        team2_logo_url=teams[1][2],
+        team1_logo_fallback_url=teams[0][3],
+        team2_logo_fallback_url=teams[1][3],
         scheduled_at=str(scheduled_at),
+        original_scheduled_at=_optional_text(item.get("original_scheduled_at")),
+        rescheduled=_optional_bool(item.get("rescheduled")),
+        forfeit=_optional_bool(item.get("forfeit")),
         best_of=_optional_int(item.get("number_of_games")),
     )
     featured, reason = is_featured_upcoming(match)
@@ -262,6 +343,92 @@ async def _fetch_json(path: str, params: dict[str, Any]) -> Any:
         raise SourceUnavailableError(f"PandaScore request failed: {type(exc).__name__}") from exc
 
 
+def _cache_tournament_tier(tournament_id: str, tier: TournamentTier | None) -> None:
+    if len(_tournament_tier_cache) >= MAX_TOURNAMENT_TIER_CACHE_SIZE:
+        _tournament_tier_cache.clear()
+    _tournament_tier_cache[tournament_id] = tier
+
+
+def _log_upcoming_tier_diagnostics(matches: list[UpcomingMatchNormalized]) -> None:
+    if not matches:
+        return
+    counts = {
+        (tier, featured): sum(
+            1
+            for match in matches
+            if (match.tournament_tier or "unknown") == tier
+            and match.is_featured is featured
+        )
+        for tier in ("s", "a", "b", "c", "d", "unknown")
+        for featured in (True, False)
+    }
+    logger.info(
+        (
+            "event=pandascore_upcoming_tier_diagnostics "
+            "s_featured=%s s_rejected=%s a_featured=%s a_rejected=%s "
+            "b_featured=%s b_rejected=%s c_featured=%s c_rejected=%s "
+            "d_featured=%s d_rejected=%s unknown_featured=%s unknown_rejected=%s"
+        ),
+        counts[("s", True)],
+        counts[("s", False)],
+        counts[("a", True)],
+        counts[("a", False)],
+        counts[("b", True)],
+        counts[("b", False)],
+        counts[("c", True)],
+        counts[("c", False)],
+        counts[("d", True)],
+        counts[("d", False)],
+        counts[("unknown", True)],
+        counts[("unknown", False)],
+    )
+
+
+async def _enrich_tournament_tiers(
+    matches: list[MatchNormalized] | list[UpcomingMatchNormalized],
+) -> None:
+    """Fill missing tiers in one batched, non-critical tournament request."""
+    missing_ids: set[str] = set()
+    for match in matches:
+        tournament_id = match.source_refs.tournament_id if match.source_refs else None
+        if not tournament_id:
+            continue
+        if match.tournament_tier is not None:
+            _cache_tournament_tier(tournament_id, match.tournament_tier)
+        elif tournament_id not in _tournament_tier_cache:
+            missing_ids.add(tournament_id)
+
+    if missing_ids:
+        ordered_ids = sorted(missing_ids)
+        try:
+            data = await _fetch_json(
+                PANDASCORE_TOURNAMENTS_PATH,
+                {
+                    "filter[id]": ",".join(ordered_ids),
+                    "per_page": min(len(ordered_ids), 100),
+                },
+            )
+            if not isinstance(data, list):
+                raise SourceUnavailableError("PandaScore returned unexpected tournament data")
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                tournament_id = _optional_source_id(item.get("id"))
+                if tournament_id:
+                    _cache_tournament_tier(tournament_id, _tournament_tier(item))
+        except SourceUnavailableError as exc:
+            logger.warning(
+                "event=pandascore_tier_enrichment_failed tournaments=%s error=%s",
+                len(ordered_ids),
+                exc,
+            )
+
+    for match in matches:
+        tournament_id = match.source_refs.tournament_id if match.source_refs else None
+        if match.tournament_tier is None and tournament_id in _tournament_tier_cache:
+            match.tournament_tier = _tournament_tier_cache[tournament_id]
+
+
 async def fetch_finished_matches(
     limit: int = 30,
     start: datetime | None = None,
@@ -279,6 +446,7 @@ async def fetch_finished_matches(
     data = await _fetch_json(PANDASCORE_PAST_MATCHES_PATH, params)
 
     matches = _normalize_raw_matches(data)
+    await _enrich_tournament_tiers(matches)
     logger.info("source=pandascore normalized=%s", len(matches))
     return matches[:limit]
 
@@ -295,5 +463,7 @@ async def fetch_upcoming_matches(
     }
     data = await _fetch_json(PANDASCORE_UPCOMING_MATCHES_PATH, params)
     matches = _normalize_raw_upcoming(data)
+    await _enrich_tournament_tiers(matches)
+    _log_upcoming_tier_diagnostics(matches)
     logger.info("source=pandascore upcoming_normalized=%s", len(matches))
     return matches[:limit]

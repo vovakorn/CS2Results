@@ -165,11 +165,16 @@ def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
             "match_id": "1",
             "tournament": "IEM Cologne 2026",
             "competition_key": None,
+            "source_refs": None,
+            "tournament_tier": None,
             "teams": ["NAVI", "FaZe"],
             "score": [2, 1],
             "date": "2026-02-17",
             "start_date": None,
             "end_date": None,
+            "original_scheduled_at": None,
+            "rescheduled": None,
+            "forfeit": None,
             "is_lan": None,
             "location": None,
             "is_tier1_lan": True,
@@ -773,6 +778,16 @@ def test_schedule_photo_caption_omits_timezone_label():
     assert "московск" not in caption.casefold()
 
 
+def test_digest_photo_caption_has_result_count():
+    caption = main.format_digest_photo_caption(
+        main.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
+        2,
+    )
+
+    assert "Итоги дня — 1 августа" in caption
+    assert "2 результата" in caption
+
+
 def test_schedule_truncates_only_between_complete_entries():
     matches = []
     for index in range(100):
@@ -896,6 +911,41 @@ def test_digest_skips_publication_when_no_tier1_results(monkeypatch):
     assert response["statusCode"] == 200
     assert body["messages_sent"] == 0
     assert body["matches_selected"] == 0
+
+
+def test_digest_uses_spoiler_results_card_when_media_cards_enabled(monkeypatch):
+    sent_photos = []
+    sent_text = []
+
+    async def fake_fetch(limit, start=None, end=None):
+        return [_match("1"), _match("2", team1="Spirit", team2="MOUZ")]
+
+    async def fake_claim(content_uid):
+        return "claim"
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "fetch_pandascore_finished_matches", fake_fetch)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_results_card", lambda *args, **kwargs: b"results-card")
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent_text.append(args))
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: sent_photos.append((args, kwargs)),
+    )
+
+    response = main.handler({"job": "digest"}, None)
+
+    assert response["statusCode"] == 200
+    assert sent_text == []
+    assert sent_photos[0][0][1] == b"results-card"
+    assert sent_photos[0][1]["has_spoiler"] is True
+    assert sent_photos[0][1]["filename"].startswith("cs2-results-")
 
 
 def test_invalid_job_is_rejected():

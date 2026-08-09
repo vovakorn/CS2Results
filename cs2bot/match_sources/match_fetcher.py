@@ -190,6 +190,39 @@ def apply_quality_filters(
         if tier1_lan or include_filtered:
             output.append(match)
 
+    tier_counts = {
+        (tier, selected): sum(
+            1
+            for match in valid_matches
+            if match.source == "pandascore"
+            and (match.tournament_tier or "unknown") == tier
+            and match.is_tier1_lan is selected
+        )
+        for tier in ("s", "a", "b", "c", "d", "unknown")
+        for selected in (True, False)
+    }
+    if valid_matches and any(match.source == "pandascore" for match in valid_matches):
+        logger.info(
+            (
+                "event=pandascore_tier_diagnostics "
+                "s_selected=%s s_rejected=%s a_selected=%s a_rejected=%s "
+                "b_selected=%s b_rejected=%s c_selected=%s c_rejected=%s "
+                "d_selected=%s d_rejected=%s unknown_selected=%s unknown_rejected=%s"
+            ),
+            tier_counts[("s", True)],
+            tier_counts[("s", False)],
+            tier_counts[("a", True)],
+            tier_counts[("a", False)],
+            tier_counts[("b", True)],
+            tier_counts[("b", False)],
+            tier_counts[("c", True)],
+            tier_counts[("c", False)],
+            tier_counts[("d", True)],
+            tier_counts[("d", False)],
+            tier_counts[("unknown", True)],
+            tier_counts[("unknown", False)],
+        )
+
     return output, valid_matches, sum(1 for match in output if match.is_tier1_lan)
 
 
