@@ -2,7 +2,7 @@
 
 Телеграм-бот и MVP-модуль данных для получения результатов завершённых матчей CS2.
 
-Модуль `cs2bot.match_sources` получает нормализованные результаты из документированного PandaScore API и использует одобренный LiquipediaDB API как резервный источник. Источники не смешиваются: fallback включается только при пустом, невалидном, недоступном или устаревшем ответе PandaScore. Перед публикацией handler проверяет качество и свежесть данных, резервирует доставку атомарным Object Storage claim и помечает её завершённой только после успешной отправки.
+Модуль `cs2bot.match_sources` получает нормализованные результаты из документированного PandaScore API и использует одобренный LiquipediaDB API как резервный и диагностический источник. В shadow-режиме Liquipedia сравнивается с PandaScore, но не меняет публикацию. Fallback включается отдельно только при пустом, невалидном, недоступном или устаревшем ответе PandaScore. Перед публикацией handler проверяет качество и свежесть данных, резервирует доставку атомарным Object Storage claim и помечает её завершённой только после успешной отправки.
 
 ## Переменные окружения
 | Название | Описание |
@@ -23,6 +23,7 @@
 | `PANDASCORE_API_TOKEN` | Токен PandaScore Fixtures API. Обязателен для основного источника. |
 | `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
 | `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`, `0` отключает его. |
+| `ENABLE_LIQUIPEDIA_SHADOW` | `1` параллельно сравнивает завершённые матчи PandaScore и Liquipedia, не меняя источник публикации; по умолчанию `0`. |
 | `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Moscow`. |
 | `MAX_SOURCE_STALENESS_HOURS` | Максимальный возраст источника для production-публикации, по умолчанию `48`. |
 | `MAX_SOURCE_FUTURE_SKEW_HOURS` | Допустимое отклонение даты источника в будущее, по умолчанию `6`. |
@@ -35,7 +36,8 @@
 
 ```text
 MATCH_SOURCE=auto
-ENABLE_LIQUIPEDIA_FALLBACK=1
+ENABLE_LIQUIPEDIA_FALLBACK=0
+ENABLE_LIQUIPEDIA_SHADOW=1
 REQUEST_TIMEOUT_SECONDS=15
 DISPLAY_TIMEZONE=Europe/Moscow
 TELEGRAM_SPOILERS=1
@@ -178,6 +180,14 @@ dry-run и агрегированной диагностике, но пока н
 Для утреннего расписания используется документированный endpoint `GET /csgo/matches/upcoming`. Окно запроса соответствует текущему календарному дню в `DISPLAY_TIMEZONE`. В расписание попадают Tier-1 турниры, а также матчи популярных команд на явно перечисленных крупных Tier-2 турнирах; qualifiers, showmatch, мелкие турниры и молодёжные составы исключаются. Списки популярных команд и заметных Tier-2 турниров настраиваются через `popular_teams` и `featured_tier2_tournament_patterns`.
 
 Если PandaScore вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на одобренный LiquipediaDB API при `ENABLE_LIQUIPEDIA_FALLBACK=1`. Liquipedia вызывается через `https://api.liquipedia.net/api/v3/match` с `Authorization: Apikey ...`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует.
+
+При `ENABLE_LIQUIPEDIA_SHADOW=1` и наличии ключа тот же endpoint вызывается после
+успешного PandaScore. Пишется только агрегированное событие
+`liquipedia_shadow_comparison`: покрытие, совпадения, расхождения счёта, `best of`,
+tier, наличие карт и технических результатов. Ошибка shadow-запроса не блокирует
+PandaScore и Telegram; dry-run возвращает те же агрегаты в поле
+`liquipedia_shadow`. Настройка ключа описана в
+[`docs/liquipedia-shadow.md`](docs/liquipedia-shadow.md).
 
 `competition_key` и конфиг `team_aliases` сводят различающиеся названия турниров и команд к общему fingerprint. Liquipedia-сообщения содержат атрибуцию и ссылку на исходную страницу. Ключи обоих API нельзя передавать в event payload или сохранять в репозитории.
 

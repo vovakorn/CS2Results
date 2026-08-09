@@ -19,6 +19,136 @@ SourceName = Literal["auto", "pandascore", "liquipedia"]
 logger = logging.getLogger(__name__)
 
 
+def _shadow_match_key(match: MatchNormalized) -> tuple[str, tuple[str, str]] | None:
+    match_datetime = match.end_date or match.date or match.start_date
+    if not match_datetime or len(match_datetime) < 10:
+        return None
+    teams = tuple(
+        sorted(
+            (
+                match._identity_part(match.team1_name),
+                match._identity_part(match.team2_name),
+            )
+        )
+    )
+    return match_datetime[:10], teams
+
+
+def _score_by_team(match: MatchNormalized) -> dict[str, int | None]:
+    return {
+        match._identity_part(match.team1_name): match.score1,
+        match._identity_part(match.team2_name): match.score2,
+    }
+
+
+def compare_source_matches(
+    primary_matches: list[MatchNormalized],
+    liquipedia_matches: list[MatchNormalized],
+) -> dict[str, int]:
+    """Compare providers without affecting source selection or publication."""
+    shadow_by_key: dict[tuple[str, tuple[str, str]], list[MatchNormalized]] = {}
+    for match in liquipedia_matches:
+        key = _shadow_match_key(match)
+        if key is not None:
+            shadow_by_key.setdefault(key, []).append(match)
+
+    matched = 0
+    score_mismatches = 0
+    best_of_mismatches = 0
+    tier_mismatches = 0
+    liquipedia_map_coverage = 0
+    liquipedia_technical_results = 0
+
+    for primary in primary_matches:
+        key = _shadow_match_key(primary)
+        candidates = shadow_by_key.get(key, []) if key is not None else []
+        if not candidates:
+            continue
+        shadow = candidates.pop(0)
+        matched += 1
+        if _score_by_team(primary) != _score_by_team(shadow):
+            score_mismatches += 1
+        if (
+            primary.best_of is not None
+            and shadow.best_of is not None
+            and primary.best_of != shadow.best_of
+        ):
+            best_of_mismatches += 1
+        if (
+            primary.tournament_tier is not None
+            and shadow.tournament_tier is not None
+            and primary.tournament_tier != shadow.tournament_tier
+        ):
+            tier_mismatches += 1
+        if shadow.maps:
+            liquipedia_map_coverage += 1
+        if shadow.forfeit:
+            liquipedia_technical_results += 1
+
+    return {
+        "primary_count": len(primary_matches),
+        "liquipedia_count": len(liquipedia_matches),
+        "matched": matched,
+        "primary_only": len(primary_matches) - matched,
+        "liquipedia_only": len(liquipedia_matches) - matched,
+        "score_mismatches": score_mismatches,
+        "best_of_mismatches": best_of_mismatches,
+        "tier_mismatches": tier_mismatches,
+        "liquipedia_map_coverage": liquipedia_map_coverage,
+        "liquipedia_technical_results": liquipedia_technical_results,
+    }
+
+
+async def _run_liquipedia_shadow(
+    primary_matches: list[MatchNormalized],
+    limit: int,
+    require_fresh: bool,
+) -> dict[str, int] | None:
+    if not source_config.ENABLE_LIQUIPEDIA_SHADOW:
+        return None
+    if not source_config.LIQUIPEDIA_API_KEY:
+        logger.warning("event=liquipedia_shadow_skipped reason=missing_credentials")
+        return None
+
+    try:
+        shadow_matches = await _fetch_from_source("liquipedia", limit)
+        usable, reason = _source_is_usable(
+            "liquipedia_shadow",
+            shadow_matches,
+            require_fresh=require_fresh,
+        )
+        if not usable:
+            logger.warning("event=liquipedia_shadow_skipped reason=%s", reason)
+            return None
+        valid_primary = [match for match in primary_matches if is_valid_match(match)[0]]
+        comparison = compare_source_matches(valid_primary, shadow_matches)
+        logger.info(
+            (
+                "event=liquipedia_shadow_comparison primary_count=%s liquipedia_count=%s "
+                "matched=%s primary_only=%s liquipedia_only=%s score_mismatches=%s "
+                "best_of_mismatches=%s tier_mismatches=%s liquipedia_map_coverage=%s "
+                "liquipedia_technical_results=%s"
+            ),
+            comparison["primary_count"],
+            comparison["liquipedia_count"],
+            comparison["matched"],
+            comparison["primary_only"],
+            comparison["liquipedia_only"],
+            comparison["score_mismatches"],
+            comparison["best_of_mismatches"],
+            comparison["tier_mismatches"],
+            comparison["liquipedia_map_coverage"],
+            comparison["liquipedia_technical_results"],
+        )
+        return comparison
+    except Exception as exc:
+        logger.warning(
+            "event=liquipedia_shadow_failed error_type=%s",
+            type(exc).__name__,
+        )
+        return None
+
+
 async def _fetch_from_source(source: ConcreteSourceName, limit: int) -> list[MatchNormalized]:
     if source == "pandascore":
         from .sources import pandascore_source
@@ -233,6 +363,7 @@ async def get_new_finished_matches(
     include_filtered: bool = False,
     check_processed: bool = True,
     rejected_matches: list[MatchNormalized] | None = None,
+    shadow_diagnostics: dict[str, int] | None = None,
 ) -> list[MatchNormalized]:
     selected_source = source or source_config.MATCH_SOURCE
     if selected_source not in {"auto", "pandascore", "liquipedia"}:
@@ -246,6 +377,14 @@ async def get_new_finished_matches(
         fetch_limit,
         require_fresh=require_fresh,
     )
+    if used_source == "pandascore":
+        comparison = await _run_liquipedia_shadow(
+            fetched,
+            fetch_limit,
+            require_fresh=require_fresh,
+        )
+        if shadow_diagnostics is not None and comparison is not None:
+            shadow_diagnostics.update(comparison)
     if require_fresh:
         fresh_matches = [match for match in fetched if is_match_fresh(match)]
         dropped = len(fetched) - len(fresh_matches)

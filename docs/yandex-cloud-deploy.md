@@ -76,8 +76,9 @@ Memory: 256-512 MB
 ```text
 MATCH_SOURCE=auto
 PANDASCORE_API_TOKEN=...
-LIQUIPEDIA_API_KEY=...
-ENABLE_LIQUIPEDIA_FALLBACK=1
+LIQUIPEDIA_API_KEY=<Lockbox binding>
+ENABLE_LIQUIPEDIA_FALLBACK=0
+ENABLE_LIQUIPEDIA_SHADOW=1
 REQUEST_TIMEOUT_SECONDS=15
 BOT_MODE=production
 TIER1_PRIZE_POOL_THRESHOLD_USD=500000
@@ -97,6 +98,10 @@ TELEGRAM_MEDIA_CARDS=0
 функция автоматически отправит прежний текстовый формат.
 
 Храните API-токены в Lockbox и подключайте их к версии функции как секреты. Если Lockbox пока не используется, ограничьте доступ к чтению и редактированию версии функции и не передавайте секреты в event payload.
+
+Для Liquipedia используйте отдельный Lockbox secret и shadow-режим до принятия
+решения о fallback. Точные поля, права и команда первого deploy описаны в
+[`docs/liquipedia-shadow.md`](liquipedia-shadow.md).
 
 Если нужно подменить whitelist без изменения Python-кода, положите новый JSON-файл в архив и задайте:
 

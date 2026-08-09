@@ -11,6 +11,10 @@ EXPECTED_FOLDER_ID="${YC_FOLDER_ID:-b1g5j8hk4gjas2vpvgqr}"
 PRODUCTION_TAG="${YC_PRODUCTION_TAG:-production}"
 CANDIDATE_TAG="${YC_CANDIDATE_TAG:-candidate}"
 DRY_RUN_PAYLOAD="${YC_DRY_RUN_PAYLOAD:-{\"limit\":1,\"dry_run\":true}}"
+LIQUIPEDIA_SECRET_ID="${YC_LIQUIPEDIA_SECRET_ID:-}"
+LIQUIPEDIA_SECRET_VERSION_ID="${YC_LIQUIPEDIA_SECRET_VERSION_ID:-}"
+LIQUIPEDIA_SECRET_KEY="${YC_LIQUIPEDIA_SECRET_KEY:-LIQUIPEDIA_API_KEY}"
+LIQUIPEDIA_SHADOW_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_SHADOW:-}"
 
 readonly -a REQUIRED_ENVIRONMENT=(
   ALERT_COOLDOWN_SECONDS
@@ -51,6 +55,11 @@ Commands:
 The script never reads Lockbox values. It copies only secret references from the
 version currently tagged "production". All triggers invoking this function must
 also use that tag; otherwise the script stops before creating a version.
+
+For the first Liquipedia deployment, pass YC_LIQUIPEDIA_SECRET_ID,
+YC_LIQUIPEDIA_SECRET_VERSION_ID, YC_LIQUIPEDIA_SECRET_KEY and
+YC_ENABLE_LIQUIPEDIA_SHADOW=1. Only Lockbox references are passed; the API key
+value is never read by this script.
 EOF
 }
 
@@ -90,6 +99,17 @@ validate_required_configuration() {
       || die "Production version is missing pinned Lockbox binding: ${name}"
   done
 
+  if printf '%s' "${version_json}" | "${JQ_BIN}" -e '
+    (.environment // {}) as $environment
+    | [($environment.ENABLE_LIQUIPEDIA_FALLBACK // "0"),
+       ($environment.ENABLE_LIQUIPEDIA_SHADOW // "0")]
+    | any(. == "1" or (ascii_downcase == "true") or (ascii_downcase == "yes"))
+  ' >/dev/null; then
+    printf '%s' "${version_json}" | "${JQ_BIN}" -e \
+      'any((.secrets // [])[]; .environment_variable == "LIQUIPEDIA_API_KEY" and .id != "" and .version_id != "" and .key != "")' >/dev/null \
+      || die "Liquipedia is enabled but production is missing pinned Lockbox binding: LIQUIPEDIA_API_KEY"
+  fi
+
   printf '%s' "${version_json}" | "${JQ_BIN}" -e '
     [(.secrets // [])[].environment_variable] as $names
     | ($names | length) == ($names | unique | length)
@@ -116,6 +136,29 @@ validate_required_configuration() {
     | join(", ")
   ')"
   [[ -z "${unsupported}" ]] || die "Unsupported production settings would be lost: ${unsupported}"
+}
+
+validate_liquipedia_override() {
+  # The key defaults to LIQUIPEDIA_API_KEY, so ID and version must either both
+  # be present or both be absent.
+  if [[ -n "${LIQUIPEDIA_SECRET_ID}" || -n "${LIQUIPEDIA_SECRET_VERSION_ID}" ]]; then
+    [[ -n "${LIQUIPEDIA_SECRET_ID}" && -n "${LIQUIPEDIA_SECRET_VERSION_ID}" && -n "${LIQUIPEDIA_SECRET_KEY}" ]] \
+      || die "Set all YC_LIQUIPEDIA_SECRET_* reference fields together"
+  fi
+
+  if [[ -n "${LIQUIPEDIA_SHADOW_OVERRIDE}" ]]; then
+    case "${LIQUIPEDIA_SHADOW_OVERRIDE}" in
+      1|true|TRUE|yes|YES) LIQUIPEDIA_SHADOW_OVERRIDE="1" ;;
+      0|false|FALSE|no|NO) LIQUIPEDIA_SHADOW_OVERRIDE="0" ;;
+      *) die "YC_ENABLE_LIQUIPEDIA_SHADOW must be a boolean" ;;
+    esac
+  fi
+
+  if [[ "${LIQUIPEDIA_SHADOW_OVERRIDE}" == "1" && -z "${LIQUIPEDIA_SECRET_ID}" ]]; then
+    printf '%s' "${PRODUCTION_JSON}" | "${JQ_BIN}" -e \
+      'any((.secrets // [])[]; .environment_variable == "LIQUIPEDIA_API_KEY")' >/dev/null \
+      || die "Enabling Liquipedia shadow requires a pinned LIQUIPEDIA_API_KEY Lockbox reference"
+  fi
 }
 
 validate_trigger_tags() {
@@ -172,8 +215,9 @@ build_create_arguments() {
   value="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r '.concurrency // empty')"
   [[ -z "${value}" ]] || CREATE_ARGS+=(--concurrency "${value}")
 
-  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r '
+  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" '
     (.environment // {})
+    | if $shadow == "" then . else . + {"ENABLE_LIQUIPEDIA_SHADOW": $shadow} end
     | to_entries
     | sort_by(.key)
     | map([(.key + "=" + (.value | tostring))] | @csv)
@@ -183,10 +227,18 @@ build_create_arguments() {
 
   while IFS= read -r value; do
     [[ -z "${value}" ]] || CREATE_ARGS+=(--secret "${value}")
-  done < <(printf '%s' "${version_json}" | "${JQ_BIN}" -r '
+  done < <(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg override_id "${LIQUIPEDIA_SECRET_ID}" '
     (.secrets // [])[]
+    | select($override_id == "" or .environment_variable != "LIQUIPEDIA_API_KEY")
     | "id=\(.id),version-id=\(.version_id),key=\(.key),environment-variable=\(.environment_variable)"
   ')
+
+  if [[ -n "${LIQUIPEDIA_SECRET_ID}" ]]; then
+    CREATE_ARGS+=(
+      --secret
+      "id=${LIQUIPEDIA_SECRET_ID},version-id=${LIQUIPEDIA_SECRET_VERSION_ID},key=${LIQUIPEDIA_SECRET_KEY},environment-variable=LIQUIPEDIA_API_KEY"
+    )
+  fi
 
   if is_nonempty_json_value "${version_json}" '.metadata_options'; then
     value="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r '
@@ -246,6 +298,7 @@ preflight() {
     || die "Production tag points to another function"
 
   validate_required_configuration "${PRODUCTION_JSON}"
+  validate_liquipedia_override
 
   triggers_json="$("${YC_BIN}" serverless trigger list \
     --folder-id "${EXPECTED_FOLDER_ID}" \
