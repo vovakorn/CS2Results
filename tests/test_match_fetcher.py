@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from cs2bot.match_sources import match_fetcher
-from cs2bot.match_sources.models import MatchNormalized, SourceUnavailableError
+from cs2bot.match_sources.models import MapResult, MatchNormalized, SourceUnavailableError
 
 
 def _match(source="pandascore", match_id="1", tournament_name="IEM Cologne 2026"):
@@ -185,6 +185,90 @@ def test_pandascore_tier_is_logged_as_shadow_diagnostic(caplog):
     assert "event=pandascore_tier_diagnostics" in caplog.text
     assert "s_selected=1" in caplog.text
     assert "a_rejected=1" in caplog.text
+
+
+def test_liquipedia_shadow_comparison_aligns_reversed_team_order():
+    primary = _match()
+    primary.date = "2026-08-09T12:00:00Z"
+    primary.tournament_tier = "s"
+
+    shadow = _match(source="liquipedia", match_id="lp-1")
+    shadow.date = "2026-08-09T11:55:00Z"
+    shadow.team1_name = "FaZe Clan"
+    shadow.team2_name = "Natus Vincere"
+    shadow.score1 = 1
+    shadow.score2 = 2
+    shadow.tournament_tier = "a"
+    shadow.maps = [MapResult(name="Mirage", score1=13, score2=9)]
+    shadow.forfeit = True
+
+    comparison = match_fetcher.compare_source_matches([primary], [shadow])
+
+    assert comparison == {
+        "primary_count": 1,
+        "liquipedia_count": 1,
+        "matched": 1,
+        "primary_only": 0,
+        "liquipedia_only": 0,
+        "score_mismatches": 0,
+        "best_of_mismatches": 0,
+        "tier_mismatches": 1,
+        "liquipedia_map_coverage": 1,
+        "liquipedia_technical_results": 1,
+    }
+
+
+def test_liquipedia_shadow_logs_comparison_without_changing_primary(monkeypatch, caplog):
+    calls = []
+    recent = datetime.now(timezone.utc).isoformat()
+
+    async def fake_fetch(source, limit):
+        calls.append(source)
+        match = _match(source=source, match_id="1" if source == "pandascore" else "lp-1")
+        match.date = recent
+        return [match]
+
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_SHADOW", True)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_API_KEY", "liquipedia-key")
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+    diagnostics = {}
+
+    with caplog.at_level(logging.INFO):
+        matches = asyncio.run(
+            match_fetcher.get_new_finished_matches(
+                source="auto",
+                dry_run=True,
+                shadow_diagnostics=diagnostics,
+            )
+        )
+
+    assert matches[0].source == "pandascore"
+    assert calls == ["pandascore", "liquipedia"]
+    assert "event=liquipedia_shadow_comparison" in caplog.text
+    assert "matched=1" in caplog.text
+    assert diagnostics["matched"] == 1
+    assert diagnostics["score_mismatches"] == 0
+
+
+def test_liquipedia_shadow_failure_never_blocks_primary(monkeypatch, caplog):
+    async def fake_fetch(source, limit):
+        if source == "liquipedia":
+            raise SourceUnavailableError("down")
+        match = _match()
+        match.date = datetime.now(timezone.utc).isoformat()
+        return [match]
+
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_SHADOW", True)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_API_KEY", "liquipedia-key")
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+
+    with caplog.at_level(logging.WARNING):
+        matches = asyncio.run(
+            match_fetcher.get_new_finished_matches(source="auto", dry_run=True)
+        )
+
+    assert matches[0].source == "pandascore"
+    assert "event=liquipedia_shadow_failed" in caplog.text
 
 
 def test_configured_online_tier1_stage_enters_public_output(monkeypatch):

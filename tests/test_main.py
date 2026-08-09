@@ -165,17 +165,24 @@ def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
             "match_id": "1",
             "tournament": "IEM Cologne 2026",
             "competition_key": None,
-            "source_refs": None,
-            "tournament_tier": None,
-            "teams": ["NAVI", "FaZe"],
+                "source_refs": None,
+                "tournament_tier": None,
+                "tournament_tier_type": None,
+                "publisher_tier": None,
+                "tournament_section": None,
+                "teams": ["NAVI", "FaZe"],
             "score": [2, 1],
             "date": "2026-02-17",
             "start_date": None,
             "end_date": None,
             "original_scheduled_at": None,
-            "rescheduled": None,
-            "forfeit": None,
-            "is_lan": None,
+                "rescheduled": None,
+                "forfeit": None,
+                "result_type": None,
+                "team_result_statuses": [None, None],
+                "date_exact": None,
+                "vod_url": None,
+                "is_lan": None,
             "location": None,
             "is_tier1_lan": True,
             "filter_reason": None,
@@ -278,6 +285,31 @@ def test_handler_dry_run_reports_rejected_match_diagnostics(monkeypatch):
     assert body["diagnostics"][0]["tournament"] == "BLAST Bounty 2026 Season 2"
     assert body["diagnostics"][0]["teams"] == ["Liquid", "Spirit"]
     assert body["diagnostics"][0]["filter_reason"] == "lan_unconfirmed"
+
+
+def test_handler_dry_run_reports_liquipedia_shadow_aggregates(monkeypatch):
+    async def fake_get_new_finished_matches(**kwargs):
+        kwargs["shadow_diagnostics"].update(
+            {
+                "matched": 8,
+                "primary_only": 2,
+                "liquipedia_only": 1,
+                "score_mismatches": 0,
+            }
+        )
+        return []
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+
+    response = main.handler({"dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert body["liquipedia_shadow"] == {
+        "matched": 8,
+        "primary_only": 2,
+        "liquipedia_only": 1,
+        "score_mismatches": 0,
+    }
 
 
 def test_handler_dry_run_prioritizes_unconfirmed_tier1_diagnostics(monkeypatch):

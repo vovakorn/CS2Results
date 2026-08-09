@@ -56,6 +56,9 @@ class MatchNormalized(BaseModel):
     competition_key: str | None = Field(default=None, max_length=300)
     source_refs: SourceReferences | None = None
     tournament_tier: Literal["s", "a", "b", "c", "d"] | None = None
+    tournament_tier_type: str | None = Field(default=None, max_length=100)
+    publisher_tier: str | None = Field(default=None, max_length=100)
+    tournament_section: str | None = Field(default=None, max_length=200)
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
     team1_logo_url: str | None = Field(default=None, max_length=2048)
@@ -76,6 +79,11 @@ class MatchNormalized(BaseModel):
     original_scheduled_at: str | None = Field(default=None, max_length=100)
     rescheduled: bool | None = None
     forfeit: bool | None = None
+    result_type: str | None = Field(default=None, max_length=50)
+    team1_result_status: str | None = Field(default=None, max_length=20)
+    team2_result_status: str | None = Field(default=None, max_length=20)
+    date_exact: bool | None = None
+    vod_url: str | None = Field(default=None, max_length=2048)
     is_lan: bool | None = None
     location: str | None = Field(default=None, max_length=300)
     prize_pool_usd: int | None = Field(default=None, ge=0, le=10_000_000_000)

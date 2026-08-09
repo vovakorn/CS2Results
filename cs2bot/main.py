@@ -107,6 +107,9 @@ def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
         "competition_key": match.competition_key,
         "source_refs": match.source_refs.model_dump() if match.source_refs else None,
         "tournament_tier": match.tournament_tier,
+        "tournament_tier_type": match.tournament_tier_type,
+        "publisher_tier": match.publisher_tier,
+        "tournament_section": match.tournament_section,
         "teams": [match.team1_name, match.team2_name],
         "score": [match.score1, match.score2],
         "date": match.date,
@@ -115,6 +118,10 @@ def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
         "original_scheduled_at": match.original_scheduled_at,
         "rescheduled": match.rescheduled,
         "forfeit": match.forfeit,
+        "result_type": match.result_type,
+        "team_result_statuses": [match.team1_result_status, match.team2_result_status],
+        "date_exact": match.date_exact,
+        "vod_url": match.vod_url,
         "is_lan": match.is_lan,
         "location": match.location,
         "is_tier1_lan": match.is_tier1_lan,
@@ -848,6 +855,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     try:
         log_event(logger, logging.INFO, "handler_start", limit=limit, source=source, mode=mode, dry_run=dry_run)
         rejected_matches: List[MatchNormalized] = []
+        shadow_diagnostics: Dict[str, int] = {}
         matches = asyncio.run(
             get_new_finished_matches(
                 limit=limit,
@@ -856,6 +864,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 include_filtered=include_filtered,
                 check_processed=False,
                 rejected_matches=rejected_matches,
+                shadow_diagnostics=shadow_diagnostics,
             )
         )
     except Exception as exc:
@@ -1080,6 +1089,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         body["diagnostics"] = [
             _match_diagnostic(match) for match in diagnostic_matches[:MAX_MATCHES]
         ]
+        if shadow_diagnostics:
+            body["liquipedia_shadow"] = shadow_diagnostics
     return {
         "statusCode": 502 if failed_messages else 200,
         "body": json.dumps(body),

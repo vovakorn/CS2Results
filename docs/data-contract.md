@@ -16,6 +16,8 @@
   `source_refs`;
 - сохраняет `tournament_tier`, `rescheduled`, `original_scheduled_at` и `forfeit`,
   если PandaScore отдаёт эти поля;
+- сохраняет для Liquipedia карты, `best of`, tier и publisher tier, стадию,
+  точность даты, VOD и статусы технического результата, если они доступны;
 - сохраняет необязательные `team1_logo_url` и `team2_logo_url`, если PandaScore
   отдаёт изображения команд;
 - отбрасывает невалидные матчи;
@@ -121,6 +123,17 @@ claims/{channel_id}_match_v1_{fingerprint}.json
 2. LiquipediaDB adapter (`source=liquipedia`), если `ENABLE_LIQUIPEDIA_FALLBACK=1`.
 
 Решение о fallback принимается после validation и freshness gate. Источники не объединяются в одном запуске. Явный выбор `pandascore` или `liquipedia` доступен для диагностики. Старые BO3.gg и HLTV адаптеры production selector не вызывает.
+
+## Liquipedia shadow contract
+
+`ENABLE_LIQUIPEDIA_SHADOW=1` добавляет fail-open сравнение после успешного ответа
+PandaScore. Сопоставление использует дату и нормализованную пару команд, поэтому
+порядок соперников у провайдеров не важен. Сравниваются счёт, `best of` и tier;
+отдельно измеряется покрытие карт и технических результатов.
+
+Shadow-ответ не объединяется с PandaScore, не участвует в фильтрации,
+дедупликации и публикации. Любая ошибка Liquipedia записывается как
+`liquipedia_shadow_failed`, после чего основной поток продолжает работу.
 
 ## Freshness contract
 

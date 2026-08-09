@@ -209,6 +209,59 @@ def test_deploy_preserves_configuration_and_promotes_after_dry_run(fake_cloud: d
     assert all("version-id=lockbox-version-id" in value for value in secret_flags)
 
 
+def test_first_liquipedia_deploy_adds_pinned_secret_and_shadow_flag(
+    fake_cloud: dict[str, str],
+) -> None:
+    fake_cloud.update(
+        {
+            "YC_DEPLOY_APPROVED": "1",
+            "YC_LIQUIPEDIA_SECRET_ID": "liquipedia-secret-id",
+            "YC_LIQUIPEDIA_SECRET_VERSION_ID": "liquipedia-secret-version-id",
+            "YC_LIQUIPEDIA_SECRET_KEY": "LIQUIPEDIA_API_KEY",
+            "YC_ENABLE_LIQUIPEDIA_SHADOW": "1",
+        }
+    )
+
+    result = _run("deploy", fake_cloud)
+
+    assert result.returncode == 0, result.stderr
+    create_call = next(
+        call
+        for call in _calls(fake_cloud)
+        if call[:4] == ["serverless", "function", "version", "create"]
+    )
+    environment_csv = create_call[create_call.index("--environment") + 1]
+    environment = dict(item.split("=", 1) for item in next(csv.reader([environment_csv])))
+    assert environment["ENABLE_LIQUIPEDIA_SHADOW"] == "1"
+
+    secret_flags = [
+        create_call[index + 1]
+        for index, value in enumerate(create_call)
+        if value == "--secret"
+    ]
+    assert len(secret_flags) == 5
+    assert (
+        "id=liquipedia-secret-id,version-id=liquipedia-secret-version-id,"
+        "key=LIQUIPEDIA_API_KEY,environment-variable=LIQUIPEDIA_API_KEY"
+    ) in secret_flags
+
+
+def test_enabling_liquipedia_shadow_requires_secret_reference(
+    fake_cloud: dict[str, str],
+) -> None:
+    fake_cloud["YC_DEPLOY_APPROVED"] = "1"
+    fake_cloud["YC_ENABLE_LIQUIPEDIA_SHADOW"] = "1"
+
+    result = _run("deploy", fake_cloud)
+
+    assert result.returncode != 0
+    assert "requires a pinned LIQUIPEDIA_API_KEY" in result.stderr
+    assert not any(
+        call[:4] == ["serverless", "function", "version", "create"]
+        for call in _calls(fake_cloud)
+    )
+
+
 def test_deploy_requires_explicit_approval(fake_cloud: dict[str, str]) -> None:
     result = _run("deploy", fake_cloud)
 
@@ -241,3 +294,16 @@ def test_check_rejects_missing_lockbox_binding(fake_cloud: dict[str, str]) -> No
     assert result.returncode != 0
     assert "missing pinned Lockbox binding: TELEGRAM_TOKEN" in result.stderr
     assert not any(call[:4] == ["serverless", "function", "version", "create"] for call in _calls(fake_cloud))
+
+
+def test_check_rejects_enabled_liquipedia_without_lockbox_binding(
+    fake_cloud: dict[str, str],
+) -> None:
+    version = json.loads(json.dumps(BASE_VERSION))
+    version["environment"]["ENABLE_LIQUIPEDIA_SHADOW"] = "1"
+    fake_cloud["FAKE_BASE_VERSION"] = json.dumps(version)
+
+    result = _run("check", fake_cloud)
+
+    assert result.returncode != 0
+    assert "missing pinned Lockbox binding: LIQUIPEDIA_API_KEY" in result.stderr

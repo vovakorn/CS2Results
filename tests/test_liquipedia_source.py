@@ -17,11 +17,17 @@ def _sample_response():
                 "date": "2026-07-28T12:00:00+00:00",
                 "type": "offline",
                 "finished": "1",
+                "bestof": "3",
+                "dateexact": "1",
+                "section": "Playoffs",
+                "vod": "https://www.youtube.com/watch?v=example",
                 "liquipediatier": "1",
+                "liquipediatiertype": "General",
+                "publishertier": "Major",
                 "match2opponents": json.dumps(
                     [
-                        {"name": "Natus Vincere", "score": "2"},
-                        {"name": "FaZe Clan", "score": "1"},
+                        {"name": "Natus Vincere", "score": "2", "status": "S"},
+                        {"name": "FaZe Clan", "score": "1", "status": "S"},
                     ]
                 ),
                 "match2games": json.dumps(
@@ -48,6 +54,14 @@ def test_liquipedia_normalizes_finished_offline_match():
     assert match.status == "finished"
     assert match.best_of == 3
     assert match.competition_key == "IEM Cologne 2026"
+    assert match.tournament_tier == "s"
+    assert match.tournament_tier_type == "General"
+    assert match.publisher_tier == "Major"
+    assert match.tournament_section == "Playoffs"
+    assert match.date_exact is True
+    assert match.vod_url == "https://www.youtube.com/watch?v=example"
+    assert match.forfeit is False
+    assert (match.team1_result_status, match.team2_result_status) == ("S", "S")
     assert match.is_lan is True
     assert match.match_url == "https://liquipedia.net/counterstrike/IEM_Cologne_2026/Playoffs"
     assert [(item.name, item.score1, item.score2) for item in match.maps] == [
@@ -68,6 +82,27 @@ def test_liquipedia_skips_match_not_confirmed_finished():
     response["result"][0]["finished"] = "0"
 
     assert liquipedia_source._normalize_raw_matches(response) == []
+
+
+def test_liquipedia_preserves_technical_result():
+    response = _sample_response()
+    opponents = json.loads(response["result"][0]["match2opponents"])
+    opponents[1]["status"] = "FF"
+    response["result"][0]["match2opponents"] = json.dumps(opponents)
+    response["result"][0]["resulttype"] = "default"
+
+    match = liquipedia_source._normalize_raw_matches(response)[0]
+
+    assert match.forfeit is True
+    assert match.result_type == "default"
+    assert match.team2_result_status == "FF"
+
+
+def test_liquipedia_uses_explicit_best_of_before_score_inference():
+    response = _sample_response()
+    response["result"][0]["bestof"] = "5"
+
+    assert liquipedia_source._normalize_raw_matches(response)[0].best_of == 5
 
 
 def test_liquipedia_requires_api_key(monkeypatch):

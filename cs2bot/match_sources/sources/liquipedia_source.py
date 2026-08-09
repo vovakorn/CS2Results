@@ -16,9 +16,23 @@ logger = logging.getLogger(__name__)
 
 LIQUIPEDIA_MATCH_PATH = "/match"
 LIQUIPEDIA_MATCH_QUERY = (
-    "pagename,match2id,tournament,tickername,series,date,type,finished,"
-    "liquipediatier,publishertier,match2opponents,match2games"
+    "pagename,match2id,match2bracketid,tournament,tickername,series,date,dateexact,"
+    "type,finished,winner,bestof,resulttype,status,section,vod,liquipediatier,"
+    "liquipediatiertype,publishertier,match2opponents,match2games"
 )
+
+LIQUIPEDIA_TIER_MAP = {
+    "1": "s",
+    "2": "a",
+    "3": "b",
+    "4": "c",
+    "5": "d",
+    "s": "s",
+    "a": "a",
+    "b": "b",
+    "c": "c",
+    "d": "d",
+}
 
 
 def _json_value(value: Any) -> Any:
@@ -40,6 +54,29 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().casefold()
+    if normalized in {"1", "true", "yes"}:
+        return True
+    if normalized in {"0", "false", "no"}:
+        return False
+    return None
+
+
+def _normalize_tier(value: Any) -> str | None:
+    normalized = str(value or "").strip().casefold().removesuffix("-tier").strip()
+    return LIQUIPEDIA_TIER_MAP.get(normalized)
+
+
+def _optional_text(value: Any) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 def _normalize_games(value: Any) -> list[MapResult]:
@@ -91,13 +128,28 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
     is_lan = True if event_type == "offline" else False if event_type == "online" else None
     match_date = item.get("date")
     series_score = max(score1 or 0, score2 or 0)
-    best_of = {1: 1, 2: 3, 3: 5}.get(series_score)
+    best_of = _optional_int(item.get("bestof"))
+    if best_of not in {1, 3, 5}:
+        best_of = {1: 1, 2: 3, 3: 5}.get(series_score)
+
+    team1_status = _optional_text(opponents[0].get("status"))
+    team2_status = _optional_text(opponents[1].get("status"))
+    result_type = _optional_text(item.get("resulttype"))
+    technical_statuses = {"ff", "dq", "w", "l"}
+    forfeit = any(
+        value and value.casefold() in technical_statuses
+        for value in (team1_status, team2_status)
+    ) or (result_type is not None and result_type.casefold() == "default")
     return MatchNormalized(
         source="liquipedia",
         match_id=str(match_id),
         match_url=match_url,
         tournament_name=str(tournament),
         competition_key=str(tournament),
+        tournament_tier=_normalize_tier(item.get("liquipediatier")),
+        tournament_tier_type=_optional_text(item.get("liquipediatiertype")),
+        publisher_tier=_optional_text(item.get("publishertier")),
+        tournament_section=_optional_text(item.get("section")),
         team1_name=str(team1),
         team2_name=str(team2),
         score1=score1,
@@ -108,6 +160,12 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         date=str(match_date) if match_date else None,
         start_date=str(match_date) if match_date else None,
         end_date=None,
+        forfeit=forfeit,
+        result_type=result_type,
+        team1_result_status=team1_status,
+        team2_result_status=team2_status,
+        date_exact=_optional_bool(item.get("dateexact")),
+        vod_url=_optional_text(item.get("vod")),
         is_lan=is_lan,
         location=None,
         prize_pool_usd=None,
