@@ -24,8 +24,10 @@ from .config import (
 )
 from .logging_utils import log_event
 from .media_cards import (
+    MAX_RESULT_MATCHES,
     MAX_SCHEDULE_MATCHES,
     render_result_card,
+    render_results_card,
     render_schedule_card,
 )
 from .match_sources.config import (
@@ -103,11 +105,16 @@ def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
         "match_id": match.match_id,
         "tournament": match.tournament_name,
         "competition_key": match.competition_key,
+        "source_refs": match.source_refs.model_dump() if match.source_refs else None,
+        "tournament_tier": match.tournament_tier,
         "teams": [match.team1_name, match.team2_name],
         "score": [match.score1, match.score2],
         "date": match.date,
         "start_date": match.start_date,
         "end_date": match.end_date,
+        "original_scheduled_at": match.original_scheduled_at,
+        "rescheduled": match.rescheduled,
+        "forfeit": match.forfeit,
         "is_lan": match.is_lan,
         "location": match.location,
         "is_tier1_lan": match.is_tier1_lan,
@@ -121,12 +128,18 @@ def _upcoming_diagnostic(match: UpcomingMatchNormalized) -> Dict[str, Any]:
         "match_id": match.match_id,
         "tournament": match.tournament_name,
         "competition_key": match.competition_key,
+        "source_refs": match.source_refs.model_dump() if match.source_refs else None,
+        "tournament_tier": match.tournament_tier,
         "teams": [match.team1_name, match.team2_name],
         "team_logos_present": [
             bool(match.team1_logo_url or match.team1_logo_fallback_url),
             bool(match.team2_logo_url or match.team2_logo_fallback_url),
         ],
         "scheduled_at": match.scheduled_at,
+        "original_scheduled_at": match.original_scheduled_at,
+        "rescheduled": match.rescheduled,
+        "forfeit": match.forfeit,
+        "is_featured": match.is_featured,
         "feature_reason": match.feature_reason,
     }
 
@@ -462,6 +475,21 @@ def format_schedule_photo_caption(local_now: datetime, match_count: int) -> str:
     )
 
 
+def format_digest_photo_caption(local_now: datetime, match_count: int) -> str:
+    """Build a short caption while scores remain protected by the media spoiler."""
+    noun = "результат" if match_count == 1 else "результата" if 2 <= match_count <= 4 else "результатов"
+    return "\n".join(
+        [
+            f"🌙 <b>Итоги дня — {_display_day(local_now)}</b>",
+            f"{match_count} {noun}",
+            "",
+            "Источник: PandaScore",
+            "",
+            "#CS2 #ИтогиДня",
+        ]
+    )
+
+
 def format_daily_digest(matches: Sequence[MatchNormalized], local_now: datetime) -> str:
     """Build a short evening recap with scores hidden as spoilers."""
     header = [f"🌙 <b>Итоги дня — {_display_day(local_now)}</b>", ""]
@@ -621,13 +649,17 @@ def _handle_content_job(
 
     media_card: bytes | None = None
     media_card_error: str | None = None
-    if (
-        job == "schedule"
-        and TELEGRAM_MEDIA_CARDS
-        and 1 <= len(selected) <= MAX_SCHEDULE_MATCHES
-    ):
+    card_supported = (
+        job == "schedule" and 1 <= len(selected) <= MAX_SCHEDULE_MATCHES
+    ) or (
+        job == "digest" and 1 <= len(selected) <= MAX_RESULT_MATCHES
+    )
+    if TELEGRAM_MEDIA_CARDS and card_supported:
         try:
-            media_card = render_schedule_card(selected, local_now, DISPLAY_TIMEZONE)
+            if job == "schedule":
+                media_card = render_schedule_card(selected, local_now, DISPLAY_TIMEZONE)
+            else:
+                media_card = render_results_card(selected, local_now)
         except Exception as exc:
             media_card_error = type(exc).__name__
             log_event(
@@ -660,14 +692,22 @@ def _handle_content_job(
                 continue
             if media_card is not None:
                 try:
-                    caption = format_schedule_photo_caption(local_now, len(selected))
+                    if job == "schedule":
+                        caption = format_schedule_photo_caption(local_now, len(selected))
+                        filename = f"cs2-schedule-{day_key}.png"
+                        has_spoiler = False
+                    else:
+                        caption = format_digest_photo_caption(local_now, len(selected))
+                        filename = f"cs2-results-{day_key}.png"
+                        has_spoiler = TELEGRAM_SPOILERS
                     if test_run_id:
                         caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
                     send_photo_to_telegram(
                         channel["chat_id"],
                         media_card,
                         caption,
-                        filename=f"cs2-schedule-{day_key}.png",
+                        has_spoiler=has_spoiler,
+                        filename=filename,
                     )
                 except Exception as exc:
                     media_card_error = type(exc).__name__
@@ -719,6 +759,8 @@ def _handle_content_job(
         body["preview"] = preview
         if job == "schedule":
             body["diagnostics"] = [_upcoming_diagnostic(match) for match in selected]
+        elif job == "digest":
+            body["diagnostics"] = [_match_diagnostic(match) for match in selected]
         body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
         body["media_card_ready"] = media_card is not None
         if media_card_error:

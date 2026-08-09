@@ -42,6 +42,79 @@ def test_result_card_is_valid_square_png_without_logos():
     assert image.size == media_cards.RESULT_CARD_SIZE
 
 
+def test_result_card_channel_logo_is_centered_at_top(monkeypatch):
+    drawn = []
+
+    def capture(canvas, draw, center, diameter):
+        drawn.append((center, diameter))
+
+    monkeypatch.setattr(media_cards, "_draw_channel_logo", capture)
+
+    media_cards.render_result_card(_result())
+
+    assert drawn == [((media_cards.RESULT_CARD_SIZE[0] // 2, 98), 100)]
+
+
+def test_result_card_aligns_team_logos_and_names_to_outer_edges(monkeypatch):
+    names = []
+    logos = []
+    original = media_cards._aligned_text
+
+    def capture_text(draw, edge_x, y, text, font, fill, alignment):
+        names.append((edge_x, y, text, alignment))
+        return original(draw, edge_x, y, text, font, fill, alignment)
+
+    def capture_logo(canvas, draw, center, diameter, *args):
+        logos.append((center, diameter))
+
+    monkeypatch.setattr(media_cards, "_aligned_text", capture_text)
+    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
+    match = _result().model_copy(
+        update={
+            "team1_name": "Natus Vincere Junior",
+            "team2_name": "Gaimin Gladiators Academy",
+        }
+    )
+
+    media_cards.render_result_card(match)
+
+    assert [alignment for _, _, _, alignment in names] == ["left", "right"]
+    assert logos[0][0][0] - logos[0][1] // 2 == names[0][0]
+    assert logos[1][0][0] + logos[1][1] // 2 == names[1][0]
+    assert names[0][1] - (logos[0][0][1] + logos[0][1] // 2) >= 24
+    assert names[1][1] - (logos[1][0][1] + logos[1][1] // 2) >= 24
+
+
+def test_daily_results_card_supports_ten_matches():
+    matches = [
+        _result().model_copy(
+            update={
+                "match_id": str(index),
+                "team1_name": f"Long Left Team {index}",
+                "team2_name": f"Long Right Team {index}",
+            }
+        )
+        for index in range(10)
+    ]
+
+    data = media_cards.render_results_card(
+        matches,
+        media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
+    )
+
+    image = Image.open(io.BytesIO(data))
+    assert image.format == "PNG"
+    assert image.size == media_cards.RESULT_CARD_SIZE
+
+
+def test_daily_results_card_rejects_more_than_ten_matches():
+    with pytest.raises(media_cards.MediaCardError, match="ten"):
+        media_cards.render_results_card(
+            [_result().model_copy(update={"match_id": str(index)}) for index in range(11)],
+            media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
+        )
+
+
 def test_schedule_card_is_valid_square_png():
     data = media_cards.render_schedule_card(
         [_upcoming()],

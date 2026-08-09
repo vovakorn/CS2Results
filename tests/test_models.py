@@ -1,6 +1,6 @@
 import pytest
 
-from cs2bot.match_sources.models import MatchNormalized
+from cs2bot.match_sources.models import MatchNormalized, SourceReferences
 
 
 def _match(**kwargs):
@@ -82,6 +82,24 @@ def test_canonical_uid_matches_provider_team_aliases_and_display_names():
 
 def test_match_without_date_keeps_legacy_uid_to_avoid_false_collisions():
     assert _match(date=None).match_uid == "hltv_123456"
+
+
+def test_source_references_and_tier_do_not_change_canonical_uid():
+    original = _match(date="2026-02-17")
+    enriched = _match(
+        date="2026-02-17",
+        source_refs=SourceReferences(
+            tournament_id="3",
+            team1_id="10",
+            team2_id="20",
+            winner_team_id="10",
+        ),
+        tournament_tier="s",
+        rescheduled=True,
+        original_scheduled_at="2026-02-17T09:00:00Z",
+    )
+
+    assert enriched.match_uid == original.match_uid
 
 
 def test_match_rejects_negative_score():
