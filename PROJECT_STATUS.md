@@ -17,10 +17,10 @@
 
 - MVP работает в production на Yandex Cloud Functions.
 - Основная ветка GitHub: `main`.
-- Текущий commit: `7ff5a57` (`Apply compatible Dependabot updates (#56)`).
-- Последняя проверка: 206 тестов успешно локально и в GitHub Actions на Python 3.11 и 3.12.
+- Текущий commit: `9520b89` (`Add schedule dry-run diagnostics (#58)`).
+- Последняя проверка: 213 тестов успешно локально и в GitHub Actions на Python 3.11 и 3.12.
 - GitHub Actions проверяет Python 3.11 и 3.12, зависимости, безопасность и сборку архива.
-- Последняя активная версия Cloud Function: `d4el13kf1jld1hmfc00d`.
+- Последняя активная версия Cloud Function: `d4e9kkdfvi4ptgo986ok`.
 - Function ID: `d4e6e13rlrl7go01m2q2`.
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
 - Production runtime: Python 3.12.
@@ -119,6 +119,8 @@
   0.19.2 и `beautifulsoup4` до 4.15.0.
 - Подготовлена отдельная OAuth-функция для Instagram и Threads с записью токенов
   непосредственно в Lockbox; production-развёртывание не выполнялось.
+- Dry-run расписания показывает выбранные и исключённые матчи с причинами фильтрации
+  и поддерживает безопасное диагностическое окно от 1 до 7 дней.
 - Безопасный CLI deploy с candidate-проверкой, стабильным production-тегом и
   автоматическими fail-closed тестами.
 
