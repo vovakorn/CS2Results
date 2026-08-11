@@ -4,7 +4,14 @@ import pytest
 import requests
 
 from cs2bot import main
-from cs2bot.match_sources.models import MapResult, MatchNormalized, UpcomingMatchNormalized
+from cs2bot.match_sources.models import (
+    MapResult,
+    MatchNormalized,
+    ScheduleMatchContext,
+    TeamForm,
+    TournamentRadar,
+    UpcomingMatchNormalized,
+)
 from cs2bot.match_sources.storage import DeliveryClaim
 
 
@@ -186,6 +193,8 @@ def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
             "location": None,
             "is_tier1_lan": True,
             "filter_reason": None,
+            "tier1_autopilot_selected": False,
+            "tier1_autopilot_reason": "tier_unknown",
         }
     ]
     assert sent == []
@@ -832,6 +841,95 @@ def test_schedule_is_formatted_in_moscow_time():
     assert "Матчи CS2 сегодня — 30 июля" in text
     assert "14:00 — <b>NAVI — FaZe</b>" in text
     assert "московск" not in text.casefold()
+
+
+def test_schedule_context_includes_form_and_expected_rosters():
+    match = _upcoming()
+    context = ScheduleMatchContext(
+        match_id=match.match_id,
+        tournament_id="3",
+        team1_form=TeamForm(team_name="NAVI", wins=4, losses=1),
+        team2_form=TeamForm(team_name="FaZe", wins=2, losses=3),
+        team1_roster_size=5,
+        team2_roster_size=5,
+    )
+
+    text = main.format_schedule_context([match], {match.match_id: context})
+
+    assert "Контекст к главным матчам" in text
+    assert "Форма (5): 4–1 · 2–3" in text
+    assert "Ожидаемые составы: 5 × 5" in text
+
+
+def test_tournament_radar_formats_standings_without_raw_ids():
+    text = main.format_tournament_radar(
+        TournamentRadar(
+            tournament_id="3",
+            standings=["1. NAVI", "2. FaZe"],
+            roster_team_count=16,
+            bracket_match_count=31,
+        ),
+        "IEM Cologne 2026",
+    )
+
+    assert "Турнирный радар — IEM Cologne 2026" in text
+    assert "1. NAVI" in text
+    assert "Участников: 16" in text
+    assert "tournament_id" not in text
+
+
+def test_schedule_dry_run_includes_optional_context(monkeypatch):
+    async def fake_fetch(*args):
+        return [_upcoming()]
+
+    async def fake_context(match):
+        return ScheduleMatchContext(
+            match_id=match.match_id,
+            tournament_id="3",
+            team1_form=TeamForm(team_name="NAVI", wins=3, losses=2),
+            team2_form=TeamForm(team_name="FaZe", wins=4, losses=1),
+        )
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "fetch_schedule_match_context", fake_context)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+
+    response = main.handler({"job": "schedule", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["context_matches_ready"] == 1
+    assert "Форма (5): 3–2 · 4–1" in body["context_preview"]
+
+
+def test_radar_dry_run_returns_preview_without_sending(monkeypatch):
+    async def fake_radar(tournament_id):
+        assert tournament_id == "3"
+        return TournamentRadar(
+            tournament_id=tournament_id,
+            standings=["1. NAVI"],
+            roster_team_count=8,
+            bracket_match_count=15,
+        )
+
+    monkeypatch.setattr(main, "fetch_tournament_radar", fake_radar)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+
+    response = main.handler(
+        {
+            "job": "radar",
+            "tournament_id": 3,
+            "tournament_name": "IEM Cologne 2026",
+            "dry_run": True,
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["messages_sent"] == 1
+    assert body["radar"]["standings"] == ["1. NAVI"]
+    assert "IEM Cologne 2026" in body["preview"]
 
 
 def test_schedule_photo_caption_omits_timezone_label():

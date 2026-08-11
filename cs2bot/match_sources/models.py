@@ -161,3 +161,37 @@ class UpcomingMatchNormalized(BaseModel):
     best_of: Literal[1, 3, 5] | None = None
     is_featured: bool = False
     feature_reason: str | None = Field(default=None, max_length=200)
+
+
+class TeamForm(BaseModel):
+    """A compact, results-only form line for a schedule context card."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    team_name: str = Field(min_length=1, max_length=200)
+    wins: int = Field(default=0, ge=0, le=20)
+    losses: int = Field(default=0, ge=0, le=20)
+
+
+class ScheduleMatchContext(BaseModel):
+    """Optional pre-match context; failures must not block the schedule."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    match_id: str = Field(min_length=1, max_length=200)
+    tournament_id: str | None = Field(default=None, max_length=200)
+    team1_form: TeamForm
+    team2_form: TeamForm
+    team1_roster_size: int | None = Field(default=None, ge=0, le=20)
+    team2_roster_size: int | None = Field(default=None, ge=0, le=20)
+
+
+class TournamentRadar(BaseModel):
+    """Safe, compact tournament snapshot for a manual or scheduled radar post."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    tournament_id: str = Field(min_length=1, max_length=200)
+    standings: list[str] = Field(default_factory=list, max_length=12)
+    roster_team_count: int = Field(default=0, ge=0, le=128)
+    bracket_match_count: int = Field(default=0, ge=0, le=1000)

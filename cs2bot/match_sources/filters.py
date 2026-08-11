@@ -8,6 +8,7 @@ from .config import (
     POPULAR_TEAMS,
     TEAM_EXCLUSION_PATTERNS,
     TIER1_PRIZE_POOL_THRESHOLD_USD,
+    TIER1_AUTOPILOT_TIERS,
     TIER1_TOURNAMENT_PATTERNS,
     TOURNAMENT_EXCLUSION_PATTERNS,
     TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS,
@@ -179,3 +180,21 @@ def is_featured_upcoming(match: UpcomingMatchNormalized) -> tuple[bool, str | No
     ):
         return True, "popular_team"
     return False, "not_featured"
+
+
+def tier1_autopilot_decision(
+    match: MatchNormalized | UpcomingMatchNormalized,
+) -> tuple[bool, str]:
+    """Return the tier-only shadow decision without changing publication rules."""
+    if _contains_pattern(match.tournament_name, TOURNAMENT_EXCLUSION_PATTERNS):
+        return False, "excluded_tournament"
+    if _contains_pattern(
+        f"{match.team1_name} {match.team2_name}",
+        TEAM_EXCLUSION_PATTERNS,
+    ):
+        return False, "excluded_team"
+    if match.tournament_tier in TIER1_AUTOPILOT_TIERS:
+        return True, f"pandascore_tier_{match.tournament_tier}"
+    if match.tournament_tier is None:
+        return False, "tier_unknown"
+    return False, f"pandascore_tier_{match.tournament_tier}"

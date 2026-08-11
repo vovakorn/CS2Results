@@ -37,10 +37,21 @@ from .match_sources.config import (
     MATCH_SOURCE,
     OBJECT_STORAGE_BUCKET,
     PANDASCORE_API_TOKEN,
+    POPULAR_TEAMS,
+    SCHEDULE_CONTEXT_MATCH_LIMIT,
 )
-from .match_sources.filters import is_tier1_candidate
+from .match_sources.filters import is_tier1_candidate, tier1_autopilot_decision
 from .match_sources.match_fetcher import SourceName, apply_quality_filters, get_new_finished_matches
-from .match_sources.models import MatchNormalized, UpcomingMatchNormalized
+from .match_sources.models import (
+    MatchNormalized,
+    ScheduleMatchContext,
+    TournamentRadar,
+    UpcomingMatchNormalized,
+)
+from .match_sources.sources.pandascore_context import (
+    fetch_schedule_match_context,
+    fetch_tournament_radar,
+)
 from .match_sources.sources.pandascore_source import (
     fetch_finished_matches as fetch_pandascore_finished_matches,
     fetch_upcoming_matches,
@@ -90,7 +101,7 @@ RUSSIAN_MONTHS = (
     "ноября",
     "декабря",
 )
-CONTENT_JOBS = {"results", "schedule", "digest"}
+CONTENT_JOBS = {"results", "schedule", "digest", "radar"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -101,6 +112,7 @@ class TelegramDeliveryError(RuntimeError):
 
 def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
     """Return public source fields that are safe to expose in dry-run output."""
+    autopilot_selected, autopilot_reason = tier1_autopilot_decision(match)
     return {
         "source": match.source,
         "match_id": match.match_id,
@@ -127,11 +139,14 @@ def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
         "location": match.location,
         "is_tier1_lan": match.is_tier1_lan,
         "filter_reason": match.filter_reason,
+        "tier1_autopilot_selected": autopilot_selected,
+        "tier1_autopilot_reason": autopilot_reason,
     }
 
 
 def _upcoming_diagnostic(match: UpcomingMatchNormalized) -> Dict[str, Any]:
     """Return public schedule fields without exposing full remote image URLs."""
+    autopilot_selected, autopilot_reason = tier1_autopilot_decision(match)
     return {
         "match_id": match.match_id,
         "tournament": match.tournament_name,
@@ -151,6 +166,8 @@ def _upcoming_diagnostic(match: UpcomingMatchNormalized) -> Dict[str, Any]:
         "filter_reason": None if match.is_featured else match.feature_reason,
         "is_featured": match.is_featured,
         "feature_reason": match.feature_reason,
+        "tier1_autopilot_selected": autopilot_selected,
+        "tier1_autopilot_reason": autopilot_reason,
     }
 
 
@@ -570,6 +587,79 @@ def format_schedule_photo_caption(local_now: datetime, match_count: int) -> str:
     )
 
 
+def _context_priority(match: UpcomingMatchNormalized) -> tuple[int, int, str]:
+    tier_rank = {"s": 0, "a": 1}.get(match.tournament_tier or "", 2)
+    popular = {
+        MatchNormalized._identity_part(team)
+        for team in POPULAR_TEAMS
+    }
+    match_teams = {
+        MatchNormalized._identity_part(match.team1_name),
+        MatchNormalized._identity_part(match.team2_name),
+    }
+    popular_rank = 0 if popular & match_teams else 1
+    return tier_rank, popular_rank, match.scheduled_at
+
+
+def format_schedule_context(
+    matches: Sequence[UpcomingMatchNormalized],
+    contexts: dict[str, ScheduleMatchContext],
+) -> str:
+    """Format optional, compact pre-match context for the strongest fixtures."""
+    lines = ["🔎 <b>Контекст к главным матчам</b>", ""]
+    included = 0
+    for match in sorted(matches, key=_context_priority):
+        context = contexts.get(match.match_id)
+        if context is None:
+            continue
+        best_of = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
+        team1_form = f"{context.team1_form.wins}–{context.team1_form.losses}"
+        team2_form = f"{context.team2_form.wins}–{context.team2_form.losses}"
+        lines.extend(
+            [
+                f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b> · {best_of}",
+                f"Форма (5): {team1_form} · {team2_form}",
+            ]
+        )
+        if context.team1_roster_size is not None and context.team2_roster_size is not None:
+            lines.append(
+                f"Ожидаемые составы: {context.team1_roster_size} × {context.team2_roster_size}"
+            )
+        lines.append("")
+        included += 1
+        if included >= SCHEDULE_CONTEXT_MATCH_LIMIT:
+            break
+    if not included:
+        return ""
+    lines.extend(["Источник: PandaScore", "", "#CS2 #КонтекстМатча"])
+    return "\n".join(lines).strip()[:MAX_TELEGRAM_MESSAGE_LENGTH]
+
+
+def format_tournament_radar(radar: TournamentRadar, tournament_name: str) -> str:
+    lines = [f"🏆 <b>Турнирный радар — {html.escape(tournament_name)}</b>", ""]
+    if radar.standings:
+        lines.extend(["<b>Положение:</b>", *[html.escape(line) for line in radar.standings], ""])
+    if radar.roster_team_count:
+        lines.append(f"Участников: {radar.roster_team_count}")
+    if radar.bracket_match_count:
+        lines.append(f"Матчей в сетке: {radar.bracket_match_count}")
+    if len(lines) == 2:
+        lines.append("Данные сетки и положения пока не опубликованы организатором.")
+    lines.extend(["", "Источник: PandaScore", "", "#CS2 #ТурнирныйРадар"])
+    return "\n".join(lines)[:MAX_TELEGRAM_MESSAGE_LENGTH]
+
+
+async def _fetch_schedule_contexts(
+    matches: Sequence[UpcomingMatchNormalized],
+) -> list[ScheduleMatchContext | Exception]:
+    return list(
+        await asyncio.gather(
+            *(fetch_schedule_match_context(match) for match in matches),
+            return_exceptions=True,
+        )
+    )
+
+
 def format_digest_photo_caption(local_now: datetime, match_count: int) -> str:
     """Build a short caption while scores remain protected by the media spoiler."""
     noun = "результат" if match_count == 1 else "результата" if 2 <= match_count <= 4 else "результатов"
@@ -710,11 +800,28 @@ def _handle_content_job(
     days_ahead: int = 1,
 ) -> Dict[str, Any]:
     start, end, local_now = _local_day_window(days_ahead=days_ahead)
+    schedule_context_text = ""
+    schedule_contexts: dict[str, ScheduleMatchContext] = {}
     try:
         if job == "schedule":
             fetched = asyncio.run(fetch_upcoming_matches(start, end))
             selected = [match for match in fetched if match.is_featured]
             text = format_daily_schedule(selected, local_now) if selected else ""
+            context_matches = sorted(selected, key=_context_priority)[:SCHEDULE_CONTEXT_MATCH_LIMIT]
+            if context_matches:
+                context_results = asyncio.run(_fetch_schedule_contexts(context_matches))
+                for match, result in zip(context_matches, context_results):
+                    if isinstance(result, ScheduleMatchContext):
+                        schedule_contexts[match.match_id] = result
+                    elif isinstance(result, Exception):
+                        log_event(
+                            logger,
+                            logging.WARNING,
+                            "schedule_context_unavailable",
+                            match_id=match.match_id,
+                            error_type=type(result).__name__,
+                        )
+                schedule_context_text = format_schedule_context(selected, schedule_contexts)
         else:
             fetched_results = asyncio.run(fetch_pandascore_finished_matches(100, start=start, end=end))
             selected_results, _, _ = apply_quality_filters(fetched_results)
@@ -845,6 +952,18 @@ def _handle_content_job(
                     send_to_telegram(channel["chat_id"], text)
             else:
                 send_to_telegram(channel["chat_id"], text)
+            if job == "schedule" and schedule_context_text:
+                try:
+                    send_to_telegram(channel["chat_id"], schedule_context_text)
+                except Exception as exc:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "schedule_context_delivery_failed",
+                        channel=channel_id,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
             asyncio.run(mark_content_processed(content_uid, job))
             sent += 1
         except Exception as exc:
@@ -887,6 +1006,8 @@ def _handle_content_job(
             body["diagnostics"] = [
                 _upcoming_diagnostic(match) for match in diagnostic_matches
             ]
+            body["context_preview"] = schedule_context_text or None
+            body["context_matches_ready"] = len(schedule_contexts)
         elif job == "digest":
             body["diagnostics"] = [_match_diagnostic(match) for match in selected]
         body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
@@ -894,6 +1015,83 @@ def _handle_content_job(
         body["media_card_count"] = len(media_cards)
         if media_card_error:
             body["media_card_error"] = media_card_error
+    return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
+
+
+def _handle_radar_job(
+    tournament_id: str,
+    tournament_name: str,
+    dry_run: bool,
+    test_run_id: str | None = None,
+) -> Dict[str, Any]:
+    try:
+        radar = asyncio.run(fetch_tournament_radar(tournament_id))
+        text = format_tournament_radar(radar, tournament_name)
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "tournament_radar_fetch_failed",
+            tournament_id=tournament_id,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        return _error_response(502, "match_source_unavailable")
+
+    sent = 0
+    duplicates = 0
+    failures = 0
+    # Keep radar deduplication aligned with the channel's displayed calendar day.
+    day_key = _local_day_window()[2].date().isoformat()
+    for channel in _iter_channels():
+        if dry_run:
+            sent += 1
+            continue
+        channel_id = str(channel.get("id") or channel.get("name", "unknown"))
+        content_uid = f"radar_{tournament_id}_{day_key}_{channel_id}"
+        if test_run_id:
+            content_uid = f"{content_uid}_test_{test_run_id}"
+        claim = None
+        try:
+            claim = asyncio.run(claim_content_delivery(content_uid))
+            if claim is None:
+                duplicates += 1
+                continue
+            send_to_telegram(channel["chat_id"], text)
+            asyncio.run(mark_content_processed(content_uid, "radar"))
+            sent += 1
+        except Exception as exc:
+            failures += 1
+            if claim is not None:
+                try:
+                    asyncio.run(release_delivery_claim(claim))
+                except Exception:
+                    pass
+            log_event(
+                logger,
+                logging.ERROR,
+                "tournament_radar_delivery_failed",
+                tournament_id=tournament_id,
+                channel=channel_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+
+    body = {
+        "job": "radar",
+        "tournament_id": tournament_id,
+        "messages_sent": sent,
+        "duplicates_skipped": duplicates,
+        "delivery_failures": failures,
+        "dry_run": dry_run,
+    }
+    if dry_run:
+        body.update(
+            {
+                "preview": text,
+                "radar": radar.model_dump(),
+            }
+        )
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
@@ -909,22 +1107,35 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     days_ahead = 1
     job = "results"
     test_run_id: str | None = None
+    tournament_id: str | None = None
+    tournament_name = "Турнир"
     try:
         event = _unwrap_timer_event(event)
         if isinstance(event, dict):
             requested_job = event.get("job", "results")
             if requested_job not in CONTENT_JOBS:
-                raise ValueError("job must be results, schedule, or digest")
+                raise ValueError("job must be results, schedule, digest, or radar")
             job = requested_job
             requested_test_run_id = event.get("test_run_id")
             if requested_test_run_id is not None:
-                if job != "schedule":
-                    raise ValueError("test_run_id is supported only for schedule")
+                if job not in {"schedule", "radar"}:
+                    raise ValueError("test_run_id is supported only for schedule or radar")
                 if not isinstance(requested_test_run_id, str) or not TEST_RUN_ID_PATTERN.fullmatch(
                     requested_test_run_id
                 ):
                     raise ValueError("test_run_id is invalid")
                 test_run_id = requested_test_run_id
+            if job == "radar":
+                requested_tournament_id = event.get("tournament_id")
+                if not isinstance(requested_tournament_id, (str, int)) or not str(
+                    requested_tournament_id
+                ).strip():
+                    raise ValueError("tournament_id is required for radar")
+                tournament_id = str(requested_tournament_id).strip()
+                requested_tournament_name = event.get("tournament_name", "Турнир")
+                if not isinstance(requested_tournament_name, str) or not requested_tournament_name.strip():
+                    raise ValueError("tournament_name must be a non-empty string")
+                tournament_name = requested_tournament_name.strip()[:300]
             requested = event.get("limit")
             if isinstance(requested, int) and not isinstance(requested, bool):
                 limit = max(MIN_MATCHES, min(MAX_MATCHES, requested))
@@ -962,7 +1173,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             missing_config.append("object_storage_bucket")
         if not any(True for _ in _iter_channels()):
             missing_config.append("delivery_channels")
-        if job in {"schedule", "digest"} and not PANDASCORE_API_TOKEN:
+        if job in {"schedule", "digest", "radar"} and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
         elif source == "pandascore" and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
@@ -981,6 +1192,10 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             )
             _notify_admin("configuration_invalid", "Конфигурация функции неполна.")
             return _error_response(503, "configuration_error")
+
+    if job == "radar":
+        assert tournament_id is not None
+        return _handle_radar_job(tournament_id, tournament_name, dry_run, test_run_id)
 
     if job in {"schedule", "digest"}:
         return _handle_content_job(

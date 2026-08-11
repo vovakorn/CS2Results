@@ -110,6 +110,7 @@ DEFAULT_POPULAR_TEAMS = [
     "Aurora",
     "HEROIC",
 ]
+DEFAULT_TIER1_AUTOPILOT_TIERS = ["s", "a"]
 
 
 def _load_json_config(env_name: str) -> dict:
@@ -219,6 +220,10 @@ TEAM_EXCLUSION_PATTERNS = _list_setting(
 )
 TEAM_ALIASES = _dict_setting("team_aliases", DEFAULT_TEAM_ALIASES)
 POPULAR_TEAMS = _list_setting("popular_teams", DEFAULT_POPULAR_TEAMS)
+TIER1_AUTOPILOT_TIERS = _list_setting(
+    "tier1_autopilot_tiers",
+    DEFAULT_TIER1_AUTOPILOT_TIERS,
+)
 TIER1_PRIZE_POOL_THRESHOLD_USD = _int_setting(
     "TIER1_PRIZE_POOL_THRESHOLD_USD",
     500000,
@@ -239,6 +244,7 @@ MAX_SOURCE_FUTURE_SKEW_HOURS = _int_setting("MAX_SOURCE_FUTURE_SKEW_HOURS", 6)
 DELIVERY_CLAIM_TTL_SECONDS = _int_setting("DELIVERY_CLAIM_TTL_SECONDS", 300, minimum=30)
 ALERT_COOLDOWN_SECONDS = _int_setting("ALERT_COOLDOWN_SECONDS", 21600, minimum=300)
 MAX_SOURCE_RESPONSE_BYTES = _int_setting("MAX_SOURCE_RESPONSE_BYTES", 5_000_000, minimum=100_000)
+SCHEDULE_CONTEXT_MATCH_LIMIT = _int_setting("SCHEDULE_CONTEXT_MATCH_LIMIT", 3, minimum=1)
 
 OBJECT_STORAGE_BUCKET = os.getenv("OBJECT_STORAGE_BUCKET")
 OBJECT_STORAGE_ENDPOINT = os.getenv("OBJECT_STORAGE_ENDPOINT", "https://storage.yandexcloud.net")
