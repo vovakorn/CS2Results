@@ -63,6 +63,29 @@ def safe_storage_part(value: str) -> str:
     return cleaned.strip("_") or "unknown"
 
 
+async def write_analytics_record(
+    kind: str,
+    record_id: str,
+    payload: dict[str, Any],
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> str:
+    """Persist analytics independently of delivery claims; callers handle failures."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = f"analytics/{safe_storage_part(kind)}/{safe_storage_part(record_id)}.json"
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+
+    def _put() -> None:
+        s3.put_object(Bucket=bucket_name, Key=key, Body=body, ContentType="application/json")
+
+    try:
+        await asyncio.to_thread(_put)
+        return key
+    except ClientError as exc:
+        raise StorageUnavailableError(f"analytics write failed for {key}") from exc
+
+
 def channel_match_uid(match: MatchNormalized, channel_name: str) -> str:
     return f"{safe_storage_part(channel_name)}_{match.match_uid}"
 
