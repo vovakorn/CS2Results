@@ -218,6 +218,30 @@ def test_liquipedia_shadow_comparison_aligns_reversed_team_order():
     }
 
 
+def test_liquipedia_shadow_comparison_uses_aliases_and_start_time():
+    primary = _match()
+    primary.team1_name = "1WIN"
+    primary.team2_name = "Liquid"
+    primary.start_date = "2026-08-08T23:45:00Z"
+    primary.end_date = "2026-08-09T00:50:00Z"
+    primary.date = primary.end_date
+
+    shadow = _match(source="liquipedia", match_id="lp-1")
+    shadow.team1_name = "1w Team"
+    shadow.team2_name = "Team Liquid"
+    shadow.start_date = "2026-08-08 23:45:00"
+    shadow.date = shadow.start_date
+    shadow.score1 = 2
+    shadow.score2 = 1
+
+    comparison = match_fetcher.compare_source_matches([primary], [shadow])
+
+    assert comparison["matched"] == 1
+    assert comparison["primary_only"] == 0
+    assert comparison["liquipedia_only"] == 0
+    assert comparison["score_mismatches"] == 0
+
+
 def test_liquipedia_shadow_logs_comparison_without_changing_primary(monkeypatch, caplog):
     calls = []
     recent = datetime.now(timezone.utc).isoformat()

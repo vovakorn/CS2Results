@@ -161,11 +161,21 @@ def test_blast_bounty_online_qualifier_remains_blocked():
     )
 
     assert is_tier1_candidate(match) is True
-    assert is_tier1_lan(match) == (False, "online_tournament")
+    assert is_tier1_lan(match) == (False, "excluded_tournament")
 
 
 def test_qualifier_is_rejected_even_if_name_contains_trusted_event():
     match = _match(tournament_name="IEM Cologne 2026 Closed Qualifier", location=None)
+    assert is_tier1_lan(match) == (False, "excluded_tournament")
+
+
+def test_qualifier_is_rejected_even_when_provider_marks_it_as_lan():
+    match = _match(
+        tournament_name="Esports World Cup 2026: Last Chance Qualifier",
+        location=None,
+        is_lan=True,
+    )
+
     assert is_tier1_lan(match) == (False, "excluded_tournament")
 
 
