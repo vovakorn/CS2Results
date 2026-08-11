@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, time as datetime_time, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Sequence
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -92,6 +92,7 @@ RUSSIAN_MONTHS = (
 )
 CONTENT_JOBS = {"results", "schedule", "digest"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+MAX_SCHEDULE_DAYS_AHEAD = 7
 
 
 class TelegramDeliveryError(RuntimeError):
@@ -146,6 +147,8 @@ def _upcoming_diagnostic(match: UpcomingMatchNormalized) -> Dict[str, Any]:
         "original_scheduled_at": match.original_scheduled_at,
         "rescheduled": match.rescheduled,
         "forfeit": match.forfeit,
+        "selected": match.is_featured,
+        "filter_reason": None if match.is_featured else match.feature_reason,
         "is_featured": match.is_featured,
         "feature_reason": match.feature_reason,
     }
@@ -396,7 +399,10 @@ def format_match(match: Any) -> str:
     return message
 
 
-def _local_day_window(now: datetime | None = None) -> tuple[datetime, datetime, datetime]:
+def _local_day_window(
+    now: datetime | None = None,
+    days_ahead: int = 1,
+) -> tuple[datetime, datetime, datetime]:
     try:
         local_timezone = ZoneInfo(DISPLAY_TIMEZONE)
     except ZoneInfoNotFoundError as exc:
@@ -406,7 +412,8 @@ def _local_day_window(now: datetime | None = None) -> tuple[datetime, datetime, 
         reference = reference.replace(tzinfo=timezone.utc)
     local_now = reference.astimezone(local_timezone)
     start = datetime.combine(local_now.date(), datetime_time.min, tzinfo=local_timezone)
-    end = datetime.combine(local_now.date().fromordinal(local_now.date().toordinal() + 1), datetime_time.min, tzinfo=local_timezone)
+    end_date = local_now.date() + timedelta(days=days_ahead)
+    end = datetime.combine(end_date, datetime_time.min, tzinfo=local_timezone)
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc), local_now
 
 
@@ -618,8 +625,10 @@ def _handle_content_job(
     job: str,
     dry_run: bool,
     test_run_id: str | None = None,
+    include_filtered: bool = False,
+    days_ahead: int = 1,
 ) -> Dict[str, Any]:
-    start, end, local_now = _local_day_window()
+    start, end, local_now = _local_day_window(days_ahead=days_ahead)
     try:
         if job == "schedule":
             fetched = asyncio.run(fetch_upcoming_matches(start, end))
@@ -652,7 +661,20 @@ def _handle_content_job(
             "delivery_failures": 0,
             "dry_run": dry_run,
         }
-        return {"statusCode": 200, "body": json.dumps(body)}
+        if dry_run and job == "schedule":
+            diagnostic_matches = fetched if include_filtered else selected
+            body.update(
+                {
+                    "days_ahead": days_ahead,
+                    "window_start": start.isoformat(),
+                    "window_end": end.isoformat(),
+                    "preview": None,
+                    "diagnostics": [
+                        _upcoming_diagnostic(match) for match in diagnostic_matches
+                    ],
+                }
+            )
+        return {"statusCode": 200, "body": json.dumps(body, ensure_ascii=False)}
 
     media_card: bytes | None = None
     media_card_error: str | None = None
@@ -765,7 +787,13 @@ def _handle_content_job(
     if preview is not None:
         body["preview"] = preview
         if job == "schedule":
-            body["diagnostics"] = [_upcoming_diagnostic(match) for match in selected]
+            diagnostic_matches = fetched if include_filtered else selected
+            body["days_ahead"] = days_ahead
+            body["window_start"] = start.isoformat()
+            body["window_end"] = end.isoformat()
+            body["diagnostics"] = [
+                _upcoming_diagnostic(match) for match in diagnostic_matches
+            ]
         elif job == "digest":
             body["diagnostics"] = [_match_diagnostic(match) for match in selected]
         body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
@@ -784,6 +812,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     mode = _parse_mode(None)
     dry_run = False
     include_filtered = False
+    days_ahead = 1
     job = "results"
     test_run_id: str | None = None
     try:
@@ -810,6 +839,16 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             dry_run = _parse_bool(event.get("dry_run"), default=False)
             requested_filtered = _parse_bool(event.get("include_filtered"), default=mode == "debug")
             include_filtered = requested_filtered and dry_run
+            requested_days_ahead = event.get("days_ahead", 1)
+            if not isinstance(requested_days_ahead, int) or isinstance(
+                requested_days_ahead, bool
+            ):
+                raise ValueError("days_ahead must be an integer")
+            if not 1 <= requested_days_ahead <= MAX_SCHEDULE_DAYS_AHEAD:
+                raise ValueError("days_ahead must be between 1 and 7")
+            if requested_days_ahead != 1 and (job != "schedule" or not dry_run):
+                raise ValueError("days_ahead above 1 is supported only for schedule dry-run")
+            days_ahead = requested_days_ahead
             if requested_filtered and not dry_run:
                 log_event(
                     logger,
@@ -850,7 +889,13 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             return _error_response(503, "configuration_error")
 
     if job in {"schedule", "digest"}:
-        return _handle_content_job(job, dry_run, test_run_id)
+        return _handle_content_job(
+            job,
+            dry_run,
+            test_run_id,
+            include_filtered=include_filtered,
+            days_ahead=days_ahead,
+        )
 
     try:
         log_event(logger, logging.INFO, "handler_start", limit=limit, source=source, mode=mode, dry_run=dry_run)

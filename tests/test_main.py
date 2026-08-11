@@ -854,7 +854,7 @@ def test_schedule_dry_run_returns_preview_without_sending(monkeypatch):
     monkeypatch.setattr(
         main,
         "_local_day_window",
-        lambda: (
+        lambda **kwargs: (
             main.datetime.fromisoformat("2026-07-29T21:00:00+00:00"),
             main.datetime.fromisoformat("2026-07-30T21:00:00+00:00"),
             main.datetime.fromisoformat("2026-07-30T10:00:00+03:00"),
@@ -872,6 +872,90 @@ def test_schedule_dry_run_returns_preview_without_sending(monkeypatch):
     assert body["messages_sent"] == 1
     assert "14:00" in body["preview"]
     assert sent == []
+
+
+def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monkeypatch):
+    filtered = _upcoming().model_copy(
+        update={
+            "match_id": "filtered-1",
+            "tournament_name": "Regional Open Qualifier",
+            "is_featured": False,
+            "feature_reason": "excluded_tournament",
+        }
+    )
+
+    def fake_window(*, days_ahead=1):
+        assert days_ahead == 3
+        return (
+            main.datetime.fromisoformat("2026-07-29T21:00:00+00:00"),
+            main.datetime.fromisoformat("2026-08-01T21:00:00+00:00"),
+            main.datetime.fromisoformat("2026-07-30T10:00:00+03:00"),
+        )
+
+    async def fake_fetch(start, end):
+        assert start.isoformat() == "2026-07-29T21:00:00+00:00"
+        assert end.isoformat() == "2026-08-01T21:00:00+00:00"
+        return [filtered]
+
+    monkeypatch.setattr(main, "_local_day_window", fake_window)
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+
+    response = main.handler(
+        {
+            "job": "schedule",
+            "dry_run": True,
+            "include_filtered": True,
+            "days_ahead": 3,
+        },
+        None,
+    )
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["matches_received"] == 1
+    assert body["matches_selected"] == 0
+    assert body["messages_sent"] == 0
+    assert body["days_ahead"] == 3
+    assert body["window_start"] == "2026-07-29T21:00:00+00:00"
+    assert body["window_end"] == "2026-08-01T21:00:00+00:00"
+    assert body["preview"] is None
+    assert body["diagnostics"][0]["teams"] == ["NAVI", "FaZe"]
+    assert body["diagnostics"][0]["selected"] is False
+    assert body["diagnostics"][0]["filter_reason"] == "excluded_tournament"
+
+
+def test_schedule_dry_run_omits_filtered_diagnostics_by_default(monkeypatch):
+    filtered = _upcoming().model_copy(
+        update={"is_featured": False, "feature_reason": "not_featured"}
+    )
+
+    async def fake_fetch(start, end):
+        return [filtered]
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+
+    response = main.handler({"job": "schedule", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert body["matches_received"] == 1
+    assert body["matches_selected"] == 0
+    assert body["diagnostics"] == []
+
+
+@pytest.mark.parametrize("days_ahead", [0, 8, True, "3"])
+def test_invalid_schedule_days_ahead_is_rejected(days_ahead):
+    response = main.handler(
+        {"job": "schedule", "dry_run": True, "days_ahead": days_ahead},
+        None,
+    )
+
+    assert response["statusCode"] == 400
+
+
+def test_multi_day_schedule_is_blocked_outside_dry_run():
+    response = main.handler({"job": "schedule", "days_ahead": 3}, None)
+
+    assert response["statusCode"] == 400
 
 
 def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
