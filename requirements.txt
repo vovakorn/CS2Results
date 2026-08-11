@@ -1,7 +1,7 @@
 # Direct runtime dependencies.
 requests==2.34.2
 aiohttp==3.14.3
-beautifulsoup4==4.14.3
+beautifulsoup4==4.15.0
 boto3==1.43.67
 pydantic==2.13.4
 Pillow==12.3.0
