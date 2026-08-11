@@ -132,6 +132,23 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 - `job=schedule`: один утренний выпуск с Tier-1 матчами и матчами популярных команд.
 - `job=digest`: один вечерний выпуск с итогами Tier-1 LAN; пустой выпуск не публикуется.
 
+Для диагностики расписания `include_filtered=true` возвращает в `diagnostics`
+все полученные матчи с полями `selected` и `filter_reason`. Параметр
+`days_ahead` расширяет окно просмотра от 1 до 7 календарных дней и разрешён
+только для `job=schedule` вместе с `dry_run=true`; production-таймер всегда
+остаётся однодневным.
+
+```json
+{
+  "job": "schedule",
+  "source": "pandascore",
+  "mode": "debug",
+  "dry_run": true,
+  "include_filtered": true,
+  "days_ahead": 3
+}
+```
+
 При `TELEGRAM_MEDIA_CARDS=1` результаты отправляются как квадратные PNG со
 спойлером на всём изображении, а счёт и победитель в подписи остаются скрыты
 через `<tg-spoiler>`. Вечерний итог и расписание поддерживают квадратные
