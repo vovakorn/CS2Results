@@ -17,10 +17,10 @@
 
 - MVP работает в production на Yandex Cloud Functions.
 - Основная ветка GitHub: `main`.
-- Текущий commit: `3ce14d8` (`Add PandaScore product updates (#61)`).
-- Последняя проверка: 228 тестов успешно локально; GitHub Actions для PR #61 завершился успешно на Python 3.11 и 3.12.
+- Текущий commit: `829c458` (`Add radar cards and analytics (#63)`).
+- Последняя проверка: 234 теста успешно локально; GitHub Actions для PR #63 завершился успешно на Python 3.11 и 3.12.
 - GitHub Actions проверяет Python 3.11 и 3.12, зависимости, безопасность и сборку архива.
-- Последняя активная версия Cloud Function: `d4ee2366jchrl1vihrv2`.
+- Последняя активная версия Cloud Function: `d4et7a6r8cm760i04shv`.
 - Function ID: `d4e6e13rlrl7go01m2q2`.
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
 - Production runtime: Python 3.12.
@@ -132,6 +132,11 @@
   блокирует основной выпуск.
 - Турнирный радар PandaScore (`job=radar`) с положением, числом участников и
   уникальными матчами сетки; публикация дедуплицируется по турниру, дню и каналу.
+- Карточки турнирного радара: положение, подтверждённые пары сетки и следующий
+  матч. При недоступности части PandaScore endpoints радар публикует доступные
+  данные, не выдумывая пары.
+- Object Storage analytics journal: события публикаций, snapshots подписчиков
+  и ручной импорт метрик Telegram Stats.
 
 ## Что проверить после запуска
 
