@@ -22,6 +22,7 @@ from .config import (
     TELEGRAM_SPOILERS,
     TELEGRAM_TOKEN,
 )
+from .analytics import record_manual_post_metrics, record_post, record_subscriber_snapshot
 from .logging_utils import log_event
 from .media_cards import (
     MAX_RESULT_MATCHES,
@@ -29,6 +30,7 @@ from .media_cards import (
     render_result_card,
     render_results_card,
     render_schedule_cards,
+    render_tournament_radar_card,
 )
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
@@ -101,13 +103,28 @@ RUSSIAN_MONTHS = (
     "ноября",
     "декабря",
 )
-CONTENT_JOBS = {"results", "schedule", "digest", "radar"}
+CONTENT_JOBS = {"results", "schedule", "digest", "radar", "analytics"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
 
 class TelegramDeliveryError(RuntimeError):
     """A safe Telegram failure that never contains the bot token or request URL."""
+
+
+def _record_post_analytics(channel_id: str, content_uid: str, job: str, **metadata: Any) -> None:
+    """Analytics must never turn a delivered Telegram post into a failed job."""
+    try:
+        asyncio.run(record_post(channel_id, content_uid, job, metadata=metadata))
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.WARNING,
+            "analytics_post_record_failed",
+            channel=channel_id,
+            job=job,
+            error_type=type(exc).__name__,
+        )
 
 
 def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
@@ -259,6 +276,50 @@ def send_to_telegram(
         return data
 
     raise TelegramDeliveryError("Telegram request failed")
+
+
+def get_telegram_member_count(chat_id: str | int) -> int:
+    """Read a channel subscriber snapshot; bot must be an administrator."""
+    if not TELEGRAM_TOKEN:
+        raise TelegramDeliveryError("Telegram credentials are not configured")
+    response = requests.post(
+        f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/getChatMemberCount",
+        json={"chat_id": str(chat_id)},
+        timeout=7,
+        allow_redirects=False,
+    )
+    if response.status_code >= 300:
+        raise TelegramDeliveryError(f"Telegram API returned HTTP {response.status_code}")
+    data = response.json()
+    if not isinstance(data, dict) or data.get("ok") is not True or not isinstance(data.get("result"), int):
+        raise TelegramDeliveryError("Telegram API returned invalid member count")
+    return data["result"]
+
+
+def _handle_analytics_job(event: Dict[str, Any], dry_run: bool) -> Dict[str, Any]:
+    operation = event.get("analytics_operation", "snapshot")
+    if operation not in {"snapshot", "import_metrics"}:
+        return _error_response(400, "invalid_request")
+    if operation == "import_metrics":
+        channel_id = event.get("channel_id")
+        message_id = event.get("message_id")
+        if not isinstance(channel_id, str) or not channel_id or not isinstance(message_id, int):
+            return _error_response(400, "invalid_request")
+        views = event.get("views_24h")
+        reactions = event.get("reactions")
+        if any(value is not None and (not isinstance(value, int) or value < 0) for value in (views, reactions)):
+            return _error_response(400, "invalid_request")
+        if not dry_run:
+            asyncio.run(record_manual_post_metrics(channel_id, message_id, views, reactions))
+        return {"statusCode": 200, "body": json.dumps({"job": "analytics", "operation": operation, "dry_run": dry_run})}
+    snapshots = []
+    for channel in _iter_channels():
+        channel_id = str(channel.get("id") or channel.get("name", "unknown"))
+        count = get_telegram_member_count(channel["chat_id"])
+        snapshots.append({"channel_id": channel_id, "member_count": count})
+        if not dry_run:
+            asyncio.run(record_subscriber_snapshot(channel_id, count))
+    return {"statusCode": 200, "body": json.dumps({"job": "analytics", "operation": operation, "snapshots": snapshots, "dry_run": dry_run})}
 
 
 def send_photo_to_telegram(
@@ -965,6 +1026,13 @@ def _handle_content_job(
                         error=_safe_error_message(exc),
                     )
             asyncio.run(mark_content_processed(content_uid, job))
+            _record_post_analytics(
+                channel_id,
+                content_uid,
+                job,
+                matches_selected=len(selected),
+                media_card=bool(media_cards),
+            )
             sent += 1
         except Exception as exc:
             failures += 1
@@ -1023,6 +1091,7 @@ def _handle_radar_job(
     tournament_name: str,
     dry_run: bool,
     test_run_id: str | None = None,
+    card_variant: str = "auto",
 ) -> Dict[str, Any]:
     try:
         radar = asyncio.run(fetch_tournament_radar(tournament_id))
@@ -1037,6 +1106,23 @@ def _handle_radar_job(
             error=_safe_error_message(exc),
         )
         return _error_response(502, "match_source_unavailable")
+
+    media_card: bytes | None = None
+    media_card_error: str | None = None
+    if TELEGRAM_MEDIA_CARDS:
+        try:
+            media_card = render_tournament_radar_card(
+                radar, tournament_name, DISPLAY_TIMEZONE, card_variant
+            )
+        except Exception as exc:
+            media_card_error = type(exc).__name__
+            log_event(
+                logger,
+                logging.WARNING,
+                "tournament_radar_card_unavailable",
+                tournament_id=tournament_id,
+                error_type=type(exc).__name__,
+            )
 
     sent = 0
     duplicates = 0
@@ -1057,8 +1143,39 @@ def _handle_radar_job(
             if claim is None:
                 duplicates += 1
                 continue
-            send_to_telegram(channel["chat_id"], text)
+            if media_card:
+                caption = f"🏆 <b>Турнирный радар</b>\n{html.escape(tournament_name)}\n\nИсточник: PandaScore"
+                if test_run_id:
+                    caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
+                try:
+                    send_photo_to_telegram(
+                        channel["chat_id"],
+                        media_card,
+                        caption,
+                        filename=f"cs2-radar-{tournament_id}-{day_key}.png",
+                    )
+                except Exception as exc:
+                    media_card_error = type(exc).__name__
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "tournament_radar_card_delivery_fallback",
+                        tournament_id=tournament_id,
+                        channel=channel_id,
+                        error_type=type(exc).__name__,
+                    )
+                    send_to_telegram(channel["chat_id"], text)
+            else:
+                send_to_telegram(channel["chat_id"], text)
             asyncio.run(mark_content_processed(content_uid, "radar"))
+            _record_post_analytics(
+                channel_id,
+                content_uid,
+                "radar",
+                tournament_id=tournament_id,
+                radar_card_variant=card_variant,
+                media_card=bool(media_card),
+            )
             sent += 1
         except Exception as exc:
             failures += 1
@@ -1090,8 +1207,13 @@ def _handle_radar_job(
             {
                 "preview": text,
                 "radar": radar.model_dump(),
+                "media_card_enabled": TELEGRAM_MEDIA_CARDS,
+                "media_card_ready": bool(media_card),
+                "radar_card_variant": card_variant,
             }
         )
+        if media_card_error:
+            body["media_card_error"] = media_card_error
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
@@ -1109,6 +1231,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     test_run_id: str | None = None
     tournament_id: str | None = None
     tournament_name = "Турнир"
+    radar_card_variant = "auto"
     try:
         event = _unwrap_timer_event(event)
         if isinstance(event, dict):
@@ -1136,6 +1259,15 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 if not isinstance(requested_tournament_name, str) or not requested_tournament_name.strip():
                     raise ValueError("tournament_name must be a non-empty string")
                 tournament_name = requested_tournament_name.strip()[:300]
+                requested_card_variant = event.get("radar_card_variant", "auto")
+                if not isinstance(requested_card_variant, str) or requested_card_variant not in {
+                    "auto",
+                    "standings",
+                    "bracket",
+                    "next_match",
+                }:
+                    raise ValueError("radar_card_variant is invalid")
+                radar_card_variant = requested_card_variant
             requested = event.get("limit")
             if isinstance(requested, int) and not isinstance(requested, bool):
                 limit = max(MIN_MATCHES, min(MAX_MATCHES, requested))
@@ -1195,7 +1327,16 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
     if job == "radar":
         assert tournament_id is not None
-        return _handle_radar_job(tournament_id, tournament_name, dry_run, test_run_id)
+        return _handle_radar_job(
+            tournament_id,
+            tournament_name,
+            dry_run,
+            test_run_id,
+            radar_card_variant,
+        )
+
+    if job == "analytics":
+        return _handle_analytics_job(event if isinstance(event, dict) else {}, dry_run)
 
     if job in {"schedule", "digest"}:
         return _handle_content_job(
@@ -1391,6 +1532,13 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
             try:
                 asyncio.run(mark_channel_processed(match, channel_id))
+                _record_post_analytics(
+                    channel_id,
+                    match.match_uid,
+                    "results",
+                    tournament=match.tournament_name,
+                    media_card=result_card is not None,
+                )
             except Exception as exc:
                 failed_messages += 1
                 log_event(

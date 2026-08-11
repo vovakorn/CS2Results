@@ -4,7 +4,13 @@ import pytest
 from PIL import Image
 
 from cs2bot import media_cards
-from cs2bot.match_sources.models import MatchNormalized, UpcomingMatchNormalized
+from cs2bot.match_sources.models import (
+    MatchNormalized,
+    RadarBracketMatch,
+    RadarStandingTeam,
+    TournamentRadar,
+    UpcomingMatchNormalized,
+)
 
 
 def _result():
@@ -125,6 +131,42 @@ def test_schedule_card_is_valid_square_png():
     image = Image.open(io.BytesIO(data))
     assert image.format == "PNG"
     assert image.size == media_cards.SCHEDULE_CARD_SIZE
+
+
+@pytest.mark.parametrize("variant", ["standings", "bracket", "next_match"])
+def test_tournament_radar_card_variants_are_valid_square_png(variant):
+    radar = TournamentRadar(
+        tournament_id="3",
+        standings=["1. NAVI", "2. FaZe", "3. Spirit", "4. Vitality"],
+        standing_teams=[
+            RadarStandingTeam(rank=1, name="NAVI"),
+            RadarStandingTeam(rank=2, name="FaZe"),
+            RadarStandingTeam(rank=3, name="Spirit"),
+            RadarStandingTeam(rank=4, name="Vitality"),
+        ],
+        bracket_matches=[
+            RadarBracketMatch(match_id="semi-1", round_name="Semifinal", team1_name="NAVI", team2_name="FaZe"),
+            RadarBracketMatch(match_id="semi-2", round_name="Semifinal", team1_name="Spirit", team2_name="Vitality"),
+        ],
+        next_matches=[_upcoming()],
+        roster_team_count=16,
+        bracket_match_count=12,
+    )
+
+    data = media_cards.render_tournament_radar_card(
+        radar, "IEM Cologne 2026", "Europe/Moscow", variant
+    )
+
+    image = Image.open(io.BytesIO(data))
+    assert image.format == "PNG"
+    assert image.size == media_cards.SCHEDULE_CARD_SIZE
+
+
+def test_tournament_radar_card_rejects_unknown_variant():
+    with pytest.raises(media_cards.MediaCardError, match="variant"):
+        media_cards.render_tournament_radar_card(
+            TournamentRadar(tournament_id="3"), "IEM Cologne 2026", "Europe/Moscow", "unknown"
+        )
 
 
 def test_schedule_card_supports_ten_matches():

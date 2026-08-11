@@ -5,8 +5,10 @@ from typing import Any, Iterable
 
 from ..models import (
     MatchNormalized,
+    RadarBracketMatch,
     ScheduleMatchContext,
     SourceUnavailableError,
+    RadarStandingTeam,
     TeamForm,
     TournamentRadar,
     UpcomingMatchNormalized,
@@ -105,21 +107,31 @@ async def fetch_schedule_match_context(match: UpcomingMatchNormalized) -> Schedu
     )
 
 
-def _standing_lines(data: Any, limit: int = 8) -> list[str]:
-    lines: list[str] = []
+def _standing_teams(data: Any, limit: int = 8) -> list[RadarStandingTeam]:
+    teams: list[RadarStandingTeam] = []
     seen: set[str] = set()
     for item in _walk_dicts(data):
         team_name = _team_name(item.get("team"))
         rank = item.get("rank") or item.get("position")
         if not team_name or not isinstance(rank, int):
             continue
-        line = f"{rank}. {team_name}"
-        if line not in seen:
-            lines.append(line)
-            seen.add(line)
-        if len(lines) >= limit:
+        key = f"{rank}:{team_name.casefold()}"
+        if key not in seen:
+            teams.append(
+                RadarStandingTeam(
+                    rank=rank,
+                    name=team_name,
+                    logo_url=item["team"].get("image_url") if isinstance(item["team"].get("image_url"), str) else None,
+                )
+            )
+            seen.add(key)
+        if len(teams) >= limit:
             break
-    return sorted(lines, key=lambda value: int(value.split(".", 1)[0]))
+    return sorted(teams, key=lambda team: team.rank)
+
+
+def _standing_lines(data: Any, limit: int = 8) -> list[str]:
+    return [f"{team.rank}. {team.name}" for team in _standing_teams(data, limit)]
 
 
 def _bracket_match_count(data: Any) -> int:
@@ -135,6 +147,43 @@ def _bracket_match_count(data: Any) -> int:
     return len(match_ids)
 
 
+def _bracket_matches(data: Any, limit: int = 4) -> list[RadarBracketMatch]:
+    """Extract only explicit pairs; never infer a playoff matchup from standings."""
+    matches: list[RadarBracketMatch] = []
+    seen: set[str] = set()
+    for item in _walk_dicts(data):
+        raw_match = item.get("match") if isinstance(item.get("match"), dict) else item
+        match_id = raw_match.get("id") or item.get("match_id")
+        opponents = raw_match.get("opponents")
+        teams: list[dict[str, Any]] = []
+        if isinstance(opponents, list):
+            teams = [entry.get("opponent", entry) for entry in opponents if isinstance(entry, dict)]
+        elif isinstance(raw_match.get("teams"), list):
+            teams = [team for team in raw_match["teams"] if isinstance(team, dict)]
+        elif isinstance(raw_match.get("team1"), dict) and isinstance(raw_match.get("team2"), dict):
+            teams = [raw_match["team1"], raw_match["team2"]]
+        names = [_team_name(team) for team in teams]
+        if not isinstance(match_id, (str, int)) or len(names) < 2 or not names[0] or not names[1]:
+            continue
+        key = str(match_id)
+        if key in seen:
+            continue
+        round_value = item.get("round") or item.get("round_name") or item.get("name")
+        matches.append(
+            RadarBracketMatch(
+                match_id=key,
+                round_name=round_value if isinstance(round_value, str) else None,
+                team1_name=names[0],
+                team2_name=names[1],
+                status=raw_match.get("status") if isinstance(raw_match.get("status"), str) else None,
+            )
+        )
+        seen.add(key)
+        if len(matches) >= limit:
+            break
+    return matches
+
+
 def _roster_team_count(data: Any) -> int:
     ids = {
         str(item["team"]["id"])
@@ -145,14 +194,26 @@ def _roster_team_count(data: Any) -> int:
 
 
 async def fetch_tournament_radar(tournament_id: str) -> TournamentRadar:
-    bracket, standings, rosters = await asyncio.gather(
+    responses = await asyncio.gather(
         pandascore_source._fetch_json(f"/tournaments/{tournament_id}/brackets", {}),
         pandascore_source._fetch_json(f"/tournaments/{tournament_id}/standings", {}),
         pandascore_source._fetch_json(f"/tournaments/{tournament_id}/rosters", {}),
+        pandascore_source._fetch_json(
+            f"/tournaments/{tournament_id}/matches",
+            {"filter[status]": "not_started", "sort": "begin_at", "per_page": 4},
+        ),
+        return_exceptions=True,
     )
+    bracket, standings, rosters, matches = [value if not isinstance(value, Exception) else [] for value in responses]
+    if all(isinstance(value, Exception) for value in responses):
+        raise SourceUnavailableError("PandaScore tournament radar endpoints are unavailable")
+    standing_teams = _standing_teams(standings)
     return TournamentRadar(
         tournament_id=tournament_id,
-        standings=_standing_lines(standings),
+        standings=[f"{team.rank}. {team.name}" for team in standing_teams],
+        standing_teams=standing_teams,
+        bracket_matches=_bracket_matches(bracket),
+        next_matches=pandascore_source._normalize_raw_upcoming(matches)[:4],
         roster_team_count=_roster_team_count(rosters),
         bracket_match_count=_bracket_match_count(bracket),
     )

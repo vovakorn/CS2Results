@@ -193,5 +193,30 @@ class TournamentRadar(BaseModel):
 
     tournament_id: str = Field(min_length=1, max_length=200)
     standings: list[str] = Field(default_factory=list, max_length=12)
+    standing_teams: list["RadarStandingTeam"] = Field(default_factory=list, max_length=12)
+    bracket_matches: list["RadarBracketMatch"] = Field(default_factory=list, max_length=4)
+    next_matches: list[UpcomingMatchNormalized] = Field(default_factory=list, max_length=4)
     roster_team_count: int = Field(default=0, ge=0, le=128)
     bracket_match_count: int = Field(default=0, ge=0, le=1000)
+
+
+class RadarStandingTeam(BaseModel):
+    """A ranked team with an optional official logo for radar media cards."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    rank: int = Field(ge=1, le=128)
+    name: str = Field(min_length=1, max_length=200)
+    logo_url: str | None = Field(default=None, max_length=2048)
+
+
+class RadarBracketMatch(BaseModel):
+    """A confirmed pair from PandaScore's bracket response."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    match_id: str = Field(min_length=1, max_length=200)
+    round_name: str | None = Field(default=None, max_length=200)
+    team1_name: str = Field(min_length=1, max_length=200)
+    team2_name: str = Field(min_length=1, max_length=200)
+    status: str | None = Field(default=None, max_length=50)

@@ -12,7 +12,7 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from .match_sources.models import MatchNormalized, UpcomingMatchNormalized
+from .match_sources.models import MatchNormalized, TournamentRadar, UpcomingMatchNormalized
 
 RESULT_CARD_SIZE = (1080, 1080)
 SCHEDULE_CARD_SIZE = (1080, 1080)
@@ -612,6 +612,126 @@ def _draw_compact_schedule_match(
         _fit_font(draw, event, x1 - x0 - 112, event_size, 10, display=True),
         MUTED,
     )
+
+
+def _radar_standing_entries(radar: TournamentRadar) -> list[tuple[int, str, str | None]]:
+    if radar.standing_teams:
+        return [(team.rank, team.name, team.logo_url) for team in radar.standing_teams[:4]]
+    entries: list[tuple[int, str, str | None]] = []
+    for line in radar.standings[:4]:
+        rank, separator, name = line.partition(".")
+        if separator and rank.strip().isdigit() and name.strip():
+            entries.append((int(rank.strip()), name.strip(), None))
+    return entries
+
+
+def _radar_header(canvas: Image.Image, draw: ImageDraw.ImageDraw, tournament_name: str, subtitle: str) -> None:
+    width, _ = canvas.size
+    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
+    _centered_text(draw, width // 2, 207, "ТУРНИРНЫЙ РАДАР", _font(44, display=True), WHITE)
+    _centered_text(
+        draw,
+        width // 2,
+        276,
+        tournament_name.upper(),
+        _fit_font(draw, tournament_name.upper(), 860, 28, 16, display=True),
+        CYAN,
+    )
+    _centered_text(draw, width // 2, 323, subtitle.upper(), _font(22, display=True), AMBER)
+
+
+def _draw_radar_standings(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar: TournamentRadar) -> None:
+    entries = _radar_standing_entries(radar)
+    if not entries:
+        _centered_text(draw, 540, 560, "ПОЛОЖЕНИЕ ПОКА НЕ ОПУБЛИКОВАНО", _font(24, display=True), MUTED)
+        return
+    row_height = 118
+    top = 386
+    for index, (rank, name, logo_url) in enumerate(entries):
+        y0 = top + index * (row_height + 14)
+        draw.rounded_rectangle((70, y0, 1010, y0 + row_height), radius=24, fill=(*PANEL, 238))
+        draw.rectangle(
+            (70, y0, 82, y0 + row_height),
+            fill=(*(CYAN if index % 2 == 0 else AMBER), 230),
+        )
+        _centered_text(draw, 128, y0 + 27, str(rank), _font(42), WHITE)
+        _draw_logo(canvas, draw, (235, y0 + 59), 78, name, logo_url, CYAN if index % 2 == 0 else AMBER)
+        _aligned_text(draw, 305, y0 + 37, name.upper(), _fit_font(draw, name.upper(), 530, 34, 18), WHITE, "left")
+
+
+def _draw_radar_bracket(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar: TournamentRadar) -> None:
+    if not radar.bracket_matches:
+        _draw_radar_standings(canvas, draw, radar)
+        return
+    _centered_text(draw, 540, 390, "ПОДТВЕРЖДЁННЫЕ ПАРЫ", _font(20, display=True), MUTED)
+    for index, match in enumerate(radar.bracket_matches[:2]):
+        y0 = 440 + index * 210
+        draw.rounded_rectangle((100, y0, 980, y0 + 160), radius=26, fill=(*PANEL, 238))
+        _aligned_text(
+            draw, 150, y0 + 38, match.team1_name.upper(),
+            _fit_font(draw, match.team1_name.upper(), 310, 32, 15), WHITE, "left"
+        )
+        _aligned_text(
+            draw, 930, y0 + 38, match.team2_name.upper(),
+            _fit_font(draw, match.team2_name.upper(), 310, 32, 15), WHITE, "right"
+        )
+        _centered_text(draw, 540, y0 + 40, "VS", _font(32, display=True), AMBER)
+        label = (match.round_name or "СЕТКА ТУРНИРА").upper()
+        _centered_text(
+            draw,
+            540,
+            y0 + 104,
+            label,
+            _fit_font(draw, label, 620, 17, 11, display=True),
+            MUTED,
+        )
+
+
+def _draw_radar_next_match(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar: TournamentRadar, timezone_name: str) -> None:
+    if not radar.next_matches:
+        _draw_radar_standings(canvas, draw, radar)
+        return
+    match = radar.next_matches[0]
+    try:
+        from zoneinfo import ZoneInfo
+        display_timezone = ZoneInfo(timezone_name)
+    except Exception:
+        display_timezone = timezone.utc
+    _draw_logo(canvas, draw, (235, 565), 190, match.team1_name, match.team1_logo_url, CYAN, match.team1_logo_fallback_url)
+    _draw_logo(canvas, draw, (845, 565), 190, match.team2_name, match.team2_logo_url, AMBER, match.team2_logo_fallback_url)
+    _centered_text(draw, 540, 510, "VS", _font(72, display=True), WHITE)
+    _centered_text(draw, 540, 596, _schedule_time(match, display_timezone), _font(44), AMBER)
+    _aligned_text(draw, 115, 700, match.team1_name.upper(), _fit_font(draw, match.team1_name.upper(), 270, 34, 16), WHITE, "left")
+    _aligned_text(draw, 965, 700, match.team2_name.upper(), _fit_font(draw, match.team2_name.upper(), 270, 34, 16), WHITE, "right")
+    best_of = f"BO{match.best_of}" if match.best_of else "ФОРМАТ УТОЧНЯЕТСЯ"
+    _centered_text(draw, 540, 755, best_of, _font(22, display=True), MUTED)
+
+
+def render_tournament_radar_card(
+    radar: TournamentRadar,
+    tournament_name: str,
+    timezone_name: str,
+    variant: str = "auto",
+) -> bytes:
+    """Render one of the branded radar cards without fabricating tournament data."""
+    if variant not in {"auto", "standings", "bracket", "next_match"}:
+        raise MediaCardError("Unsupported radar card variant")
+    chosen = variant
+    if chosen == "auto":
+        chosen = "next_match" if radar.next_matches else "bracket" if radar.bracket_matches else "standings"
+    canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    subtitles = {"standings": "ПОЛОЖЕНИЕ", "bracket": "ПЛЕЙ-ОФФ", "next_match": "СЛЕДУЮЩИЙ МАТЧ"}
+    _radar_header(canvas, draw, tournament_name, subtitles[chosen])
+    if chosen == "standings":
+        _draw_radar_standings(canvas, draw, radar)
+    elif chosen == "bracket":
+        _draw_radar_bracket(canvas, draw, radar)
+    else:
+        _draw_radar_next_match(canvas, draw, radar, timezone_name)
+    facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
+    _centered_text(draw, 540, 1007, facts, _fit_font(draw, facts, 900, 20, 13, display=True), MUTED)
+    return _as_png(canvas)
 
 
 def _as_png(image: Image.Image) -> bytes:
