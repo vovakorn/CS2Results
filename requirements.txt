@@ -1,8 +1,8 @@
 # Direct runtime dependencies.
 requests==2.34.2
 aiohttp==3.14.3
-beautifulsoup4==4.14.3
-boto3==1.43.16
+beautifulsoup4==4.15.0
+boto3==1.43.67
 pydantic==2.13.4
 Pillow==12.3.0
 
@@ -21,7 +21,7 @@ multidict==6.7.1
 propcache==0.5.2
 pydantic-core==2.46.4
 python-dateutil==2.9.0.post0
-s3transfer==0.17.1
+s3transfer==0.19.2
 six==1.17.0
 soupsieve==2.9.1
 typing-extensions==4.16.0
