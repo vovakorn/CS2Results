@@ -25,10 +25,10 @@ from .config import (
 from .logging_utils import log_event
 from .media_cards import (
     MAX_RESULT_MATCHES,
-    MAX_SCHEDULE_MATCHES,
+    MAX_SCHEDULE_TOTAL_MATCHES,
     render_result_card,
     render_results_card,
-    render_schedule_card,
+    render_schedule_cards,
 )
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
@@ -305,6 +305,87 @@ def send_photo_to_telegram(
         return data
 
     raise TelegramDeliveryError("Telegram photo request failed")
+
+
+def send_media_group_to_telegram(
+    chat_id: str | int,
+    photos: Sequence[bytes],
+    caption: str,
+    *,
+    filenames: Sequence[str] | None = None,
+    has_spoiler: bool = False,
+    timeout: int = 15,
+    max_attempts: int = 3,
+) -> Dict[str, Any]:
+    """Send two or more PNGs as one Telegram album."""
+    if not TELEGRAM_TOKEN:
+        raise TelegramDeliveryError("Telegram credentials are not configured")
+    if not 2 <= len(photos) <= 10:
+        raise TelegramDeliveryError("Telegram media group requires two to ten photos")
+    if any(not photo for photo in photos):
+        raise TelegramDeliveryError("Telegram media group contains an empty photo")
+    if len(caption) > MAX_TELEGRAM_CAPTION_LENGTH:
+        raise TelegramDeliveryError("Telegram media group caption is too long")
+    if filenames is None:
+        filenames = [f"cs2-schedule-{index}.png" for index in range(1, len(photos) + 1)]
+    if len(filenames) != len(photos):
+        raise TelegramDeliveryError("Telegram media group filenames do not match photos")
+
+    media = []
+    files = {}
+    for index, (photo, filename) in enumerate(zip(photos, filenames, strict=True)):
+        attachment_name = f"photo{index}"
+        item: Dict[str, Any] = {
+            "type": "photo",
+            "media": f"attach://{attachment_name}",
+            "has_spoiler": has_spoiler,
+        }
+        if index == 0:
+            item["caption"] = caption
+            item["parse_mode"] = "HTML"
+        media.append(item)
+        files[attachment_name] = (filename, photo, "image/png")
+
+    url = f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/sendMediaGroup"
+    payload = {"chat_id": str(chat_id), "media": json.dumps(media, ensure_ascii=False)}
+    attempts = max(1, max_attempts)
+    for attempt in range(1, attempts + 1):
+        try:
+            response = requests.post(
+                url,
+                data=payload,
+                files=files,
+                timeout=timeout,
+                allow_redirects=False,
+            )
+        except requests.RequestException as exc:
+            if attempt < attempts:
+                time.sleep(min(2 ** (attempt - 1), 4))
+                continue
+            raise TelegramDeliveryError("Telegram media group request failed") from exc
+
+        if response.status_code == 429 or response.status_code >= 500:
+            if attempt < attempts:
+                retry_after = 0
+                try:
+                    retry_after = int(response.json().get("parameters", {}).get("retry_after", 0))
+                except (TypeError, ValueError, AttributeError, requests.JSONDecodeError):
+                    retry_after = 0
+                time.sleep(min(max(retry_after, 2 ** (attempt - 1)), 5))
+                continue
+        if response.status_code >= 300:
+            raise TelegramDeliveryError(
+                f"Telegram API returned HTTP {response.status_code}"
+            )
+        try:
+            data = response.json()
+        except requests.JSONDecodeError as exc:
+            raise TelegramDeliveryError("Telegram API returned invalid JSON") from exc
+        if not isinstance(data, dict) or data.get("ok") is not True:
+            raise TelegramDeliveryError("Telegram API rejected the media group")
+        return data
+
+    raise TelegramDeliveryError("Telegram media group request failed")
 
 
 def _get_attr(obj: Any, key: str, default: str = "") -> str:
@@ -676,19 +757,19 @@ def _handle_content_job(
             )
         return {"statusCode": 200, "body": json.dumps(body, ensure_ascii=False)}
 
-    media_card: bytes | None = None
+    media_cards: list[bytes] = []
     media_card_error: str | None = None
     card_supported = (
-        job == "schedule" and 1 <= len(selected) <= MAX_SCHEDULE_MATCHES
+        job == "schedule" and 1 <= len(selected) <= MAX_SCHEDULE_TOTAL_MATCHES
     ) or (
         job == "digest" and 1 <= len(selected) <= MAX_RESULT_MATCHES
     )
     if TELEGRAM_MEDIA_CARDS and card_supported:
         try:
             if job == "schedule":
-                media_card = render_schedule_card(selected, local_now, DISPLAY_TIMEZONE)
+                media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
             else:
-                media_card = render_results_card(selected, local_now)
+                media_cards = [render_results_card(selected, local_now)]
         except Exception as exc:
             media_card_error = type(exc).__name__
             log_event(
@@ -719,7 +800,7 @@ def _handle_content_job(
             if claim is None:
                 duplicates += 1
                 continue
-            if media_card is not None:
+            if media_cards:
                 try:
                     if job == "schedule":
                         caption = format_schedule_photo_caption(local_now, len(selected))
@@ -731,13 +812,25 @@ def _handle_content_job(
                         has_spoiler = TELEGRAM_SPOILERS
                     if test_run_id:
                         caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
-                    send_photo_to_telegram(
-                        channel["chat_id"],
-                        media_card,
-                        caption,
-                        has_spoiler=has_spoiler,
-                        filename=filename,
-                    )
+                    if job == "schedule" and len(media_cards) > 1:
+                        filenames = [
+                            f"cs2-schedule-{day_key}-{index}-of-{len(media_cards)}.png"
+                            for index in range(1, len(media_cards) + 1)
+                        ]
+                        send_media_group_to_telegram(
+                            channel["chat_id"],
+                            media_cards,
+                            caption,
+                            filenames=filenames,
+                        )
+                    else:
+                        send_photo_to_telegram(
+                            channel["chat_id"],
+                            media_cards[0],
+                            caption,
+                            has_spoiler=has_spoiler,
+                            filename=filename,
+                        )
                 except Exception as exc:
                     media_card_error = type(exc).__name__
                     log_event(
@@ -797,7 +890,8 @@ def _handle_content_job(
         elif job == "digest":
             body["diagnostics"] = [_match_diagnostic(match) for match in selected]
         body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
-        body["media_card_ready"] = media_card is not None
+        body["media_card_ready"] = bool(media_cards)
+        body["media_card_count"] = len(media_cards)
         if media_card_error:
             body["media_card_error"] = media_card_error
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
