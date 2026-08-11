@@ -5,7 +5,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from . import config as source_config
@@ -19,11 +19,11 @@ SourceName = Literal["auto", "pandascore", "liquipedia"]
 logger = logging.getLogger(__name__)
 
 
-def _shadow_match_key(match: MatchNormalized) -> tuple[str, tuple[str, str]] | None:
-    match_datetime = match.end_date or match.date or match.start_date
-    if not match_datetime or len(match_datetime) < 10:
-        return None
-    teams = tuple(
+SHADOW_MATCH_TIME_WINDOW = timedelta(hours=12)
+
+
+def _shadow_match_teams(match: MatchNormalized) -> tuple[str, str]:
+    return tuple(
         sorted(
             (
                 match._identity_part(match.team1_name),
@@ -31,7 +31,11 @@ def _shadow_match_key(match: MatchNormalized) -> tuple[str, tuple[str, str]] | N
             )
         )
     )
-    return match_datetime[:10], teams
+
+
+def _shadow_match_datetime(match: MatchNormalized) -> datetime | None:
+    """Use scheduled/start time so matches crossing midnight stay comparable."""
+    return _parse_match_datetime(match.start_date or match.date or match.end_date)
 
 
 def _score_by_team(match: MatchNormalized) -> dict[str, int | None]:
@@ -46,11 +50,9 @@ def compare_source_matches(
     liquipedia_matches: list[MatchNormalized],
 ) -> dict[str, int]:
     """Compare providers without affecting source selection or publication."""
-    shadow_by_key: dict[tuple[str, tuple[str, str]], list[MatchNormalized]] = {}
+    shadow_by_teams: dict[tuple[str, str], list[MatchNormalized]] = {}
     for match in liquipedia_matches:
-        key = _shadow_match_key(match)
-        if key is not None:
-            shadow_by_key.setdefault(key, []).append(match)
+        shadow_by_teams.setdefault(_shadow_match_teams(match), []).append(match)
 
     matched = 0
     score_mismatches = 0
@@ -60,11 +62,24 @@ def compare_source_matches(
     liquipedia_technical_results = 0
 
     for primary in primary_matches:
-        key = _shadow_match_key(primary)
-        candidates = shadow_by_key.get(key, []) if key is not None else []
+        primary_datetime = _shadow_match_datetime(primary)
+        if primary_datetime is None:
+            continue
+        candidates = shadow_by_teams.get(_shadow_match_teams(primary), [])
+        timed_candidates = [
+            candidate
+            for candidate in candidates
+            if (candidate_datetime := _shadow_match_datetime(candidate)) is not None
+            and abs(candidate_datetime - primary_datetime) <= SHADOW_MATCH_TIME_WINDOW
+        ]
+        candidates = timed_candidates
         if not candidates:
             continue
-        shadow = candidates.pop(0)
+        shadow = min(
+            candidates,
+            key=lambda candidate: abs(_shadow_match_datetime(candidate) - primary_datetime),
+        )
+        shadow_by_teams[_shadow_match_teams(primary)].remove(shadow)
         matched += 1
         if _score_by_team(primary) != _score_by_team(shadow):
             score_mismatches += 1

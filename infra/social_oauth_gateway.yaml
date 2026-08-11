@@ -1,0 +1,152 @@
+openapi: 3.0.0
+info:
+  title: CS2 Results Social OAuth
+  version: 1.0.0
+
+x-yc-apigateway:
+  service_account_id: ajem0b1cksn4c9ggmjfh
+  ignoreTrailingSlashes: true
+
+paths:
+  /health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          description: OAuth service health
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/instagram/start:
+    get:
+      operationId: instagramStart
+      responses:
+        "302":
+          description: Start Instagram OAuth
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/instagram/callback:
+    get:
+      operationId: instagramCallback
+      responses:
+        "200":
+          description: Complete Instagram OAuth
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/instagram/deauthorize:
+    post:
+      operationId: instagramDeauthorize
+      responses:
+        "200":
+          description: Remove Instagram authorization
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/instagram/data-deletion:
+    post:
+      operationId: instagramDataDeletion
+      responses:
+        "200":
+          description: Delete Instagram authorization data
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/instagram/deletion-status:
+    get:
+      operationId: instagramDeletionStatus
+      responses:
+        "200":
+          description: Instagram deletion status
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/threads/start:
+    get:
+      operationId: threadsStart
+      responses:
+        "302":
+          description: Start Threads OAuth
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/threads/callback:
+    get:
+      operationId: threadsCallback
+      responses:
+        "200":
+          description: Complete Threads OAuth
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/threads/deauthorize:
+    post:
+      operationId: threadsDeauthorize
+      responses:
+        "200":
+          description: Remove Threads authorization
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/threads/data-deletion:
+    post:
+      operationId: threadsDataDeletion
+      responses:
+        "200":
+          description: Delete Threads authorization data
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"
+
+  /oauth/meta/threads/deletion-status:
+    get:
+      operationId: threadsDeletionStatus
+      responses:
+        "200":
+          description: Threads deletion status
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: d4e6hiphvatsctisunm9
+        tag: production
+        service_account_id: ajem0b1cksn4c9ggmjfh
+        payload_format_version: "1.0"

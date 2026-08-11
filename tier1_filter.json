@@ -90,7 +90,25 @@
     "team vitality": "vitality",
     "vitality": "vitality",
     "g2 esports": "g2",
-    "g2": "g2"
+    "g2": "g2",
+    "phantom esports": "phantom",
+    "phantom": "phantom",
+    "prestige esport": "prestige",
+    "prestige": "prestige",
+    "astral esports": "astral",
+    "astral": "astral",
+    "inner circle esports": "inner circle",
+    "ic esports": "inner circle",
+    "sinners esports": "sinners",
+    "sinners": "sinners",
+    "1w team": "1win",
+    "1win": "1win",
+    "team liquid": "liquid",
+    "liquid": "liquid",
+    "alka esports": "alka",
+    "alka gaming": "alka",
+    "pain gaming academy": "pain academy",
+    "pain academy": "pain academy"
   },
   "prize_pool_threshold_usd": 500000
 }

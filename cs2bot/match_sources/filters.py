@@ -109,18 +109,19 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
 
     if excluded_team:
         return False, "excluded_team"
+    if match.is_lan is False:
+        return False, "explicitly_not_lan"
+    if excluded:
+        return False, "excluded_tournament"
 
     tier1_confirmed = is_tier1_candidate(match)
-    if not excluded and tier1_confirmed and _matches_trusted_phase(
+    if tier1_confirmed and _matches_trusted_phase(
         match.tournament_name,
         TRUSTED_ONLINE_TIER1_TOURNAMENT_PHASE_PATTERNS,
     ):
         return True, None
 
-    if match.is_lan is False:
-        lan_confirmed = False
-        lan_reason = "explicitly_not_lan"
-    elif match.is_lan is True:
+    if match.is_lan is True:
         lan_confirmed = True
         lan_reason = None
     elif any(marker in location_lower for marker in ONLINE_LOCATION_MARKERS):
@@ -129,9 +130,6 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     elif any(marker in tournament_lower for marker in ONLINE_LOCATION_MARKERS):
         lan_confirmed = False
         lan_reason = "online_tournament"
-    elif excluded:
-        lan_confirmed = False
-        lan_reason = "excluded_tournament"
     elif location.strip():
         lan_confirmed = True
         lan_reason = None

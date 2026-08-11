@@ -52,7 +52,9 @@
     "natus vincere": "navi",
     "navi": "navi",
     "faze clan": "faze",
-    "faze": "faze"
+    "faze": "faze",
+    "team liquid": "liquid",
+    "liquid": "liquid"
   },
   "prize_pool_threshold_usd": 500000
 }
