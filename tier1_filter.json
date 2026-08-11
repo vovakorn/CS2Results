@@ -63,6 +63,10 @@
     "youth",
     "junior"
   ],
+  "tier1_autopilot_tiers": [
+    "s",
+    "a"
+  ],
   "popular_teams": [
     "Natus Vincere",
     "NAVI",

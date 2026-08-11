@@ -7,6 +7,7 @@ from cs2bot.match_sources.filters import (
     is_tier1_candidate,
     is_tier1_lan,
     is_valid_match,
+    tier1_autopilot_decision,
 )
 from cs2bot.match_sources.models import MatchNormalized, UpcomingMatchNormalized
 
@@ -86,6 +87,13 @@ def test_implausible_unknown_series_score_is_rejected():
 
 def test_iem_is_tier1_lan():
     assert is_tier1_lan(_match(tournament_name="IEM Cologne 2026")) == (True, None)
+
+
+def test_tier1_autopilot_is_shadow_only_and_respects_exclusions():
+    assert tier1_autopilot_decision(_match(tournament_tier="s")) == (True, "pandascore_tier_s")
+    assert tier1_autopilot_decision(
+        _match(tournament_tier="s", tournament_name="IEM Closed Qualifier")
+    ) == (False, "excluded_tournament")
 
 
 def test_tier1_event_without_lan_evidence_is_rejected():

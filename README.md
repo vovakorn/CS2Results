@@ -31,6 +31,7 @@
 | `DELIVERY_CLAIM_TTL_SECONDS` | Срок lease атомарного delivery claim, по умолчанию `300`. |
 | `ALERT_COOLDOWN_SECONDS` | Минимальный интервал между одинаковыми алертами, по умолчанию `21600` (6 часов). |
 | `MAX_SOURCE_RESPONSE_BYTES` | Максимальный размер ответа внешнего источника, по умолчанию `5000000`. |
+| `SCHEDULE_CONTEXT_MATCH_LIMIT` | Сколько главных матчей получат follow-up с формой и ожидаемыми составами после расписания; по умолчанию `3`. |
 
 Опционально:
 
@@ -131,6 +132,13 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 - `job=results`: новые подтверждённые Tier-1 LAN результаты.
 - `job=schedule`: один утренний выпуск с Tier-1 матчами и матчами популярных команд.
 - `job=digest`: один вечерний выпуск с итогами Tier-1 LAN; пустой выпуск не публикуется.
+- `job=radar`: ручной или отдельный timer-выпуск по одному турниру; требует `tournament_id` и необязательное `tournament_name`.
+
+`tournament_tier` PandaScore теперь виден в dry-run как
+`tier1_autopilot_selected` и `tier1_autopilot_reason`. Это shadow-сигнал:
+он не изменяет production-отбор и всегда уступает исключениям qualifier,
+academy и youth. Список tiers задаётся в `tier1_autopilot_tiers` в фильтр-конфиге
+(по умолчанию `s`, `a`).
 
 Для диагностики расписания `include_filtered=true` возвращает в `diagnostics`
 все полученные матчи с полями `selected` и `filter_reason`. Параметр
@@ -148,6 +156,21 @@ processed/{channel_id}_match_v1_{fingerprint}.json
   "days_ahead": 3
 }
 ```
+
+Безопасная проверка турнирного радара:
+
+```json
+{
+  "job": "radar",
+  "tournament_id": 3,
+  "tournament_name": "IEM Cologne 2026",
+  "dry_run": true
+}
+```
+
+После расписания бот пробует дать компактный контекст только к главным матчам:
+форму за пять завершённых серий и размер ожидаемых tournament rosters. Ошибка
+контекста не блокирует основной выпуск расписания и не создаёт отдельный retry.
 
 При `TELEGRAM_MEDIA_CARDS=1` результаты отправляются как квадратные PNG со
 спойлером на всём изображении, а счёт и победитель в подписи остаются скрыты

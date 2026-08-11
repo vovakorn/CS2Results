@@ -40,6 +40,10 @@
     "youth",
     "junior"
   ],
+  "tier1_autopilot_tiers": [
+    "s",
+    "a"
+  ],
   "popular_teams": [
     "NAVI",
     "Team Spirit",
