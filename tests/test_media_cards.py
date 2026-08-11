@@ -147,6 +147,73 @@ def test_schedule_card_rejects_more_than_ten_matches():
         )
 
 
+def test_schedule_album_balances_sixteen_matches_into_two_pages():
+    matches = [
+        _upcoming(str(index)).model_copy(
+            update={"scheduled_at": f"2026-07-31T{index:02d}:00:00Z"}
+        )
+        for index in range(16)
+    ]
+
+    pages = media_cards.paginate_schedule_matches(list(reversed(matches)))
+
+    assert [len(page) for page in pages] == [8, 8]
+    assert [match.match_id for match in pages[0]] == [str(index) for index in range(8)]
+    assert [match.match_id for match in pages[1]] == [str(index) for index in range(8, 16)]
+
+
+def test_schedule_album_balances_odd_match_count():
+    pages = media_cards.paginate_schedule_matches(
+        [_upcoming(str(index)) for index in range(15)]
+    )
+
+    assert [len(page) for page in pages] == [8, 7]
+
+
+def test_schedule_album_renders_two_square_pngs_for_sixteen_matches():
+    cards = media_cards.render_schedule_cards(
+        [_upcoming(str(index)) for index in range(16)],
+        media_cards.datetime.fromisoformat("2026-08-12T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert len(cards) == 2
+    for data in cards:
+        image = Image.open(io.BytesIO(data))
+        assert image.format == "PNG"
+        assert image.size == media_cards.SCHEDULE_CARD_SIZE
+
+
+def test_schedule_album_marks_page_number_in_date_line(monkeypatch):
+    centered = []
+    original = media_cards._centered_text
+
+    def capture(draw, center_x, y, text, font, fill):
+        centered.append((y, text))
+        return original(draw, center_x, y, text, font, fill)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture)
+
+    media_cards.render_schedule_card(
+        [_upcoming(str(index)) for index in range(8)],
+        media_cards.datetime.fromisoformat("2026-08-12T10:00:00+03:00"),
+        "Europe/Moscow",
+        page_number=2,
+        page_count=2,
+    )
+
+    assert (286, "12 АВГУСТА · 2/2") in centered
+
+
+def test_schedule_album_rejects_more_than_twenty_matches():
+    with pytest.raises(media_cards.MediaCardError, match="twenty"):
+        media_cards.render_schedule_cards(
+            [_upcoming(str(index)) for index in range(21)],
+            media_cards.datetime.fromisoformat("2026-08-12T10:00:00+03:00"),
+            "Europe/Moscow",
+        )
+
+
 def test_header_accent_lines_are_mirrored_to_the_outer_edges():
     cyan, amber = media_cards._header_accent_segments(1080)
 

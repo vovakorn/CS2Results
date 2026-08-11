@@ -685,6 +685,40 @@ def test_telegram_photo_rejects_caption_over_limit():
         )
 
 
+def test_telegram_media_group_uses_multipart_attachments(monkeypatch):
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True, "result": []}
+
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(main.requests, "post", fake_post)
+
+    main.send_media_group_to_telegram(
+        "chat",
+        [b"page-1", b"page-2"],
+        "<b>16 матчей</b>",
+        filenames=["schedule-1.png", "schedule-2.png"],
+        max_attempts=1,
+    )
+
+    media = json.loads(seen["data"]["media"])
+    assert seen["url"].endswith("/sendMediaGroup")
+    assert media[0]["media"] == "attach://photo0"
+    assert media[0]["caption"] == "<b>16 матчей</b>"
+    assert "caption" not in media[1]
+    assert seen["files"]["photo0"] == ("schedule-1.png", b"page-1", "image/png")
+    assert seen["files"]["photo1"] == ("schedule-2.png", b"page-2", "image/png")
+    assert seen["allow_redirects"] is False
+
+
 def test_telegram_network_exception_never_exposes_token(monkeypatch):
     monkeypatch.setattr(main, "TELEGRAM_TOKEN", "123456:SECRET")
 
@@ -977,7 +1011,7 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
-    monkeypatch.setattr(main, "render_schedule_card", lambda *args, **kwargs: b"card")
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"card"])
     monkeypatch.setattr(
         main,
         "send_photo_to_telegram",
@@ -996,6 +1030,104 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     assert claimed[0].endswith("_test_media-card-20260731")
     assert sent_photos[0][0][1] == b"card"
     assert sent_photos[0][0][2].startswith("🧪 <b>Тестовая карточка</b>")
+
+
+def test_busy_schedule_is_sent_as_one_two_card_album(monkeypatch):
+    claimed = []
+    albums = []
+    marked = []
+    matches = [
+        _upcoming().model_copy(update={"match_id": f"match-{index}"})
+        for index in range(16)
+    ]
+
+    async def fake_fetch(start, end):
+        return matches
+
+    async def fake_claim(content_uid):
+        claimed.append(content_uid)
+        return "claim"
+
+    async def fake_mark(content_uid, job):
+        marked.append((content_uid, job))
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat"}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(
+        main,
+        "render_schedule_cards",
+        lambda *args, **kwargs: [b"page-1", b"page-2"],
+    )
+    monkeypatch.setattr(
+        main,
+        "send_media_group_to_telegram",
+        lambda *args, **kwargs: albums.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: pytest.fail("busy schedule must use an album"),
+    )
+
+    response = main.handler({"job": "schedule"}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["matches_selected"] == 16
+    assert body["messages_sent"] == 1
+    assert albums[0][0][1] == [b"page-1", b"page-2"]
+    assert albums[0][0][2] == main.format_schedule_photo_caption(
+        main._local_day_window()[2], 16
+    )
+    assert albums[0][1]["filenames"][0].endswith("-1-of-2.png")
+    assert albums[0][1]["filenames"][1].endswith("-2-of-2.png")
+    assert marked == [(claimed[0], "schedule")]
+
+
+def test_busy_schedule_album_failure_falls_back_to_text(monkeypatch):
+    sent_text = []
+    matches = [
+        _upcoming().model_copy(update={"match_id": f"match-{index}"})
+        for index in range(16)
+    ]
+
+    async def fake_fetch(start, end):
+        return matches
+
+    async def fake_claim(content_uid):
+        return "claim"
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat"}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(
+        main,
+        "render_schedule_cards",
+        lambda *args, **kwargs: [b"page-1", b"page-2"],
+    )
+    monkeypatch.setattr(
+        main,
+        "send_media_group_to_telegram",
+        lambda *args, **kwargs: (_ for _ in ()).throw(main.TelegramDeliveryError("failed")),
+    )
+    monkeypatch.setattr(
+        main,
+        "send_to_telegram",
+        lambda chat_id, text: sent_text.append((chat_id, text)),
+    )
+
+    response = main.handler({"job": "schedule"}, None)
+
+    assert response["statusCode"] == 200
+    assert sent_text and sent_text[0][0] == "chat"
 
 
 @pytest.mark.parametrize(

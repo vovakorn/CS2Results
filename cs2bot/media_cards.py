@@ -18,6 +18,7 @@ RESULT_CARD_SIZE = (1080, 1080)
 SCHEDULE_CARD_SIZE = (1080, 1080)
 MAX_RESULT_MATCHES = 10
 MAX_SCHEDULE_MATCHES = 10
+MAX_SCHEDULE_TOTAL_MATCHES = 20
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
 LOGO_HOSTS = {
@@ -929,10 +930,15 @@ def render_schedule_card(
     matches: Sequence[UpcomingMatchNormalized],
     local_now: datetime,
     timezone_name: str,
+    *,
+    page_number: int = 1,
+    page_count: int = 1,
 ) -> bytes:
     """Render a square daily schedule with an adaptive one- or two-column grid."""
     if not matches or len(matches) > MAX_SCHEDULE_MATCHES:
         raise MediaCardError("Schedule card supports between one and ten matches")
+    if page_count < 1 or page_number < 1 or page_number > page_count:
+        raise MediaCardError("Schedule card page information is invalid")
     try:
         from zoneinfo import ZoneInfo
 
@@ -946,11 +952,14 @@ def render_schedule_card(
     _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
     header_center = width // 2
     _centered_text(draw, header_center, 207, "МАТЧИ CS2 СЕГОДНЯ", _font(44, display=True), WHITE)
+    date_label = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
+    if page_count > 1:
+        date_label = f"{date_label} · {page_number}/{page_count}"
     _centered_text(
         draw,
         header_center,
         286,
-        f"{local_now.day} {MONTH_NAMES[local_now.month]}",
+        date_label,
         _font(27, display=True),
         CYAN,
     )
@@ -995,3 +1004,36 @@ def render_schedule_card(
         MUTED,
     )
     return _as_png(canvas)
+
+
+def paginate_schedule_matches(
+    matches: Sequence[UpcomingMatchNormalized],
+) -> list[list[UpcomingMatchNormalized]]:
+    """Split a busy schedule into one or two chronological, balanced pages."""
+    if not matches or len(matches) > MAX_SCHEDULE_TOTAL_MATCHES:
+        raise MediaCardError("Schedule album supports between one and twenty matches")
+    sorted_matches = sorted(matches, key=lambda item: item.scheduled_at)
+    if len(sorted_matches) <= MAX_SCHEDULE_MATCHES:
+        return [sorted_matches]
+    first_page_size = math.ceil(len(sorted_matches) / 2)
+    return [sorted_matches[:first_page_size], sorted_matches[first_page_size:]]
+
+
+def render_schedule_cards(
+    matches: Sequence[UpcomingMatchNormalized],
+    local_now: datetime,
+    timezone_name: str,
+) -> list[bytes]:
+    """Render one schedule card or a balanced two-card album for 11–20 matches."""
+    pages = paginate_schedule_matches(matches)
+    page_count = len(pages)
+    return [
+        render_schedule_card(
+            page,
+            local_now,
+            timezone_name,
+            page_number=index,
+            page_count=page_count,
+        )
+        for index, page in enumerate(pages, start=1)
+    ]
