@@ -59,6 +59,34 @@ class FakeS3:
         return {"ETag": etag}
 
 
+class FakeUnquotedETagS3(FakeS3):
+    """Emulate an S3-compatible endpoint that compares ETags without quotes."""
+
+    def put_object(self, *args, IfMatch=None, **kwargs):
+        if IfMatch:
+            if IfMatch.startswith('"'):
+                raise ClientError(
+                    {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}},
+                    "PutObject",
+                )
+            key = kwargs["Key"]
+            existing = self.objects.get(key)
+            if existing and existing["ETag"].strip('"') != IfMatch:
+                raise ClientError(
+                    {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}},
+                    "PutObject",
+                )
+            original = existing["ETag"] if existing else None
+            if existing:
+                existing["ETag"] = IfMatch
+            try:
+                return super().put_object(*args, IfMatch=IfMatch, **kwargs)
+            finally:
+                if existing and original is not None:
+                    existing["ETag"] = original
+        return super().put_object(*args, IfMatch=IfMatch, **kwargs)
+
+
 def _match():
     return MatchNormalized(
         source="hltv",
@@ -168,6 +196,29 @@ def test_expired_delivery_claim_is_atomically_reclaimed():
     assert reclaimed is not None
     assert reclaimed.claim_id != first.claim_id
     assert reclaimed.etag != first.etag
+
+
+def test_expired_delivery_claim_retries_unquoted_etag_for_compatible_s3_endpoint():
+    s3 = FakeUnquotedETagS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+    reclaimed = asyncio.run(
+        claim_channel_delivery(
+            match,
+            "global",
+            client=s3,
+            bucket="bucket",
+            now=now + timedelta(minutes=6),
+        )
+    )
+
+    assert first is not None
+    assert reclaimed is not None
+    assert reclaimed.claim_id != first.claim_id
 
 
 def test_admin_alert_is_claimed_only_once_per_cooldown_window():
