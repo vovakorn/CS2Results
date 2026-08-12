@@ -15,6 +15,7 @@ LIQUIPEDIA_SECRET_ID="${YC_LIQUIPEDIA_SECRET_ID:-}"
 LIQUIPEDIA_SECRET_VERSION_ID="${YC_LIQUIPEDIA_SECRET_VERSION_ID:-}"
 LIQUIPEDIA_SECRET_KEY="${YC_LIQUIPEDIA_SECRET_KEY:-LIQUIPEDIA_API_KEY}"
 LIQUIPEDIA_SHADOW_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_SHADOW:-}"
+TARGET_EXECUTION_TIMEOUT="${YC_EXECUTION_TIMEOUT:-120s}"
 
 readonly -a REQUIRED_ENVIRONMENT=(
   ALERT_COOLDOWN_SECONDS
@@ -197,7 +198,7 @@ build_create_arguments() {
     --function-id "${FUNCTION_ID}"
     --runtime "$(jq_from "${version_json}" '.runtime')"
     --entrypoint "$(jq_from "${version_json}" '.entrypoint')"
-    --execution-timeout "$(jq_from "${version_json}" '.execution_timeout')"
+    --execution-timeout "${TARGET_EXECUTION_TIMEOUT}"
     --source-path "${zip_path}"
     --tags "${CANDIDATE_TAG}"
     --description "Safe deploy from production version $(jq_from "${version_json}" '.id')"

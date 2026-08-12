@@ -150,7 +150,7 @@ def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
         assert kwargs["dry_run"] is True
         return [_match()]
 
-    def fake_send(chat_id, text, timeout=7):
+    def fake_send(chat_id, text, timeout=7, max_attempts=3):
         sent.append((chat_id, text))
 
     async def fake_mark(match, channel_name):
@@ -235,7 +235,47 @@ def test_result_uses_spoiler_photo_when_media_cards_enabled(monkeypatch):
     assert sent_text == []
     assert sent_photos[0][0][1] == b"card"
     assert sent_photos[0][1]["has_spoiler"] is True
+    assert sent_photos[0][1]["timeout"] == main.RESULT_TELEGRAM_TIMEOUT_SECONDS
+    assert sent_photos[0][1]["max_attempts"] == main.RESULT_TELEGRAM_MAX_ATTEMPTS
     assert "<tg-spoiler>2 : 1</tg-spoiler>" in sent_photos[0][0][2]
+
+
+def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch):
+    sent_text = []
+    match = _match()
+    monotonic_values = iter([0.0, main.RESULT_MEDIA_BUDGET_SECONDS + 1.0])
+
+    async def fake_get_new_finished_matches(**kwargs):
+        return [match]
+
+    async def fake_claim(*args, **kwargs):
+        return _claim(match, "global")
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(main, "_monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(
+        main,
+        "render_result_card",
+        lambda item: pytest.fail("card rendering must be skipped after the soft budget"),
+    )
+    monkeypatch.setattr(
+        main,
+        "send_to_telegram",
+        lambda *args, **kwargs: sent_text.append((args, kwargs)),
+    )
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 200
+    assert sent_text[0][1]["timeout"] == main.RESULT_TELEGRAM_TIMEOUT_SECONDS
+    assert sent_text[0][1]["max_attempts"] == main.RESULT_TELEGRAM_MAX_ATTEMPTS
 
 
 def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):
@@ -371,7 +411,7 @@ def test_handler_marks_processed_after_successful_send(monkeypatch):
         assert kwargs["dry_run"] is False
         return [_match()]
 
-    def fake_send(chat_id, text, timeout=7):
+    def fake_send(chat_id, text, timeout=7, max_attempts=3):
         sent.append((chat_id, text))
         return {"ok": True}
 
@@ -404,7 +444,7 @@ def test_handler_skips_channel_duplicate(monkeypatch):
         assert kwargs["check_processed"] is False
         return [_match()]
 
-    def fake_send(chat_id, text, timeout=7):
+    def fake_send(chat_id, text, timeout=7, max_attempts=3):
         sent.append((chat_id, text))
 
     async def fake_claim(match, channel_id, legacy_channel_name=None):
@@ -436,7 +476,7 @@ def test_handler_does_not_mark_when_send_fails(monkeypatch):
     async def fake_get_new_finished_matches(**kwargs):
         return [_match()]
 
-    def fake_send(chat_id, text, timeout=7):
+    def fake_send(chat_id, text, timeout=7, max_attempts=3):
         raise RuntimeError("telegram failed")
 
     async def fake_claim(match, channel_id, legacy_channel_name=None):
@@ -469,7 +509,7 @@ def test_handler_marks_successful_channel_before_later_channel_fails(monkeypatch
     async def fake_get_new_finished_matches(**kwargs):
         return [_match()]
 
-    def fake_send(chat_id, text, timeout=7):
+    def fake_send(chat_id, text, timeout=7, max_attempts=3):
         sent.append(chat_id)
         if chat_id == "chat-b":
             raise RuntimeError("telegram failed")
@@ -515,7 +555,7 @@ def test_debug_mode_cannot_publish_filtered_matches(monkeypatch):
         assert kwargs["include_filtered"] is False
         return [filtered]
 
-    def fake_send(chat_id, text, timeout=7):
+    def fake_send(chat_id, text, timeout=7, max_attempts=3):
         sent.append((chat_id, text))
 
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
