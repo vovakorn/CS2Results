@@ -6,6 +6,7 @@ import requests
 from cs2bot import main
 from cs2bot.match_sources.models import (
     MapResult,
+    HeadToHead,
     MatchNormalized,
     ScheduleMatchContext,
     TeamForm,
@@ -843,22 +844,41 @@ def test_schedule_is_formatted_in_moscow_time():
     assert "московск" not in text.casefold()
 
 
-def test_schedule_context_includes_form_and_expected_rosters():
+def test_schedule_context_explains_form_and_series_format():
     match = _upcoming()
     context = ScheduleMatchContext(
         match_id=match.match_id,
         tournament_id="3",
         team1_form=TeamForm(team_name="NAVI", wins=4, losses=1),
         team2_form=TeamForm(team_name="FaZe", wins=2, losses=3),
+        head_to_head=HeadToHead(match_count=3, team1_wins=2, team2_wins=1),
         team1_roster_size=5,
         team2_roster_size=5,
     )
 
     text = main.format_schedule_context([match], {match.match_id: context})
 
-    assert "Контекст к главным матчам" in text
-    assert "Форма (5): 4–1 · 2–3" in text
-    assert "Ожидаемые составы: 5 × 5" in text
+    assert "Контекст к матчам дня" in text
+    assert "Последние 5 матчей: NAVI — 4 победы и 1 поражение; FaZe — 2 победы и 3 поражения." in text
+    assert "не рейтинг команд и не прогноз" in text
+    assert "Очные встречи: 2–1 в пользу NAVI (3 последних матча)." in text
+    assert "Bo3: для победы нужно выиграть большинство карт." in text
+
+
+def test_schedule_context_does_not_turn_recent_results_into_a_prediction():
+    match = _upcoming().model_copy(update={"best_of": 1})
+    context = ScheduleMatchContext(
+        match_id=match.match_id,
+        tournament_id="3",
+        team1_form=TeamForm(team_name="NAVI", wins=4, losses=1),
+        team2_form=TeamForm(team_name="FaZe", wins=4, losses=1),
+    )
+
+    text = main.format_schedule_context([match], {match.match_id: context})
+
+    assert "явного фаворита" not in text
+    assert "не рейтинг команд и не прогноз" in text
+    assert "Bo1: одна карта решает исход матча." in text
 
 
 def test_tournament_radar_formats_standings_without_raw_ids():
@@ -899,7 +919,7 @@ def test_schedule_dry_run_includes_optional_context(monkeypatch):
 
     assert response["statusCode"] == 200
     assert body["context_matches_ready"] == 1
-    assert "Форма (5): 3–2 · 4–1" in body["context_preview"]
+    assert "Последние 5 матчей: NAVI — 3 победы и 2 поражения; FaZe — 4 победы и 1 поражение." in body["context_preview"]
 
 
 def test_radar_dry_run_returns_preview_without_sending(monkeypatch):

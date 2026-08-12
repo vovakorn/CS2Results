@@ -53,6 +53,7 @@ class MatchNormalized(BaseModel):
     match_url: str | None = Field(default=None, max_length=2048)
 
     tournament_name: str = Field(min_length=1, max_length=300)
+    tournament_logo_url: str | None = Field(default=None, max_length=2048)
     competition_key: str | None = Field(default=None, max_length=300)
     source_refs: SourceReferences | None = None
     tournament_tier: Literal["s", "a", "b", "c", "d"] | None = None
@@ -145,6 +146,7 @@ class UpcomingMatchNormalized(BaseModel):
     source: Literal["pandascore"] = "pandascore"
     match_id: str = Field(min_length=1, max_length=200)
     tournament_name: str = Field(min_length=1, max_length=300)
+    tournament_logo_url: str | None = Field(default=None, max_length=2048)
     competition_key: str | None = Field(default=None, max_length=300)
     source_refs: SourceReferences | None = None
     tournament_tier: Literal["s", "a", "b", "c", "d"] | None = None
@@ -173,6 +175,16 @@ class TeamForm(BaseModel):
     losses: int = Field(default=0, ge=0, le=20)
 
 
+class HeadToHead(BaseModel):
+    """Recent completed series between the two scheduled teams."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    match_count: int = Field(ge=2, le=10)
+    team1_wins: int = Field(default=0, ge=0, le=10)
+    team2_wins: int = Field(default=0, ge=0, le=10)
+
+
 class ScheduleMatchContext(BaseModel):
     """Optional pre-match context; failures must not block the schedule."""
 
@@ -182,6 +194,7 @@ class ScheduleMatchContext(BaseModel):
     tournament_id: str | None = Field(default=None, max_length=200)
     team1_form: TeamForm
     team2_form: TeamForm
+    head_to_head: HeadToHead | None = None
     team1_roster_size: int | None = Field(default=None, ge=0, le=20)
     team2_roster_size: int | None = Field(default=None, ge=0, le=20)
 

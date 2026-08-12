@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Sequence
@@ -183,7 +184,7 @@ def _safe_logo_url(value: str | None) -> str | None:
         or parsed.password
         or port not in (None, 443)
         or (parsed.hostname or "").casefold() not in LOGO_HOSTS
-        or not parsed.path.startswith("/images/team/image/")
+        or not re.match(r"^/images/(?:team|league|serie|tournament)/image/", parsed.path)
     ):
         return None
     return value
@@ -407,6 +408,89 @@ def _draw_logo(
     )
 
 
+def _draw_tournament_logo(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    center: tuple[int, int],
+    diameter: int,
+    logo_url: str | None,
+) -> None:
+    """Draw an official event mark when PandaScore provides one; never invent it."""
+    if not logo_url:
+        return
+    try:
+        logo = fetch_team_logo(logo_url)
+    except MediaCardError as exc:
+        logger.warning(
+            "tournament_logo_unavailable host=%s error=%s",
+            urlparse(logo_url).hostname or "missing",
+            exc,
+        )
+        return
+    if logo is None:
+        return
+    _draw_logo_plate(draw, center, diameter, CYAN, _logo_plate_fill(logo))
+    contained = ImageOps.contain(logo, (int(diameter * 0.64), int(diameter * 0.64)))
+    canvas.alpha_composite(
+        contained,
+        (center[0] - contained.width // 2, center[1] - contained.height // 2),
+    )
+
+
+def _schedule_tournament_header(
+    matches: Sequence[UpcomingMatchNormalized],
+) -> tuple[str, str | None]:
+    """Return one truthful event label for the whole card, or a neutral mixed-day label."""
+    labels: dict[str, tuple[str, str | None]] = {}
+    for match in matches:
+        # Keep the full title, including the stage. It is the same source of truth
+        # as the individual fixture cards and avoids silently merging group and
+        # playoff matches under one series name.
+        label = match.tournament_name
+        labels.setdefault(label.casefold(), (label, match.tournament_logo_url))
+    if len(labels) == 1:
+        return next(iter(labels.values()))
+    return "ТУРНИРЫ ДНЯ", None
+
+
+def _draw_schedule_header(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    matches: Sequence[UpcomingMatchNormalized],
+    local_now: datetime,
+    page_number: int,
+    page_count: int,
+) -> None:
+    width, _ = canvas.size
+    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
+    _centered_text(draw, width // 2, 197, "МАТЧИ CS2 СЕГОДНЯ", _font(36, display=True), WHITE)
+    tournament_name, tournament_logo_url = _schedule_tournament_header(matches)
+    tournament_text = tournament_name.upper()
+    tournament_font = _fit_font(
+        draw,
+        tournament_text,
+        800 if tournament_logo_url else 900,
+        36,
+        18,
+        display=True,
+    )
+    if tournament_logo_url:
+        text_box = draw.textbbox((0, 0), tournament_text, font=tournament_font)
+        text_width = text_box[2] - text_box[0]
+        group_width = 54 + 16 + text_width
+        logo_x = width // 2 - group_width // 2 + 27
+        text_center_x = logo_x + 27 + 16 + text_width // 2
+        _draw_tournament_logo(canvas, draw, (logo_x, 268), 54, tournament_logo_url)
+    else:
+        text_center_x = width // 2
+    _centered_text(draw, text_center_x, 254, tournament_text, tournament_font, CYAN)
+
+    date_label = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
+    if page_count > 1:
+        date_label = f"{date_label} · {page_number}/{page_count}"
+    _centered_text(draw, width // 2, 315, date_label, _font(22, display=True), AMBER)
+
+
 def _draw_channel_logo(
     canvas: Image.Image,
     draw: ImageDraw.ImageDraw,
@@ -534,24 +618,34 @@ def _draw_compact_schedule_match(
     x0, y0, x1, y1 = box
     height = y1 - y0
     center_x = (x0 + x1) // 2
-    center_y = (y0 + y1) // 2
     draw.rounded_rectangle(box, radius=min(26, height // 5), fill=(*PANEL, 237))
     draw.line((x0 + 22, y0 + 1, center_x - 22, y0 + 1), fill=(*CYAN, 185), width=2)
     draw.line((center_x + 22, y0 + 1, x1 - 22, y0 + 1), fill=(*AMBER, 185), width=2)
 
+    # Every dense schedule card uses the same visual hierarchy: two centred
+    # team blocks and a time badge in the exact centre of the fixture.
+    dense_layout = height < 125
     if height >= 210:
-        logo_diameter, time_size, team_size, event_size = 68, 42, 24, 15
-        time_y, logo_y, team_y, event_y = y0 + 19, y0 + 92, y0 + 137, y1 - 46
+        logo_diameter, time_size, team_size, event_size = 84, 46, 26, 15
     elif height >= 165:
-        logo_diameter, time_size, team_size, event_size = 52, 34, 20, 13
-        time_y, logo_y, team_y, event_y = y0 + 12, y0 + 70, y0 + 104, y1 - 34
+        logo_diameter, time_size, team_size, event_size = 70, 40, 22, 13
+    elif dense_layout:
+        logo_diameter, time_size, team_size, event_size = 48, 32, 15, 9
     else:
-        logo_diameter, time_size, team_size, event_size = 36, 25, 15, 10
-        time_y, logo_y, team_y, event_y = y0 + 3, y0 + 45, y0 + 72, y1 - 19
-
-    logo_radius = logo_diameter // 2
-    team1_x = x0 + 22 + logo_radius
-    team2_x = x1 - 22 - logo_radius
+        logo_diameter, time_size, team_size, event_size = 58, 36, 18, 11
+    if dense_layout:
+        # Leave a deliberate breathing margin under the top accent line.
+        logo_y = y0 + int(height * 0.42)
+        time_y = y0 + int(height * 0.32)
+        team_y = y0 + int(height * 0.68)
+        event_y = y1 - 18
+    else:
+        logo_y = y0 + int(height * 0.40)
+        time_y = y0 + int(height * 0.33)
+        team_y = y0 + int(height * 0.68)
+        event_y = y1 - max(25, int(height * 0.16))
+    team1_x = x0 + int((center_x - x0) * 0.48)
+    team2_x = x1 - int((x1 - center_x) * 0.48)
     _draw_logo(
         canvas,
         draw,
@@ -581,26 +675,24 @@ def _draw_compact_schedule_match(
         _font(time_size),
         AMBER,
     )
-    name_width = 194 if height >= 210 else 184 if height >= 165 else 174
+    name_width = int((center_x - x0) * 0.82)
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    _aligned_text(
+    _centered_text(
         draw,
-        x0 + 22,
+        team1_x,
         team_y,
         team1,
         _fit_font(draw, team1, name_width, team_size, 11),
         WHITE,
-        "left",
     )
-    _aligned_text(
+    _centered_text(
         draw,
-        x1 - 22,
+        team2_x,
         team_y,
         team2,
         _fit_font(draw, team2, name_width, team_size, 11),
         WHITE,
-        "right",
     )
 
     event = match.tournament_name.upper()
@@ -1069,25 +1161,11 @@ def render_schedule_card(
     canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
     width, height = SCHEDULE_CARD_SIZE
-    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
-    header_center = width // 2
-    _centered_text(draw, header_center, 207, "МАТЧИ CS2 СЕГОДНЯ", _font(44, display=True), WHITE)
-    date_label = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
-    if page_count > 1:
-        date_label = f"{date_label} · {page_number}/{page_count}"
-    _centered_text(
-        draw,
-        header_center,
-        286,
-        date_label,
-        _font(27, display=True),
-        CYAN,
-    )
-
     sorted_matches = sorted(matches, key=lambda item: item.scheduled_at)
+    _draw_schedule_header(canvas, draw, sorted_matches, local_now, page_number, page_count)
     columns = 1 if len(sorted_matches) <= 3 else 2
     rows = math.ceil(len(sorted_matches) / columns)
-    area_top = 340
+    area_top = 360
     area_bottom = 960
     gap = 14
     available_height = area_bottom - area_top - gap * (rows - 1)

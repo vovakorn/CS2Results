@@ -5,6 +5,7 @@ from typing import Any, Iterable
 
 from ..models import (
     MatchNormalized,
+    HeadToHead,
     RadarBracketMatch,
     ScheduleMatchContext,
     SourceUnavailableError,
@@ -81,14 +82,46 @@ async def _fetch_team_matches(team_id: str, limit: int = 5) -> list[MatchNormali
     return pandascore_source._normalize_raw_matches(data)[:limit]
 
 
+def _head_to_head(
+    team1_id: str,
+    team2_id: str,
+    matches: list[MatchNormalized],
+    limit: int = 3,
+) -> HeadToHead | None:
+    """Build a recent H2H record from one team's own match history."""
+    team1_wins = 0
+    team2_wins = 0
+    counted = 0
+    for match in matches:
+        refs = match.source_refs
+        if not refs or {refs.team1_id, refs.team2_id} != {team1_id, team2_id}:
+            continue
+        if refs.team1_id == team1_id:
+            first_score, second_score = match.score1, match.score2
+        else:
+            first_score, second_score = match.score2, match.score1
+        if first_score is None or second_score is None or first_score == second_score:
+            continue
+        if first_score > second_score:
+            team1_wins += 1
+        else:
+            team2_wins += 1
+        counted += 1
+        if counted >= limit:
+            break
+    if counted < 2:
+        return None
+    return HeadToHead(match_count=counted, team1_wins=team1_wins, team2_wins=team2_wins)
+
+
 async def fetch_schedule_match_context(match: UpcomingMatchNormalized) -> ScheduleMatchContext:
     refs = match.source_refs
     if not refs or not refs.team1_id or not refs.team2_id:
         raise SourceUnavailableError("PandaScore context requires team IDs")
 
     requests: list[Any] = [
-        _fetch_team_matches(refs.team1_id),
-        _fetch_team_matches(refs.team2_id),
+        _fetch_team_matches(refs.team1_id, limit=20),
+        _fetch_team_matches(refs.team2_id, limit=20),
     ]
     if refs.tournament_id:
         requests.append(pandascore_source._fetch_json(f"/tournaments/{refs.tournament_id}/rosters", {}))
@@ -100,8 +133,9 @@ async def fetch_schedule_match_context(match: UpcomingMatchNormalized) -> Schedu
     return ScheduleMatchContext(
         match_id=match.match_id,
         tournament_id=refs.tournament_id,
-        team1_form=_team_form(match.team1_name, refs.team1_id, team1_matches),
-        team2_form=_team_form(match.team2_name, refs.team2_id, team2_matches),
+        team1_form=_team_form(match.team1_name, refs.team1_id, team1_matches[:5]),
+        team2_form=_team_form(match.team2_name, refs.team2_id, team2_matches[:5]),
+        head_to_head=_head_to_head(refs.team1_id, refs.team2_id, team1_matches),
         team1_roster_size=sizes.get(refs.team1_id),
         team2_roster_size=sizes.get(refs.team2_id),
     )
