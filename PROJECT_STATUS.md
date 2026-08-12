@@ -17,15 +17,15 @@
 
 - MVP работает в production на Yandex Cloud Functions.
 - Основная ветка GitHub: `main`.
-- Текущий commit: `336bbab` (`Merge pull request #65 from vovakorn/agent/improve-schedule-context-and-tournament-header`).
-- Последняя проверка: 245 тестов успешно локально; GitHub Actions для PR #65 завершился успешно на Python 3.11 и 3.12.
+- Текущий commit: `903e05b` (`Merge pull request #67 from vovakorn/agent/fix-expired-delivery-claims`).
+- Последняя проверка: 249 тестов успешно локально; GitHub Actions для PR #67 завершился успешно на Python 3.11 и 3.12.
 - GitHub Actions проверяет Python 3.11 и 3.12, зависимости, безопасность и сборку архива.
-- Последняя активная версия Cloud Function: `d4echcjehsg32itcq07c`.
+- Последняя активная версия Cloud Function: `d4ec13vsrreat9o67s2f`.
 - Function ID: `d4e6e13rlrl7go01m2q2`.
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
 - Production runtime: Python 3.12.
 - Handler: `cs2bot.main.handler`.
-- Версия `d4edmbc3ghl9tqt4if7h` закреплена стабильным тегом `production`.
+- Версия `d4ec13vsrreat9o67s2f` закреплена стабильным тегом `production`.
 - Все три timer trigger вызывают тег `production`, а не автоматически меняющийся
   `$latest`.
 
@@ -142,6 +142,9 @@
   данные, не выдумывая пары.
 - Object Storage analytics journal: события публикаций, snapshots подписчиков
   и ручной импорт метрик Telegram Stats.
+- Восстановление истёкших delivery claims совместимо с S3-хранилищами, которые
+  сравнивают ETag без кавычек; повторная попытка остаётся условной и не создаёт
+  дубли публикаций.
 
 ## Что проверить после запуска
 
