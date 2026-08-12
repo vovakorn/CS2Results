@@ -196,6 +196,7 @@ def test_deploy_preserves_configuration_and_promotes_after_dry_run(fake_cloud: d
     environment = dict(item.split("=", 1) for item in next(csv.reader([environment_csv])))
     assert environment == BASE_VERSION["environment"]
     assert create_call[create_call.index("--memory") + 1] == "256MB"
+    assert create_call[create_call.index("--execution-timeout") + 1] == "120s"
     assert create_call[create_call.index("--service-account-id") + 1] == "service-account-id"
     assert create_call[create_call.index("--min-log-level") + 1] == "info"
 

@@ -68,6 +68,7 @@ from .match_sources.storage import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_METHOD = "sendMessage"
@@ -76,6 +77,10 @@ MIN_MATCHES = 1
 MAX_MATCHES = 30
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MAX_TELEGRAM_CAPTION_LENGTH = 1024
+RESULT_MEDIA_BUDGET_SECONDS = 35.0
+RESULT_TELEGRAM_TIMEOUT_SECONDS = 4
+RESULT_TELEGRAM_MAX_ATTEMPTS = 1
+_monotonic = time.monotonic
 MATCH_URL_HOSTS = {
     "pandascore": {"pandascore.co", "www.pandascore.co"},
     "liquipedia": {"liquipedia.net", "www.liquipedia.net"},
@@ -1262,6 +1267,8 @@ def _handle_radar_job(
 def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     """Yandex Cloud Functions entry point."""
 
+    handler_started_at = _monotonic()
+
     # по умолчанию берём максимум
     limit = MAX_MATCHES
     source: SourceName = _parse_source(None)
@@ -1506,20 +1513,48 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 )
                 continue
 
+            log_event(
+                logger,
+                logging.INFO,
+                "delivery_claim_acquired",
+                match_uid=match.match_uid,
+                channel=name,
+            )
+
             if TELEGRAM_MEDIA_CARDS and not result_card_attempted:
                 result_card_attempted = True
-                try:
-                    result_card = render_result_card(match)
-                except Exception as exc:
+                elapsed = _monotonic() - handler_started_at
+                if elapsed >= RESULT_MEDIA_BUDGET_SECONDS:
                     log_event(
                         logger,
                         logging.WARNING,
-                        "media_card_fallback",
+                        "media_card_budget_exhausted",
                         job="results",
                         match_uid=match.match_uid,
-                        error_type=type(exc).__name__,
-                        error=_safe_error_message(exc),
+                        elapsed_seconds=round(elapsed, 3),
                     )
+                else:
+                    render_started_at = _monotonic()
+                    try:
+                        result_card = render_result_card(match)
+                        log_event(
+                            logger,
+                            logging.INFO,
+                            "media_card_ready",
+                            job="results",
+                            match_uid=match.match_uid,
+                            duration_seconds=round(_monotonic() - render_started_at, 3),
+                        )
+                    except Exception as exc:
+                        log_event(
+                            logger,
+                            logging.WARNING,
+                            "media_card_fallback",
+                            job="results",
+                            match_uid=match.match_uid,
+                            error_type=type(exc).__name__,
+                            error=_safe_error_message(exc),
+                        )
 
             try:
                 text = format_match(match)
@@ -1531,6 +1566,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             text,
                             has_spoiler=TELEGRAM_SPOILERS,
                             filename=f"cs2-result-{match.match_id or 'match'}.png",
+                            timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                            max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
                         )
                     except Exception as exc:
                         log_event(
@@ -1543,11 +1580,29 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             error_type=type(exc).__name__,
                             error=_safe_error_message(exc),
                         )
-                        send_to_telegram(channel["chat_id"], text)
+                        send_to_telegram(
+                            channel["chat_id"],
+                            text,
+                            timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                            max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
+                        )
                 else:
-                    send_to_telegram(channel["chat_id"], text)
+                    send_to_telegram(
+                        channel["chat_id"],
+                        text,
+                        timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                        max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
+                    )
                 channel_stats[name] += 1
                 sent_messages += 1
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "telegram_delivery_succeeded",
+                    channel=name,
+                    match_uid=match.match_uid,
+                    media_card=result_card is not None,
+                )
             except Exception as exc:
                 failed_messages += 1
                 try:
@@ -1574,6 +1629,13 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
             try:
                 asyncio.run(mark_channel_processed(match, channel_id))
+                log_event(
+                    logger,
+                    logging.INFO,
+                    "delivery_marked_processed",
+                    channel=name,
+                    match_uid=match.match_uid,
+                )
                 _record_post_analytics(
                     channel_id,
                     match.match_uid,

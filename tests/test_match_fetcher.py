@@ -32,6 +32,28 @@ def test_auto_uses_pandascore_when_it_returns_matches(monkeypatch):
     assert matches[0].source == "pandascore"
 
 
+def test_liquipedia_shadow_timeout_does_not_block_primary_results(monkeypatch, caplog):
+    async def fake_fetch(source, limit):
+        assert source == "pandascore"
+        return [_match()]
+
+    async def slow_shadow(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return {"matched": 1}
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+    monkeypatch.setattr(match_fetcher, "_run_liquipedia_shadow", slow_shadow)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS", 0.001)
+
+    with caplog.at_level(logging.WARNING):
+        matches = asyncio.run(
+            match_fetcher.get_new_finished_matches(source="pandascore", dry_run=True)
+        )
+
+    assert matches[0].source == "pandascore"
+    assert "event=liquipedia_shadow_timed_out" in caplog.text
+
+
 def test_auto_falls_back_to_liquipedia_when_pandascore_empty(monkeypatch):
     async def fake_fetch(source, limit):
         if source == "pandascore":

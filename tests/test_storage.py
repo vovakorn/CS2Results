@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
 
@@ -144,6 +144,30 @@ def test_delivery_claim_prevents_concurrent_publication_and_can_be_released():
     )
     assert third is not None
     assert third.claim_id != first.claim_id
+
+
+def test_expired_delivery_claim_is_atomically_reclaimed():
+    s3 = FakeS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+    reclaimed = asyncio.run(
+        claim_channel_delivery(
+            match,
+            "global",
+            client=s3,
+            bucket="bucket",
+            now=now + timedelta(minutes=6),
+        )
+    )
+
+    assert first is not None
+    assert reclaimed is not None
+    assert reclaimed.claim_id != first.claim_id
+    assert reclaimed.etag != first.etag
 
 
 def test_admin_alert_is_claimed_only_once_per_cooldown_window():

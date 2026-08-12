@@ -279,12 +279,27 @@ async def claim_channel_delivery(
     if existing_expiry > int(reference.timestamp()):
         return None
 
+    logger.info(
+        'event="delivery_claim_reclaim_started" key="%s" expired_at="%s"',
+        key,
+        existing_expiry,
+    )
+
     try:
         response = await asyncio.to_thread(_put, False, existing.get("ETag"))
+        logger.info('event="delivery_claim_reclaimed" key="%s"', key)
         return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
     except ClientError as exc:
         if _is_precondition_failed(exc):
             return None
+        code = str(exc.response.get("Error", {}).get("Code", "unknown"))
+        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        logger.error(
+            'event="delivery_claim_reclaim_failed" key="%s" code="%s" status="%s"',
+            key,
+            code,
+            status,
+        )
         raise StorageUnavailableError(f"claim reclaim failed for {key}") from exc
 
 

@@ -393,11 +393,21 @@ async def get_new_finished_matches(
         require_fresh=require_fresh,
     )
     if used_source == "pandascore":
-        comparison = await _run_liquipedia_shadow(
-            fetched,
-            fetch_limit,
-            require_fresh=require_fresh,
-        )
+        try:
+            comparison = await asyncio.wait_for(
+                _run_liquipedia_shadow(
+                    fetched,
+                    fetch_limit,
+                    require_fresh=require_fresh,
+                ),
+                timeout=source_config.LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            comparison = None
+            logger.warning(
+                "event=liquipedia_shadow_timed_out timeout_seconds=%s",
+                source_config.LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS,
+            )
         if shadow_diagnostics is not None and comparison is not None:
             shadow_diagnostics.update(comparison)
     if require_fresh:

@@ -203,7 +203,7 @@ def _logo_candidates(url: str) -> list[str]:
     return [thumbnail, url]
 
 
-def fetch_team_logo(url: str | None, timeout: int = 5) -> Image.Image | None:
+def fetch_team_logo(url: str | None, timeout: float = 2.0) -> Image.Image | None:
     """Download and validate a PandaScore team logo without following redirects."""
     safe_url = _safe_logo_url(url)
     if not safe_url:
