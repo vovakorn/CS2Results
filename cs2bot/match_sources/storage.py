@@ -106,6 +106,17 @@ def _is_precondition_failed(exc: ClientError) -> bool:
     return code in {"PreconditionFailed", "412", "ConditionalRequestConflict"} or status in {409, 412}
 
 
+def _etag_candidates(etag: str | None) -> tuple[str, ...]:
+    """Return compatible conditional-write values without weakening atomicity."""
+    if not etag:
+        return ()
+    values = [etag]
+    unquoted = etag.strip('"')
+    if unquoted and unquoted != etag:
+        values.append(unquoted)
+    return tuple(values)
+
+
 async def claim_admin_alert(
     alert_code: str,
     client: Any | None = None,
@@ -285,22 +296,24 @@ async def claim_channel_delivery(
         existing_expiry,
     )
 
-    try:
-        response = await asyncio.to_thread(_put, False, existing.get("ETag"))
-        logger.info('event="delivery_claim_reclaimed" key="%s"', key)
-        return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
-    except ClientError as exc:
-        if _is_precondition_failed(exc):
-            return None
-        code = str(exc.response.get("Error", {}).get("Code", "unknown"))
-        status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-        logger.error(
-            'event="delivery_claim_reclaim_failed" key="%s" code="%s" status="%s"',
-            key,
-            code,
-            status,
-        )
-        raise StorageUnavailableError(f"claim reclaim failed for {key}") from exc
+    for attempt, etag in enumerate(_etag_candidates(existing.get("ETag")), start=1):
+        try:
+            response = await asyncio.to_thread(_put, False, etag)
+            logger.info('event="delivery_claim_reclaimed" key="%s" attempt="%s"', key, attempt)
+            return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
+        except ClientError as exc:
+            if _is_precondition_failed(exc):
+                continue
+            code = str(exc.response.get("Error", {}).get("Code", "unknown"))
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            logger.error(
+                'event="delivery_claim_reclaim_failed" key="%s" code="%s" status="%s"',
+                key,
+                code,
+                status,
+            )
+            raise StorageUnavailableError(f"claim reclaim failed for {key}") from exc
+    return None
 
 
 async def claim_content_delivery(
@@ -374,13 +387,15 @@ async def claim_content_delivery(
         existing_expiry = int((reference + timedelta(seconds=DELIVERY_CLAIM_TTL_SECONDS)).timestamp())
     if existing_expiry > int(reference.timestamp()):
         return None
-    try:
-        response = await asyncio.to_thread(_put, False, existing.get("ETag"))
-        return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
-    except ClientError as exc:
-        if _is_precondition_failed(exc):
-            return None
-        raise StorageUnavailableError(f"content claim reclaim failed for {key}") from exc
+    for etag in _etag_candidates(existing.get("ETag")):
+        try:
+            response = await asyncio.to_thread(_put, False, etag)
+            return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
+        except ClientError as exc:
+            if _is_precondition_failed(exc):
+                continue
+            raise StorageUnavailableError(f"content claim reclaim failed for {key}") from exc
+    return None
 
 
 async def release_delivery_claim(
@@ -399,7 +414,7 @@ async def release_delivery_claim(
         "expires_at": released_at.isoformat().replace("+00:00", "Z"),
     }
 
-    def _put() -> None:
+    def _put(etag: str | None) -> None:
         kwargs: dict[str, Any] = {
             "Bucket": bucket_name,
             "Key": claim.key,
@@ -407,14 +422,17 @@ async def release_delivery_claim(
             "ContentType": "application/json",
             "Metadata": {"expires-at": "0", "claim-id": claim.claim_id},
         }
-        if claim.etag:
-            kwargs["IfMatch"] = claim.etag
+        if etag:
+            kwargs["IfMatch"] = etag
         s3.put_object(**kwargs)
 
-    try:
-        await asyncio.to_thread(_put)
-    except ClientError as exc:
-        if not _is_precondition_failed(exc):
+    for etag in _etag_candidates(claim.etag):
+        try:
+            await asyncio.to_thread(_put, etag)
+            return
+        except ClientError as exc:
+            if _is_precondition_failed(exc):
+                continue
             raise StorageUnavailableError(f"claim release failed for {claim.key}") from exc
 
 
