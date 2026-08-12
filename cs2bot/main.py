@@ -662,30 +662,72 @@ def _context_priority(match: UpcomingMatchNormalized) -> tuple[int, int, str]:
     return tier_rank, popular_rank, match.scheduled_at
 
 
+def _russian_count(count: int, forms: tuple[str, str, str]) -> str:
+    """Return a small Russian count phrase, e.g. ``4 победы``."""
+    if 11 <= count % 100 <= 14:
+        form = forms[2]
+    elif count % 10 == 1:
+        form = forms[0]
+    elif 2 <= count % 10 <= 4:
+        form = forms[1]
+    else:
+        form = forms[2]
+    return f"{count} {form}"
+
+
+def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
+    record = context.head_to_head
+    if record is None:
+        return None
+    score = f"{record.team1_wins}–{record.team2_wins}"
+    if record.team1_wins == record.team2_wins:
+        outcome = "без преимущества"
+    else:
+        leader = context.team1_form.team_name if record.team1_wins > record.team2_wins else context.team2_form.team_name
+        outcome = f"в пользу {html.escape(leader)}"
+    return f"🤝 Очные встречи: {score} {outcome} ({record.match_count} последних матча)."
+
+
 def format_schedule_context(
     matches: Sequence[UpcomingMatchNormalized],
     contexts: dict[str, ScheduleMatchContext],
 ) -> str:
     """Format optional, compact pre-match context for the strongest fixtures."""
-    lines = ["🔎 <b>Контекст к главным матчам</b>", ""]
+    lines = ["🔎 <b>Контекст к матчам дня</b>", ""]
     included = 0
     for match in sorted(matches, key=_context_priority):
         context = contexts.get(match.match_id)
         if context is None:
             continue
         best_of = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
-        team1_form = f"{context.team1_form.wins}–{context.team1_form.losses}"
-        team2_form = f"{context.team2_form.wins}–{context.team2_form.losses}"
+        if match.best_of == 1:
+            format_note = "Bo1: одна карта решает исход матча."
+        elif match.best_of:
+            format_note = f"{best_of}: для победы нужно выиграть большинство карт."
+        else:
+            format_note = "Формат серии пока не указан."
         lines.extend(
             [
                 f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b> · {best_of}",
-                f"Форма (5): {team1_form} · {team2_form}",
+                (
+                    f"Последние 5 матчей: {html.escape(context.team1_form.team_name)} — "
+                    f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
+                    f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
+                    f"{html.escape(context.team2_form.team_name)} — "
+                    f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
+                    f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
+                ),
             ]
         )
-        if context.team1_roster_size is not None and context.team2_roster_size is not None:
-            lines.append(
-                f"Ожидаемые составы: {context.team1_roster_size} × {context.team2_roster_size}"
-            )
+        head_to_head = _head_to_head_takeaway(context)
+        if head_to_head:
+            lines.append(head_to_head)
+        lines.extend(
+            [
+                "ℹ️ Это последние результаты, а не рейтинг команд и не прогноз на матч.",
+                f"🎮 {format_note}",
+            ]
+        )
         lines.append("")
         included += 1
         if included >= SCHEDULE_CONTEXT_MATCH_LIMIT:

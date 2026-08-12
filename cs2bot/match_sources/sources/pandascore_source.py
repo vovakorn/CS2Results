@@ -100,6 +100,15 @@ def _competition_key(item: dict[str, Any]) -> str | None:
     return _name(item.get("serie")) or _name(item.get("league")) or _name(item.get("tournament"))
 
 
+def _tournament_logo_url(item: dict[str, Any]) -> str | None:
+    """Return the mark that corresponds to the schedule's competition label."""
+    for value in (item.get("serie"), item.get("league"), item.get("tournament")):
+        primary, _ = _image_urls(value)
+        if primary:
+            return primary
+    return None
+
+
 def _nested_id(value: Any) -> str | None:
     return _optional_source_id(value.get("id")) if isinstance(value, dict) else None
 
@@ -200,6 +209,7 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         match_id=str(match_id),
         match_url=None,
         tournament_name=tournament_name,
+        tournament_logo_url=_tournament_logo_url(item),
         competition_key=_competition_key(item),
         source_refs=_source_references(
             item,
@@ -276,6 +286,7 @@ def _normalize_upcoming_item(item: dict[str, Any]) -> UpcomingMatchNormalized | 
     match = UpcomingMatchNormalized(
         match_id=str(match_id),
         tournament_name=tournament_name,
+        tournament_logo_url=_tournament_logo_url(item),
         competition_key=_competition_key(item),
         source_refs=_source_references(item, teams[0][1], teams[1][1]),
         tournament_tier=_tournament_tier(item.get("tournament")),

@@ -244,7 +244,7 @@ def test_schedule_album_marks_page_number_in_date_line(monkeypatch):
         page_count=2,
     )
 
-    assert (286, "12 АВГУСТА · 2/2") in centered
+    assert (315, "12 АВГУСТА · 2/2") in centered
 
 
 def test_schedule_album_rejects_more_than_twenty_matches():
@@ -451,7 +451,77 @@ def test_schedule_header_is_centered_on_canvas(monkeypatch):
 
     canvas_center = media_cards.SCHEDULE_CARD_SIZE[0] // 2
     assert (canvas_center, "МАТЧИ CS2 СЕГОДНЯ") in drawn
+    assert (canvas_center, "BLAST BOUNTY — 2026 SEASON 2 FINALS") in drawn
     assert (canvas_center, "31 ИЮЛЯ") in drawn
+
+
+@pytest.mark.parametrize("match_count", [1, 4, 10])
+def test_schedule_shows_shared_tournament_header_for_every_layout(monkeypatch, match_count):
+    drawn = []
+    original = media_cards._centered_text
+
+    def capture(draw, center_x, y, text, font, fill):
+        drawn.append((center_x, y, text))
+        return original(draw, center_x, y, text, font, fill)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture)
+    media_cards.render_schedule_card(
+        [_upcoming(str(index)) for index in range(match_count)],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert (540, 254, "BLAST BOUNTY — 2026 SEASON 2 FINALS") in drawn
+
+
+def test_schedule_uses_mixed_tournament_header_without_a_logo(monkeypatch):
+    logos = []
+    drawn = []
+    original = media_cards._centered_text
+
+    def capture_text(draw, center_x, y, text, font, fill):
+        drawn.append((center_x, y, text))
+        return original(draw, center_x, y, text, font, fill)
+
+    def capture_logo(*args):
+        logos.append(args)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
+    monkeypatch.setattr(media_cards, "_draw_tournament_logo", capture_logo)
+    media_cards.render_schedule_card(
+        [
+            _upcoming("one"),
+            _upcoming("two").model_copy(
+                update={
+                    "competition_key": "IEM Cologne 2026",
+                    "tournament_name": "IEM — IEM Cologne 2026 — Playoffs",
+                }
+            ),
+        ],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert (540, 254, "ТУРНИРЫ ДНЯ") in drawn
+    assert logos == []
+
+
+def test_schedule_draws_official_tournament_logo_in_header(monkeypatch):
+    logos = []
+
+    def capture_logo(canvas, draw, center, diameter, logo_url):
+        logos.append((center, diameter, logo_url))
+
+    match = _upcoming().model_copy(
+        update={"tournament_logo_url": "https://cdn.pandascore.co/images/serie/image/2/iem.png"}
+    )
+    monkeypatch.setattr(media_cards, "_draw_tournament_logo", capture_logo)
+    media_cards.render_schedule_card(
+        [match], media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"), "Europe/Moscow"
+    )
+
+    assert len(logos) == 1
+    assert logos[0][1:] == (54, "https://cdn.pandascore.co/images/serie/image/2/iem.png")
 
 
 def test_schedule_channel_logo_is_centered_at_top(monkeypatch):
@@ -497,19 +567,20 @@ def test_schedule_team_names_are_aligned_to_outer_edges(monkeypatch):
     assert (972, "GAIMIN GLADIATORS ACADEMY", "right") in drawn
 
 
-def test_ten_match_schedule_keeps_outer_team_alignment(monkeypatch):
+def test_ten_match_schedule_centers_team_names_under_larger_logos(monkeypatch):
     drawn = []
     logos = []
-    original = media_cards._aligned_text
+    original = media_cards._centered_text
 
-    def capture(draw, edge_x, y, text, font, fill, alignment):
-        drawn.append((edge_x, y, text, alignment))
-        return original(draw, edge_x, y, text, font, fill, alignment)
+    def capture(draw, center_x, y, text, font, fill):
+        if text.startswith("LONG "):
+            drawn.append((center_x, y, text))
+        return original(draw, center_x, y, text, font, fill)
 
     def capture_logo(canvas, draw, center, diameter, *args):
         logos.append((center, diameter))
 
-    monkeypatch.setattr(media_cards, "_aligned_text", capture)
+    monkeypatch.setattr(media_cards, "_centered_text", capture)
     monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
     matches = [
         _upcoming(str(index)).model_copy(
@@ -528,14 +599,61 @@ def test_ten_match_schedule_keeps_outer_team_alignment(monkeypatch):
     )
 
     assert len(drawn) == 20
-    assert [alignment for _, _, _, alignment in drawn] == ["left", "right"] * 10
     for index in range(10):
         left_logo, right_logo = logos[index * 2 : index * 2 + 2]
         left_name, right_name = drawn[index * 2 : index * 2 + 2]
-        assert left_logo[0][0] - left_logo[1] // 2 == left_name[0]
-        assert right_logo[0][0] + right_logo[1] // 2 == right_name[0]
-        assert left_name[1] - (left_logo[0][1] + left_logo[1] // 2) >= 8
-        assert right_name[1] - (right_logo[0][1] + right_logo[1] // 2) >= 8
+        assert left_logo[0][0] == left_name[0]
+        assert right_logo[0][0] == right_name[0]
+        assert left_name[1] > left_logo[0][1]
+        assert right_name[1] > right_logo[0][1]
+        assert left_logo[1] >= 48
+        assert right_logo[1] >= 48
+
+
+@pytest.mark.parametrize("match_count", [4, 8, 10])
+def test_compact_schedule_uses_equal_sized_blocks(monkeypatch, match_count):
+    boxes = []
+
+    def capture(canvas, draw, match, box, display_timezone):
+        boxes.append(box)
+
+    monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture)
+
+    media_cards.render_schedule_card(
+        [_upcoming(str(index)) for index in range(match_count)],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert len(boxes) == match_count
+    assert {(x1 - x0, y1 - y0) for x0, y0, x1, y1 in boxes} == {(468, boxes[0][3] - boxes[0][1])}
+
+
+def test_ten_match_schedule_leaves_margin_above_compact_logos(monkeypatch):
+    logos = []
+    boxes = []
+    original = media_cards._draw_compact_schedule_match
+
+    def capture_logo(canvas, draw, center, diameter, *args):
+        logos.append((center, diameter))
+
+    def capture_box(canvas, draw, match, box, display_timezone):
+        boxes.append(box)
+        return original(canvas, draw, match, box, display_timezone)
+
+    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
+    monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture_box)
+
+    media_cards.render_schedule_card(
+        [_upcoming(str(index)) for index in range(10)],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    for index, box in enumerate(boxes):
+        y0 = box[1]
+        for center, diameter in logos[index * 2 : index * 2 + 2]:
+            assert center[1] - diameter // 2 - y0 >= 20
 
 
 def test_schedule_uses_fallback_logo_when_primary_variant_fails(monkeypatch):

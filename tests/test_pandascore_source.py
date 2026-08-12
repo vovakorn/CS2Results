@@ -17,7 +17,11 @@ def _sample_match():
         "begin_at": "2026-07-28T10:00:00Z",
         "end_at": "2026-07-28T12:10:00Z",
         "league": {"id": 1, "name": "IEM"},
-        "serie": {"id": 2, "full_name": "IEM Cologne 2026"},
+        "serie": {
+            "id": 2,
+            "full_name": "IEM Cologne 2026",
+            "image_url": "https://cdn.pandascore.co/images/serie/image/2/iem-cologne.png",
+        },
         "tournament": {"id": 3, "name": "Playoffs", "tier": "S"},
         "opponents": [
             {
@@ -73,6 +77,7 @@ def test_pandascore_normalizes_series_result_by_team_id():
     assert match.best_of == 3
     assert match.tournament_name == "IEM — IEM Cologne 2026 — Playoffs"
     assert match.competition_key == "IEM Cologne 2026"
+    assert match.tournament_logo_url.endswith("/2/iem-cologne.png")
     assert match.source_refs.model_dump() == {
         "league_id": "1",
         "serie_id": "2",
@@ -171,6 +176,7 @@ def test_pandascore_normalizes_featured_upcoming_match():
     assert match.scheduled_at == "2026-07-30T11:00:00Z"
     assert match.team1_logo_url.endswith("/10/navi.png")
     assert match.team2_logo_url.endswith("/20/faze.png")
+    assert match.tournament_logo_url.endswith("/2/iem-cologne.png")
     assert match.source_refs.team1_id == "10"
     assert match.source_refs.team2_id == "20"
     assert match.source_refs.winner_team_id is None
