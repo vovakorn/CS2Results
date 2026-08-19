@@ -1,6 +1,6 @@
 # CS2 Results Bot — статус проекта
 
-Обновлено: 12 августа 2026 года.
+Обновлено: 19 августа 2026 года.
 
 Этот файл — краткий контекст для новых задач Codex. Он не должен содержать токены,
 пароли, секретные ключи или другие чувствительные данные.
@@ -17,15 +17,15 @@
 
 - MVP работает в production на Yandex Cloud Functions.
 - Основная ветка GitHub: `main`.
-- Текущий commit: `903e05b` (`Merge pull request #67 from vovakorn/agent/fix-expired-delivery-claims`).
-- Последняя проверка: 249 тестов успешно локально; GitHub Actions для PR #67 завершился успешно на Python 3.11 и 3.12.
+- Текущий commit: `3f3261f` (`Merge pull request #73 from vovakorn/codex/group-daily-schedule-by-tournament`).
+- Последняя проверка: 256 тестов успешно локально; GitHub Actions для PR #73 завершился успешно на Python 3.11 и 3.12.
 - GitHub Actions проверяет Python 3.11 и 3.12, зависимости, безопасность и сборку архива.
-- Последняя активная версия Cloud Function: `d4ec13vsrreat9o67s2f`.
+- Последняя активная версия Cloud Function: `d4efnsa9pgdu27tb6avf`.
 - Function ID: `d4e6e13rlrl7go01m2q2`.
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
 - Production runtime: Python 3.12.
 - Handler: `cs2bot.main.handler`.
-- Версия `d4ec13vsrreat9o67s2f` закреплена стабильным тегом `production`.
+- Версия `d4efnsa9pgdu27tb6avf` закреплена стабильным тегом `production`.
 - Все три timer trigger вызывают тег `production`, а не автоматически меняющийся
   `$latest`.
 
