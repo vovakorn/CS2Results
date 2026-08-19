@@ -880,8 +880,72 @@ def test_schedule_is_formatted_in_moscow_time():
     text = main.format_daily_schedule([_upcoming()], local_now)
 
     assert "Матчи CS2 сегодня — 30 июля" in text
-    assert "14:00 — <b>NAVI — FaZe</b>" in text
+    assert "🏆 <b>IEM Cologne 2026</b>" in text
+    assert "14:00 — <b>NAVI vs FaZe</b>" in text
+    assert "🕙" not in text
     assert "московск" not in text.casefold()
+
+
+def test_daily_schedule_groups_four_matches_under_one_tournament():
+    matches = [
+        _upcoming().model_copy(
+            update={
+                "match_id": str(index),
+                "team1_name": team1,
+                "team2_name": team2,
+                "scheduled_at": scheduled_at,
+                "tournament_name": "Esports World Cup — 2026 — Playoffs",
+            }
+        )
+        for index, (scheduled_at, team1, team2) in enumerate(
+            [
+                ("2026-08-19T17:00:00+03:00", "FUT Esports", "magic"),
+                ("2026-08-19T20:00:00+03:00", "GamerLegion", "MOUZ"),
+                ("2026-08-19T17:00:00+03:00", "G2", "Astralis"),
+                ("2026-08-19T20:00:00+03:00", "FURIA", "Aurora Gaming"),
+            ]
+        )
+    ]
+
+    text = main.format_daily_schedule(matches, main.datetime.fromisoformat("2026-08-19T10:00:00+03:00"))
+
+    assert text.count("🏆 <b>Esports World Cup 2026 · Playoffs</b>") == 1
+    assert text.index("17:00 — <b>FUT Esports vs magic</b>") < text.index("20:00 — <b>GamerLegion vs MOUZ</b>")
+    assert "🏆 Другие матчи" not in text
+
+
+def test_daily_schedule_separates_two_tournaments_and_handles_missing_name():
+    matches = []
+    for index in range(10):
+        matches.append(
+            _upcoming().model_copy(
+                update={
+                    "match_id": str(index),
+                    "team1_name": f"Team {index}",
+                    "team2_name": f"Opponent {index}",
+                    "scheduled_at": f"2026-08-19T{12 + index:02d}:00:00+03:00",
+                    "tournament_name": "IEM Cologne 2026" if index < 5 else "BLAST Premier — 2026 — Finals",
+                }
+            )
+        )
+    matches.append(
+        _upcoming().model_copy(
+            update={
+                "match_id": "missing-tournament",
+                "team1_name": "Unknown A",
+                "team2_name": "Unknown B",
+                "scheduled_at": "2026-08-19T22:00:00+03:00",
+                "tournament_name": "",
+            }
+        )
+    )
+
+    text = main.format_daily_schedule(matches, main.datetime.fromisoformat("2026-08-19T10:00:00+03:00"))
+
+    assert text.count("🏆 <b>IEM Cologne 2026</b>") == 1
+    assert text.count("🏆 <b>BLAST Premier 2026 · Finals</b>") == 1
+    assert "🏆 <b>Другие матчи</b>" in text
+    assert "</b>\n\n🏆 <b>" in text
 
 
 def test_schedule_context_explains_form_and_series_format():

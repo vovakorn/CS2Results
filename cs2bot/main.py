@@ -607,35 +607,52 @@ def format_daily_schedule(
         f"📅 <b>Матчи CS2 сегодня — {_display_day(local_now)}</b>",
         "",
     ]
-    entries: list[list[str]] = []
     sorted_matches = sorted(
         matches,
         key=lambda item: _parse_datetime(item.scheduled_at) or datetime.max.replace(tzinfo=timezone.utc),
     )
+    groups: dict[str, list[UpcomingMatchNormalized]] = {}
     for match in sorted_matches:
-        parsed = _parse_datetime(match.scheduled_at)
-        local_time = parsed.astimezone(timezone_info).strftime("%H:%M") if parsed else "—"
-        entries.append(
-            [
-                f"🕙 {local_time} — <b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>",
-                f"🏆 {html.escape(match.tournament_name)}",
-                "",
-            ]
-        )
+        tournament_name = getattr(match, "tournament_name", None)
+        group_name = tournament_name.strip() if isinstance(tournament_name, str) and tournament_name.strip() else "Другие матчи"
+        groups.setdefault(group_name, []).append(match)
+
+    entries: list[tuple[list[str], int]] = []
+    for tournament_name, tournament_matches in groups.items():
+        for match_index, match in enumerate(tournament_matches):
+            parsed = _parse_datetime(match.scheduled_at)
+            local_time = parsed.astimezone(timezone_info).strftime("%H:%M") if parsed else "—"
+            match_line = f"{local_time} — <b>{html.escape(match.team1_name)} vs {html.escape(match.team2_name)}</b>"
+            if match_index == 0:
+                entries.append(
+                    ([f"🏆 <b>{html.escape(_display_tournament_name(tournament_name))}</b>", match_line], 1)
+                )
+            else:
+                entries.append(([match_line], 1))
+        entries.append(([""], 0))
+
     footer = ["Источник: PandaScore", "", "#CS2 #РасписаниеМатчей"]
     lines = list(header)
     omitted = 0
-    for index, entry in enumerate(entries):
-        remaining = len(entries) - index - 1
-        suffix = ([f"… и ещё {remaining + 1} матчей", ""] if remaining >= 0 else []) + footer
+    for index, (entry, match_count) in enumerate(entries):
+        omitted_if_stopped = match_count + sum(next_match_count for _, next_match_count in entries[index + 1 :])
+        suffix = ([f"… и ещё {omitted_if_stopped} матчей", ""] if omitted_if_stopped else []) + footer
         if len("\n".join(lines + entry + suffix).strip()) > MAX_TELEGRAM_MESSAGE_LENGTH:
-            omitted = remaining + 1
+            omitted = omitted_if_stopped
             break
         lines.extend(entry)
     if omitted:
         lines.extend([f"… и ещё {omitted} матчей", ""])
     lines.extend(footer)
     return "\n".join(lines).strip()
+
+
+def _display_tournament_name(tournament_name: str) -> str:
+    """Make PandaScore's league/serie/stage label easier to scan in a post."""
+    parts = [part.strip() for part in tournament_name.split(" — ") if part.strip()]
+    if len(parts) >= 3 and parts[1].startswith("20"):
+        return f"{parts[0]} {parts[1]} · {' · '.join(parts[2:])}"
+    return " · ".join(parts) if parts else "Другие матчи"
 
 
 def format_schedule_photo_caption(local_now: datetime, match_count: int) -> str:
