@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -14,11 +15,14 @@ from cs2bot.match_sources.storage import (
     is_channel_processed,
     is_processed,
     legacy_channel_match_uid,
+    logo_cache_key,
     mark_channel_processed,
     mark_content_processed,
     mark_processed,
     processed_key,
     release_delivery_claim,
+    read_cached_logo,
+    write_cached_logo,
 )
 
 
@@ -57,6 +61,14 @@ class FakeS3:
             "ETag": etag,
         }
         return {"ETag": etag}
+
+    def get_object(self, Bucket, Key):
+        if Key not in self.objects:
+            raise ClientError(
+                {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+                "GetObject",
+            )
+        return {"Body": io.BytesIO(self.objects[Key]["Body"])}
 
 
 class FakeUnquotedETagS3(FakeS3):
@@ -105,6 +117,17 @@ def _match():
 def test_is_processed_false_when_object_missing():
     s3 = FakeS3()
     assert asyncio.run(is_processed("hltv_2378481", client=s3, bucket="bucket")) is False
+
+
+def test_logo_cache_round_trips_png_by_source_url():
+    s3 = FakeS3()
+    url = "https://cdn-api.pandascore.co/images/team/image/10/navi.png"
+    raw = b"validated-logo"
+
+    assert write_cached_logo(url, raw, client=s3, bucket="bucket") is True
+    assert read_cached_logo(url, client=s3, bucket="bucket") == raw
+    assert logo_cache_key(url) in s3.objects
+    assert s3.objects[logo_cache_key(url)]["ContentType"] == "image/png"
 
 
 def test_mark_processed_creates_object():

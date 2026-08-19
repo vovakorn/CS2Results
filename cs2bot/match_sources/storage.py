@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -61,6 +62,56 @@ def alert_key(alert_code: str, now: datetime) -> str:
 def safe_storage_part(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return cleaned.strip("_") or "unknown"
+
+
+def logo_cache_key(url: str) -> str:
+    """Return an opaque, versioned Object Storage key for a logo URL."""
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
+    return f"media/logos/{digest}.png"
+
+
+def read_cached_logo(
+    url: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> bytes | None:
+    """Read a cached logo, treating cache and storage failures as misses."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = logo_cache_key(url)
+    try:
+        response = s3.get_object(Bucket=bucket_name, Key=key)
+        body = response["Body"]
+        try:
+            return body.read()
+        finally:
+            body.close()
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return None
+        logger.warning("logo_cache_read_failed key=%s error_type=%s", key, type(exc).__name__)
+        return None
+    except (KeyError, OSError) as exc:
+        logger.warning("logo_cache_read_failed key=%s error_type=%s", key, type(exc).__name__)
+        return None
+
+
+def write_cached_logo(
+    url: str,
+    data: bytes,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> bool:
+    """Persist a validated logo without making publication depend on the cache."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = logo_cache_key(url)
+    try:
+        s3.put_object(Bucket=bucket_name, Key=key, Body=data, ContentType="image/png")
+        return True
+    except ClientError as exc:
+        logger.warning("logo_cache_write_failed key=%s error_type=%s", key, type(exc).__name__)
+        return False
 
 
 async def write_analytics_record(
