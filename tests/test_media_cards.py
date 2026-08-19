@@ -13,6 +13,13 @@ from cs2bot.match_sources.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_logo_memory_cache():
+    media_cards._logo_memory_cache.clear()
+    yield
+    media_cards._logo_memory_cache.clear()
+
+
 def _result():
     return MatchNormalized(
         source="pandascore",
@@ -378,6 +385,91 @@ def test_logo_download_accepts_small_png(monkeypatch):
 
     assert logo is not None
     assert logo.size == (20, 20)
+
+
+def test_logo_download_uses_persistent_cache_before_cdn(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGBA", (20, 20), (255, 0, 0, 255)).save(output, "PNG")
+    raw = output.getvalue()
+    url = "https://cdn-api.pandascore.co/images/team/image/1/250px_team.png"
+
+    media_cards._logo_memory_cache.clear()
+    monkeypatch.setattr(media_cards, "read_cached_logo", lambda value: raw if value == url else None)
+    monkeypatch.setattr(
+        media_cards.requests,
+        "get",
+        lambda *args, **kwargs: pytest.fail("CDN must not be requested when cache contains logo"),
+    )
+
+    logo = media_cards.fetch_team_logo(url)
+
+    assert logo is not None
+    assert logo.size == (20, 20)
+
+
+def test_logo_cache_failure_does_not_prevent_cdn_fetch(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGBA", (20, 20), (255, 0, 0, 255)).save(output, "PNG")
+    raw = output.getvalue()
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"Content-Type": "image/png", "Content-Length": str(len(raw))}
+
+        def iter_content(self, size):
+            yield raw
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        media_cards,
+        "read_cached_logo",
+        lambda value: (_ for _ in ()).throw(RuntimeError("storage unavailable")),
+    )
+    monkeypatch.setattr(
+        media_cards,
+        "write_cached_logo",
+        lambda value, data: (_ for _ in ()).throw(RuntimeError("storage unavailable")),
+    )
+    monkeypatch.setattr(media_cards.requests, "get", lambda *args, **kwargs: FakeResponse())
+
+    logo = media_cards.fetch_team_logo(
+        "https://cdn-api.pandascore.co/images/team/image/1/250px_team.png"
+    )
+
+    assert logo is not None
+
+
+def test_logo_download_uses_cdn_timeout_that_allows_cold_responses(monkeypatch):
+    output = io.BytesIO()
+    Image.new("RGBA", (20, 20), (255, 0, 0, 255)).save(output, "PNG")
+    raw = output.getvalue()
+    requested_timeouts = []
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"Content-Type": "image/png", "Content-Length": str(len(raw))}
+
+        def iter_content(self, size):
+            yield raw
+
+        def close(self):
+            pass
+
+    def fake_get(url, **kwargs):
+        requested_timeouts.append(kwargs["timeout"])
+        return FakeResponse()
+
+    monkeypatch.setattr(media_cards.requests, "get", fake_get)
+
+    logo = media_cards.fetch_team_logo(
+        "https://cdn-api.pandascore.co/images/team/image/1/250px_team.png"
+    )
+
+    assert logo is not None
+    assert requested_timeouts == [media_cards.LOGO_DOWNLOAD_TIMEOUT_SECONDS]
+    assert media_cards.LOGO_DOWNLOAD_TIMEOUT_SECONDS >= 5.0
 
 
 def test_logo_download_prefers_official_thumbnail(monkeypatch):

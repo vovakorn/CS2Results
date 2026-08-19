@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+from collections import OrderedDict
+import hashlib
 import logging
 import math
 import re
@@ -14,6 +16,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 from .match_sources.models import MatchNormalized, TournamentRadar, UpcomingMatchNormalized
+from .match_sources.storage import read_cached_logo, write_cached_logo
 
 RESULT_CARD_SIZE = (1080, 1080)
 SCHEDULE_CARD_SIZE = (1080, 1080)
@@ -22,6 +25,10 @@ MAX_SCHEDULE_MATCHES = 10
 MAX_SCHEDULE_TOTAL_MATCHES = 20
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
+# PandaScore's CDN can take longer than two seconds to start a cold response.
+# This is still bounded per image and stays within the results-card budget.
+LOGO_DOWNLOAD_TIMEOUT_SECONDS = 5.0
+MAX_LOGO_MEMORY_CACHE_ITEMS = 256
 LOGO_HOSTS = {
     "cdn-api.pandascore.co",
     "cdn.pandascore.co",
@@ -34,6 +41,7 @@ ALLOWED_LOGO_TYPES = {
 }
 
 logger = logging.getLogger(__name__)
+_logo_memory_cache: OrderedDict[str, bytes] = OrderedDict()
 
 NAVY = (7, 17, 32)
 PANEL = (18, 38, 61)
@@ -203,11 +211,74 @@ def _logo_candidates(url: str) -> list[str]:
     return [thumbnail, url]
 
 
-def fetch_team_logo(url: str | None, timeout: float = 2.0) -> Image.Image | None:
+def _decode_logo(raw: bytes) -> Image.Image:
+    if not raw or len(raw) > MAX_LOGO_BYTES:
+        raise MediaCardError("Team logo is too large or empty")
+    try:
+        with Image.open(io.BytesIO(raw)) as probe:
+            if probe.width * probe.height > MAX_LOGO_PIXELS:
+                raise MediaCardError("Team logo dimensions are too large")
+            probe.verify()
+        logo = Image.open(io.BytesIO(raw))
+        logo.load()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        error = MediaCardError("Team logo is not a valid image")
+        error.__cause__ = exc
+        raise error
+    return logo.convert("RGBA")
+
+
+def _remember_logo(url: str, raw: bytes) -> None:
+    _logo_memory_cache[url] = raw
+    _logo_memory_cache.move_to_end(url)
+    while len(_logo_memory_cache) > MAX_LOGO_MEMORY_CACHE_ITEMS:
+        _logo_memory_cache.popitem(last=False)
+
+
+def _cached_logo(url: str) -> Image.Image | None:
+    raw = _logo_memory_cache.get(url)
+    if raw is not None:
+        _logo_memory_cache.move_to_end(url)
+    else:
+        try:
+            raw = read_cached_logo(url)
+        except Exception:
+            raw = None
+        if raw is not None:
+            _remember_logo(url, raw)
+    if raw is None:
+        return None
+    try:
+        return _decode_logo(raw)
+    except MediaCardError:
+        logger.warning("team_logo_cache_invalid key=%s", hashlib.sha256(url.encode()).hexdigest()[:12])
+        return None
+
+
+def _cache_logo(url: str, logo: Image.Image) -> None:
+    output = io.BytesIO()
+    logo.save(output, "PNG", optimize=True)
+    raw = output.getvalue()
+    if len(raw) > MAX_LOGO_BYTES:
+        return
+    _remember_logo(url, raw)
+    try:
+        write_cached_logo(url, raw)
+    except Exception:
+        pass
+
+
+def fetch_team_logo(
+    url: str | None,
+    timeout: float = LOGO_DOWNLOAD_TIMEOUT_SECONDS,
+) -> Image.Image | None:
     """Download and validate a PandaScore team logo without following redirects."""
     safe_url = _safe_logo_url(url)
     if not safe_url:
         return None
+    cached = _cached_logo(safe_url)
+    if cached is not None:
+        return cached
     last_error: MediaCardError | None = None
     for candidate_url in _logo_candidates(safe_url):
         try:
@@ -252,19 +323,13 @@ def fetch_team_logo(url: str | None, timeout: float = 2.0) -> Image.Image | None
         finally:
             response.close()
 
-        raw = b"".join(chunks)
         try:
-            with Image.open(io.BytesIO(raw)) as probe:
-                if probe.width * probe.height > MAX_LOGO_PIXELS:
-                    raise MediaCardError("Team logo dimensions are too large")
-                probe.verify()
-            logo = Image.open(io.BytesIO(raw))
-            logo.load()
-        except (UnidentifiedImageError, OSError, ValueError) as exc:
-            last_error = MediaCardError("Team logo is not a valid image")
-            last_error.__cause__ = exc
+            logo = _decode_logo(b"".join(chunks))
+        except MediaCardError as exc:
+            last_error = exc
             continue
-        return logo.convert("RGBA")
+        _cache_logo(safe_url, logo)
+        return logo
 
     raise last_error or MediaCardError("Team logo is unavailable")
 
