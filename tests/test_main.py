@@ -275,7 +275,7 @@ def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch
 
     assert response["statusCode"] == 200
     assert sent_text[0][1]["timeout"] == main.RESULT_TELEGRAM_TIMEOUT_SECONDS
-    assert sent_text[0][1]["max_attempts"] == main.RESULT_TELEGRAM_MAX_ATTEMPTS
+    assert sent_text[0][1]["max_attempts"] == main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS
 
 
 def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):
