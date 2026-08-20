@@ -965,8 +965,38 @@ def test_schedule_context_explains_form_and_series_format():
     assert "Контекст к матчам дня" in text
     assert "Последние 5 матчей: NAVI — 4 победы и 1 поражение; FaZe — 2 победы и 3 поражения." in text
     assert "не рейтинг команд и не прогноз" in text
-    assert "Очные встречи: 2–1 в пользу NAVI (3 последних матча)." in text
-    assert "Bo3: для победы нужно выиграть большинство карт." in text
+    assert "Очные встречи за последние 3 месяца: 2–1 в пользу NAVI (3 матча)." in text
+    assert "Формат IEM Cologne 2026 · Bo3: для победы нужно выиграть большинство карт." in text
+    assert text.index("Формат IEM Cologne 2026") < text.index("NAVI — FaZe")
+    assert text.index("не рейтинг команд и не прогноз") > text.index("Последние 5 матчей")
+
+
+def test_schedule_context_shows_shared_format_once_before_matches():
+    first_match = _upcoming()
+    second_match = _upcoming().model_copy(
+        update={"match_id": "second-match", "team1_name": "Spirit", "team2_name": "Vitality"}
+    )
+    first_context = ScheduleMatchContext(
+        match_id=first_match.match_id,
+        tournament_id="3",
+        team1_form=TeamForm(team_name="NAVI", wins=4, losses=1),
+        team2_form=TeamForm(team_name="FaZe", wins=2, losses=3),
+    )
+    second_context = ScheduleMatchContext(
+        match_id=second_match.match_id,
+        tournament_id="3",
+        team1_form=TeamForm(team_name="Spirit", wins=3, losses=2),
+        team2_form=TeamForm(team_name="Vitality", wins=2, losses=3),
+    )
+
+    text = main.format_schedule_context(
+        [first_match, second_match],
+        {first_match.match_id: first_context, second_match.match_id: second_context},
+    )
+
+    assert text.count("🎮 Формат IEM Cologne 2026 · Bo3") == 1
+    assert text.index("🎮 Формат") < text.index("<b>NAVI — FaZe</b>")
+    assert text.index("🎮 Формат") < text.index("<b>Spirit — Vitality</b>")
 
 
 def test_schedule_context_does_not_turn_recent_results_into_a_prediction():

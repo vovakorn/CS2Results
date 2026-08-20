@@ -707,7 +707,7 @@ def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
     else:
         leader = context.team1_form.team_name if record.team1_wins > record.team2_wins else context.team2_form.team_name
         outcome = f"в пользу {html.escape(leader)}"
-    return f"🤝 Очные встречи: {score} {outcome} ({record.match_count} последних матча)."
+    return f"🤝 Очные встречи за последние 3 месяца: {score} {outcome} ({record.match_count} матча)."
 
 
 def format_schedule_context(
@@ -715,19 +715,33 @@ def format_schedule_context(
     contexts: dict[str, ScheduleMatchContext],
 ) -> str:
     """Format optional, compact pre-match context for the strongest fixtures."""
+    context_matches = [
+        (match, contexts[match.match_id])
+        for match in sorted(matches, key=_context_priority)
+        if match.match_id in contexts
+    ][:SCHEDULE_CONTEXT_MATCH_LIMIT]
+    if not context_matches:
+        return ""
+
     lines = ["🔎 <b>Контекст к матчам дня</b>", ""]
-    included = 0
-    for match in sorted(matches, key=_context_priority):
-        context = contexts.get(match.match_id)
-        if context is None:
+    format_lines: list[str] = []
+    seen_formats: set[tuple[str, int | None]] = set()
+    for match, _ in context_matches:
+        format_key = (match.tournament_name, match.best_of)
+        if format_key in seen_formats:
             continue
-        best_of = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
+        seen_formats.add(format_key)
         if match.best_of == 1:
             format_note = "Bo1: одна карта решает исход матча."
         elif match.best_of:
-            format_note = f"{best_of}: для победы нужно выиграть большинство карт."
+            format_note = f"Bo{match.best_of}: для победы нужно выиграть большинство карт."
         else:
             format_note = "Формат серии пока не указан."
+        format_lines.append(f"🎮 Формат {html.escape(match.tournament_name)} · {format_note}")
+    lines.extend([*format_lines, ""])
+
+    for match, context in context_matches:
+        best_of = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
         lines.extend(
             [
                 f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b> · {best_of}",
@@ -744,19 +758,16 @@ def format_schedule_context(
         head_to_head = _head_to_head_takeaway(context)
         if head_to_head:
             lines.append(head_to_head)
-        lines.extend(
-            [
-                "ℹ️ Это последние результаты, а не рейтинг команд и не прогноз на матч.",
-                f"🎮 {format_note}",
-            ]
-        )
         lines.append("")
-        included += 1
-        if included >= SCHEDULE_CONTEXT_MATCH_LIMIT:
-            break
-    if not included:
-        return ""
-    lines.extend(["Источник: PandaScore", "", "#CS2 #КонтекстМатча"])
+    lines.extend(
+        [
+            "ℹ️ Это последние результаты, а не рейтинг команд и не прогноз на матч.",
+            "",
+            "Источник: PandaScore",
+            "",
+            "#CS2 #КонтекстМатча",
+        ]
+    )
     return "\n".join(lines).strip()[:MAX_TELEGRAM_MESSAGE_LENGTH]
 
 

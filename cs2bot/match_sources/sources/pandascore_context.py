@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from ..models import (
@@ -15,6 +16,9 @@ from ..models import (
     UpcomingMatchNormalized,
 )
 from . import pandascore_source
+
+
+H2H_LOOKBACK_DAYS = 90
 
 
 def _walk_dicts(value: Any) -> Iterable[dict[str, Any]]:
@@ -74,10 +78,22 @@ def _roster_sizes(data: Any, team_ids: set[str]) -> dict[str, int]:
     return sizes
 
 
-async def _fetch_team_matches(team_id: str, limit: int = 5) -> list[MatchNormalized]:
+async def _fetch_team_matches(
+    team_id: str,
+    limit: int = 5,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[MatchNormalized]:
+    params: dict[str, Any] = {
+        "filter[status]": "finished",
+        "sort": "-end_at",
+        "per_page": min(max(limit, 1), 100),
+    }
+    if start and end:
+        params["range[begin_at]"] = pandascore_source._utc_range(start, end)
     data = await pandascore_source._fetch_json(
         f"/teams/{team_id}/matches",
-        {"filter[status]": "finished", "sort": "-end_at", "per_page": limit},
+        params,
     )
     return pandascore_source._normalize_raw_matches(data)[:limit]
 
@@ -87,12 +103,28 @@ def _head_to_head(
     team2_id: str,
     matches: list[MatchNormalized],
     limit: int = 3,
+    now: datetime | None = None,
 ) -> HeadToHead | None:
-    """Build a recent H2H record from one team's own match history."""
+    """Build a H2H record from the last 90 days."""
+    reference = now or datetime.now(timezone.utc)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=timezone.utc)
+    cutoff = reference.astimezone(timezone.utc) - timedelta(days=H2H_LOOKBACK_DAYS)
     team1_wins = 0
     team2_wins = 0
     counted = 0
     for match in matches:
+        match_date = match.end_date or match.date or match.start_date
+        if not match_date:
+            continue
+        try:
+            completed_at = datetime.fromisoformat(match_date.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=timezone.utc)
+        if completed_at.astimezone(timezone.utc) < cutoff:
+            continue
         refs = match.source_refs
         if not refs or {refs.team1_id, refs.team2_id} != {team1_id, team2_id}:
             continue
@@ -119,23 +151,31 @@ async def fetch_schedule_match_context(match: UpcomingMatchNormalized) -> Schedu
     if not refs or not refs.team1_id or not refs.team2_id:
         raise SourceUnavailableError("PandaScore context requires team IDs")
 
+    reference = datetime.now(timezone.utc)
     requests: list[Any] = [
-        _fetch_team_matches(refs.team1_id, limit=20),
-        _fetch_team_matches(refs.team2_id, limit=20),
+        _fetch_team_matches(refs.team1_id, limit=5),
+        _fetch_team_matches(refs.team2_id, limit=5),
+        _fetch_team_matches(
+            refs.team1_id,
+            limit=100,
+            start=reference - timedelta(days=H2H_LOOKBACK_DAYS),
+            end=reference,
+        ),
     ]
     if refs.tournament_id:
         requests.append(pandascore_source._fetch_json(f"/tournaments/{refs.tournament_id}/rosters", {}))
     responses = await asyncio.gather(*requests)
     team1_matches = responses[0]
     team2_matches = responses[1]
-    roster_data = responses[2] if len(responses) > 2 else []
+    h2h_matches = responses[2]
+    roster_data = responses[3] if len(responses) > 3 else []
     sizes = _roster_sizes(roster_data, {refs.team1_id, refs.team2_id})
     return ScheduleMatchContext(
         match_id=match.match_id,
         tournament_id=refs.tournament_id,
         team1_form=_team_form(match.team1_name, refs.team1_id, team1_matches[:5]),
         team2_form=_team_form(match.team2_name, refs.team2_id, team2_matches[:5]),
-        head_to_head=_head_to_head(refs.team1_id, refs.team2_id, team1_matches),
+        head_to_head=_head_to_head(refs.team1_id, refs.team2_id, h2h_matches, now=reference),
         team1_roster_size=sizes.get(refs.team1_id),
         team2_roster_size=sizes.get(refs.team2_id),
     )
