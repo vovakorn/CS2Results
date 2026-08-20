@@ -69,6 +69,11 @@ from .match_sources.storage import (
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+# Cloud Functions does not always install a root handler. Without one the
+# structured delivery events below are silently dropped, which makes a
+# recoverable Telegram failure impossible to diagnose from Cloud Logging.
+if not logging.getLogger().handlers:
+    logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_METHOD = "sendMessage"
@@ -80,6 +85,10 @@ MAX_TELEGRAM_CAPTION_LENGTH = 1024
 RESULT_MEDIA_BUDGET_SECONDS = 35.0
 RESULT_TELEGRAM_TIMEOUT_SECONDS = 4
 RESULT_TELEGRAM_MAX_ATTEMPTS = 1
+# A result can fall out of a provider's short recent-results page after one
+# failed delivery. Give the lightweight text fallback one extra chance while
+# keeping the potentially expensive photo upload bounded to one attempt.
+RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS = 2
 _monotonic = time.monotonic
 MATCH_URL_HOSTS = {
     "pandascore": {"pandascore.co", "www.pandascore.co"},
@@ -1612,14 +1621,14 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             channel["chat_id"],
                             text,
                             timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
-                            max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
+                            max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS,
                         )
                 else:
                     send_to_telegram(
                         channel["chat_id"],
                         text,
                         timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
-                        max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
+                        max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS,
                     )
                 channel_stats[name] += 1
                 sent_messages += 1
