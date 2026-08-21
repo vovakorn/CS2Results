@@ -60,6 +60,7 @@ def test_auto_falls_back_to_liquipedia_when_pandascore_empty(monkeypatch):
             return []
         return [_match(source="liquipedia", match_id="2")]
 
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FALLBACK", True)
     monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
     matches = asyncio.run(match_fetcher.get_new_finished_matches(source="auto", dry_run=True))
     assert matches[0].source == "liquipedia"
@@ -71,6 +72,7 @@ def test_auto_falls_back_to_liquipedia_when_pandascore_unavailable(monkeypatch):
             raise SourceUnavailableError("down")
         return [_match(source="liquipedia", match_id="2")]
 
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FALLBACK", True)
     monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
     matches = asyncio.run(match_fetcher.get_new_finished_matches(source="auto", dry_run=True))
     assert matches[0].source == "liquipedia"
@@ -113,6 +115,7 @@ def test_auto_falls_back_when_primary_is_stale_in_production(monkeypatch):
         match.end_date = "2000-01-01T00:00:00Z" if source == "pandascore" else recent
         return [match]
 
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FALLBACK", True)
     monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
 
     used_source, matches = asyncio.run(
@@ -132,6 +135,7 @@ def test_auto_never_returns_stale_primary_when_fallback_fails(monkeypatch):
         match.end_date = "2000-01-01T00:00:00Z"
         return [match]
 
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FALLBACK", True)
     monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
 
     with pytest.raises(SourceUnavailableError, match="no usable match source"):
@@ -148,6 +152,7 @@ def test_auto_falls_back_when_primary_has_no_valid_matches(monkeypatch):
             match.score1 = None
         return [match]
 
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FALLBACK", True)
     monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
 
     used_source, _ = asyncio.run(
@@ -395,3 +400,16 @@ def test_log_source_freshness_rejects_future_timestamp(monkeypatch, caplog):
     assert fresh is False
     assert age_hours == -24
     assert "event=source_future_timestamp" in caplog.text
+
+
+def test_freshness_uses_latest_of_end_date_date_and_start_date():
+    match = _match()
+    match.end_date = "2026-05-24T10:00:00Z"
+    match.date = "2026-05-28T09:00:00Z"
+    match.start_date = "2026-05-27T10:00:00Z"
+    reference = datetime(2026, 5, 28, 10, 0, tzinfo=timezone.utc)
+
+    assert match_fetcher.latest_match_datetime([match]) == datetime(
+        2026, 5, 28, 9, 0, tzinfo=timezone.utc
+    )
+    assert match_fetcher.is_match_fresh(match, now=reference) is True

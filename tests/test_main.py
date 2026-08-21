@@ -22,6 +22,16 @@ def configured_runtime(monkeypatch):
     monkeypatch.setattr(main, "OBJECT_STORAGE_BUCKET", "test-bucket")
     monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", "pandascore-token")
 
+    async def no_reconciliation(*args, **kwargs):
+        return False
+
+    async def mark_sent(claim, *args, **kwargs):
+        return claim
+
+    monkeypatch.setattr(main, "reconcile_channel_delivery", no_reconciliation)
+    monkeypatch.setattr(main, "reconcile_content_delivery", no_reconciliation)
+    monkeypatch.setattr(main, "mark_delivery_claim_sent", mark_sent)
+
 
 def _match(match_id="1", team1="NAVI", team2="FaZe"):
     return MatchNormalized(
@@ -206,6 +216,32 @@ def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
     ]
     assert sent == []
     assert marked == []
+
+
+def test_analytics_import_does_not_require_telegram_or_match_source(monkeypatch):
+    recorded = []
+
+    async def fake_record(channel_id, message_id, views, reactions):
+        recorded.append((channel_id, message_id, views, reactions))
+
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "")
+    monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", "")
+    monkeypatch.setattr(main, "CHANNELS", [])
+    monkeypatch.setattr(main, "record_manual_post_metrics", fake_record)
+
+    response = main.handler(
+        {
+            "job": "analytics",
+            "analytics_operation": "import_metrics",
+            "channel_id": "global",
+            "message_id": 42,
+            "views_24h": 100,
+        },
+        None,
+    )
+
+    assert response["statusCode"] == 200
+    assert recorded == [("global", 42, 100, None)]
 
 
 def test_result_uses_spoiler_photo_when_media_cards_enabled(monkeypatch):
@@ -506,6 +542,66 @@ def test_handler_does_not_mark_when_send_fails(monkeypatch):
     assert response["statusCode"] == 502
     assert marked == []
     assert released == [f"global_{_match().match_uid}"]
+
+
+def test_handler_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
+    released = []
+    alerts = []
+
+    async def fake_get_new_finished_matches(**kwargs):
+        return [_match()]
+
+    def fake_send(chat_id, text, timeout=7, max_attempts=3):
+        raise main.TelegramDeliveryUncertainError("outcome is unknown")
+
+    async def fake_claim(match, channel_id, legacy_channel_name=None):
+        return _claim(match, channel_id)
+
+    async def fake_release(claim):
+        released.append(claim.match_uid)
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "send_to_telegram", fake_send)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "release_delivery_claim", fake_release)
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 502
+    assert released == []
+    assert alerts[0][0] == "telegram_delivery_uncertain"
+
+
+def test_schedule_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
+    released = []
+    alerts = []
+
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+
+    async def fake_claim(content_uid):
+        return DeliveryClaim(content_uid, f"claims/{content_uid}.json", "claim", '"etag"')
+
+    async def fake_release(claim):
+        released.append(claim.match_uid)
+
+    def fake_send(*args, **kwargs):
+        raise main.TelegramDeliveryUncertainError("outcome is unknown")
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "release_delivery_claim", fake_release)
+    monkeypatch.setattr(main, "send_to_telegram", fake_send)
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
+
+    response = main.handler({"job": "schedule"}, None)
+
+    assert response["statusCode"] == 502
+    assert released == []
+    assert alerts[0][0] == "telegram_delivery_uncertain"
 
 
 def test_handler_marks_successful_channel_before_later_channel_fails(monkeypatch):

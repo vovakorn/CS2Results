@@ -234,7 +234,7 @@ MATCH_SOURCE = os.getenv("MATCH_SOURCE", "auto")
 if MATCH_SOURCE not in {"auto", "pandascore", "liquipedia"}:
     raise ValueError("MATCH_SOURCE must be auto, pandascore, or liquipedia")
 
-ENABLE_LIQUIPEDIA_FALLBACK = _bool_env("ENABLE_LIQUIPEDIA_FALLBACK", True)
+ENABLE_LIQUIPEDIA_FALLBACK = _bool_env("ENABLE_LIQUIPEDIA_FALLBACK", False)
 ENABLE_LIQUIPEDIA_SHADOW = _bool_env("ENABLE_LIQUIPEDIA_SHADOW", False)
 ALLOW_STALE_IN_DRY_RUN = _bool_env("ALLOW_STALE_IN_DRY_RUN", True)
 REQUEST_TIMEOUT_SECONDS = _int_setting("REQUEST_TIMEOUT_SECONDS", 15)

@@ -65,6 +65,7 @@ def _platform_config(platform: str) -> dict[str, str]:
             f"{prefix}_EXPECTED_USERNAME",
             os.getenv("SOCIAL_OAUTH_EXPECTED_USERNAME", "cs2results"),
         ).lstrip("@").casefold(),
+        "expected_user_id": os.getenv(f"{prefix}_EXPECTED_USER_ID", "").strip(),
     }
 
 
@@ -323,6 +324,8 @@ def _store_credentials(
         raise OAuthFlowError(f"{platform} user id is missing")
     if not isinstance(username, str) or username.lstrip("@").casefold() != config["expected_username"]:
         raise OAuthFlowError(f"authorized {platform} account is not allowed")
+    if config["expected_user_id"] and str(user_id) != config["expected_user_id"]:
+        raise OAuthFlowError(f"authorized {platform} account id is not allowed")
 
     try:
         expires_in = max(0, int(token_data.get("expires_in") or 0))
@@ -475,7 +478,11 @@ def _signed_request(event: dict[str, Any], platform: str) -> dict[str, Any]:
     value = _form(event).get("signed_request", "")
     if not value:
         raise OAuthFlowError("signed_request is missing")
-    return _signed_request_payload(value, config["app_secret"])
+    payload = _signed_request_payload(value, config["app_secret"])
+    expected_user_id = config["expected_user_id"]
+    if not expected_user_id or str(payload["user_id"]) != expected_user_id:
+        raise OAuthFlowError("signed request account is not allowed")
+    return payload
 
 
 def _deauthorize(event: dict[str, Any], platform: str, context: Any) -> dict[str, Any]:

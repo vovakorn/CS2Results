@@ -17,9 +17,11 @@ def oauth_environment(monkeypatch):
         "INSTAGRAM_APP_ID": "ig-app-id",
         "INSTAGRAM_APP_SECRET": "ig-app-secret",
         "INSTAGRAM_LOCKBOX_SECRET_ID": "ig-secret-id",
+        "INSTAGRAM_EXPECTED_USER_ID": "123",
         "THREADS_APP_ID": "threads-app-id",
         "THREADS_APP_SECRET": "threads-app-secret",
         "THREADS_LOCKBOX_SECRET_ID": "threads-secret-id",
+        "THREADS_EXPECTED_USER_ID": "789",
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)
@@ -205,7 +207,7 @@ def test_data_deletion_requires_meta_signature(monkeypatch):
         "_remove_credentials",
         lambda platform, config, context: removed.append(platform),
     )
-    signed_request = _signed_request({"user_id": "123"}, "threads-app-secret")
+    signed_request = _signed_request({"user_id": "789"}, "threads-app-secret")
 
     response = social_oauth.handler(
         _event(
@@ -221,3 +223,24 @@ def test_data_deletion_requires_meta_signature(monkeypatch):
     payload = json.loads(response["body"])
     assert payload["url"].startswith("https://oauth.example.test/")
     assert payload["confirmation_code"]
+
+
+def test_data_deletion_rejects_a_different_signed_user(monkeypatch):
+    monkeypatch.setattr(
+        social_oauth,
+        "_remove_credentials",
+        lambda *args, **kwargs: pytest.fail("another user must not clear credentials"),
+    )
+    signed_request = _signed_request({"user_id": "other-user"}, "threads-app-secret")
+
+    response = social_oauth.handler(
+        _event(
+            "/oauth/meta/threads/data-deletion",
+            method="POST",
+            body=f"signed_request={signed_request}",
+        ),
+        {"token": "iam-token"},
+    )
+
+    assert response["statusCode"] == 400
+    assert "not allowed" in response["body"]

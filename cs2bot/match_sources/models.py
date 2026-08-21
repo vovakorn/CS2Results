@@ -60,6 +60,7 @@ class MatchNormalized(BaseModel):
     tournament_tier_type: str | None = Field(default=None, max_length=100)
     publisher_tier: str | None = Field(default=None, max_length=100)
     tournament_section: str | None = Field(default=None, max_length=200)
+    is_final: bool = False
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
     team1_logo_url: str | None = Field(default=None, max_length=2048)
@@ -88,6 +89,7 @@ class MatchNormalized(BaseModel):
     is_lan: bool | None = None
     location: str | None = Field(default=None, max_length=300)
     prize_pool_usd: int | None = Field(default=None, ge=0, le=10_000_000_000)
+    winner_prize_usd: int | None = Field(default=None, ge=0, le=10_000_000_000)
     operator: str | None = Field(default=None, max_length=200)
 
     is_tier1_lan: bool = False

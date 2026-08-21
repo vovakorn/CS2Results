@@ -1,8 +1,10 @@
+import importlib
 import json
 
 import pytest
 
 from cs2bot.config import _load_channels_from_env
+from cs2bot.match_sources import config as match_source_config
 from cs2bot.match_sources.config import _load_json_file
 
 
@@ -21,6 +23,14 @@ def test_load_json_file_reads_tier1_config(tmp_path):
 
 def test_load_json_file_ignores_missing_file(tmp_path):
     assert _load_json_file(str(tmp_path / "missing.json")) == {}
+
+
+def test_liquipedia_fallback_is_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("ENABLE_LIQUIPEDIA_FALLBACK", raising=False)
+
+    reloaded = importlib.reload(match_source_config)
+
+    assert reloaded.ENABLE_LIQUIPEDIA_FALLBACK is False
 
 
 def test_channel_config_is_normalized_and_validated(monkeypatch):

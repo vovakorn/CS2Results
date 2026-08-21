@@ -1139,6 +1139,84 @@ def render_result_card(match: MatchNormalized) -> bytes:
     return _as_png(canvas)
 
 
+def _chamfered_panel(
+    draw: ImageDraw.ImageDraw,
+    box: tuple[int, int, int, int],
+    *,
+    cut: int = 22,
+) -> None:
+    x0, y0, x1, y1 = box
+    points = [(x0 + cut, y0), (x1 - cut, y0), (x1, y0 + cut), (x1, y1 - cut),
+              (x1 - cut, y1), (x0 + cut, y1), (x0, y1 - cut), (x0, y0 + cut)]
+    draw.polygon(points, fill=(10, 19, 29, 245), outline=AMBER)
+    draw.line(points + [points[0]], fill=AMBER, width=2)
+
+
+def _format_usd(value: int) -> str:
+    return f"${value:,}".replace(",", " ")
+
+
+def can_render_final_card(match: MatchNormalized) -> bool:
+    """Require explicit final metadata and complete, source-confirmed display data."""
+    return (
+        match.is_final
+        and match.winner_prize_usd is not None
+        and 3 <= len(match.maps) <= 5
+        and all(item.score1 is not None and item.score2 is not None for item in match.maps)
+    )
+
+
+def render_final_card(match: MatchNormalized) -> bytes:
+    """Render a deterministic 1080px final card with map scores and champion payout."""
+    if not can_render_final_card(match):
+        raise MediaCardError("Final card requires confirmed final maps and winner payout")
+
+    canvas = _background(RESULT_CARD_SIZE, header_accent_y=82).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    width = RESULT_CARD_SIZE[0]
+    panel = (190, 54, 890, 122)
+    _chamfered_panel(draw, panel, cut=16)
+    title = match.tournament_name.upper()
+    _centered_text(draw, width // 2, 68, title, _fit_font(draw, title, 620, 30, 16, display=True), WHITE)
+    _centered_text(draw, width // 2, 176, "ГРАНД-ФИНАЛ", _font(40, display=True), AMBER)
+
+    score = f"{match.score1}:{match.score2}"
+    score_font = _font(156, display=True)
+    _centered_text(draw, width // 2, 252, score, score_font, AMBER)
+    winner_side = _winner_side(match)
+    name_width = 330
+    left_name, right_name = match.team1_name.upper(), match.team2_name.upper()
+    _aligned_text(draw, 66, 320, left_name, _fit_font(draw, left_name, name_width, 62, 20),
+                  AMBER if winner_side == "left" else WHITE, "left")
+    _aligned_text(draw, 1014, 320, right_name, _fit_font(draw, right_name, name_width, 62, 20),
+                  AMBER if winner_side == "right" else WHITE, "right")
+
+    table = (190, 470, 890, 470 + 76 * len(match.maps))
+    _chamfered_panel(draw, table)
+    x0, y0, x1, _ = table
+    divider_x = (x0 + x1) // 2
+    draw.line((divider_x, y0 + 16, divider_x, table[3] - 16), fill=(*AMBER, 180), width=2)
+    for index, item in enumerate(match.maps):
+        row_y = y0 + index * 76
+        if index:
+            draw.line((x0 + 18, row_y, x1 - 18, row_y), fill=(*AMBER, 150), width=1)
+        _centered_text(draw, (x0 + divider_x) // 2, row_y + 18, item.name,
+                       _fit_font(draw, item.name, 280, 36, 16), WHITE)
+        _centered_text(draw, (divider_x + x1) // 2, row_y + 18, f"{item.score1}:{item.score2}", _font(38), AMBER)
+
+    prize_top = table[3] + 30
+    prize = (190, prize_top, 890, prize_top + 86)
+    _chamfered_panel(draw, prize)
+    draw.line((divider_x, prize_top + 16, divider_x, prize_top + 70), fill=(*AMBER, 180), width=2)
+    _centered_text(draw, (prize[0] + divider_x) // 2, prize_top + 28, "ПРИЗОВЫЕ ПОБЕДИТЕЛЯ",
+                   _fit_font(draw, "ПРИЗОВЫЕ ПОБЕДИТЕЛЯ", 300, 24, 13, display=True), AMBER)
+    amount = _format_usd(match.winner_prize_usd)
+    _centered_text(draw, (divider_x + prize[2]) // 2, prize_top + 20, amount,
+                   _fit_font(draw, amount, 300, 54, 22, display=True), AMBER)
+    _centered_text(draw, width // 2, 1012, "ИСТОЧНИК: LIQUIPEDIA", _font(18, display=True), MUTED)
+    return _as_png(canvas)
+
+
 def render_results_card(
     matches: Sequence[MatchNormalized],
     local_now: datetime,
