@@ -15,6 +15,7 @@ LIQUIPEDIA_SECRET_ID="${YC_LIQUIPEDIA_SECRET_ID:-}"
 LIQUIPEDIA_SECRET_VERSION_ID="${YC_LIQUIPEDIA_SECRET_VERSION_ID:-}"
 LIQUIPEDIA_SECRET_KEY="${YC_LIQUIPEDIA_SECRET_KEY:-LIQUIPEDIA_API_KEY}"
 LIQUIPEDIA_SHADOW_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_SHADOW:-}"
+LIQUIPEDIA_FINAL_CARDS_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_FINAL_CARDS:-}"
 TARGET_EXECUTION_TIMEOUT="${YC_EXECUTION_TIMEOUT:-120s}"
 
 readonly -a REQUIRED_ENVIRONMENT=(
@@ -57,10 +58,9 @@ The script never reads Lockbox values. It copies only secret references from the
 version currently tagged "production". All triggers invoking this function must
 also use that tag; otherwise the script stops before creating a version.
 
-For the first Liquipedia deployment, pass YC_LIQUIPEDIA_SECRET_ID,
-YC_LIQUIPEDIA_SECRET_VERSION_ID, YC_LIQUIPEDIA_SECRET_KEY and
-YC_ENABLE_LIQUIPEDIA_SHADOW=1. Only Lockbox references are passed; the API key
-value is never read by this script.
+For Liquipedia overrides, use YC_ENABLE_LIQUIPEDIA_SHADOW or
+YC_ENABLE_LIQUIPEDIA_FINAL_CARDS. Only Lockbox references are passed; the API
+key value is never read by this script.
 EOF
 }
 
@@ -103,7 +103,8 @@ validate_required_configuration() {
   if printf '%s' "${version_json}" | "${JQ_BIN}" -e '
     (.environment // {}) as $environment
     | [($environment.ENABLE_LIQUIPEDIA_FALLBACK // "0"),
-       ($environment.ENABLE_LIQUIPEDIA_SHADOW // "0")]
+       ($environment.ENABLE_LIQUIPEDIA_SHADOW // "0"),
+       ($environment.ENABLE_LIQUIPEDIA_FINAL_CARDS // "0")]
     | any(. == "1" or (ascii_downcase == "true") or (ascii_downcase == "yes"))
   ' >/dev/null; then
     printf '%s' "${version_json}" | "${JQ_BIN}" -e \
@@ -155,10 +156,18 @@ validate_liquipedia_override() {
     esac
   fi
 
-  if [[ "${LIQUIPEDIA_SHADOW_OVERRIDE}" == "1" && -z "${LIQUIPEDIA_SECRET_ID}" ]]; then
+  if [[ -n "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" ]]; then
+    case "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" in
+      1|true|TRUE|yes|YES) LIQUIPEDIA_FINAL_CARDS_OVERRIDE="1" ;;
+      0|false|FALSE|no|NO) LIQUIPEDIA_FINAL_CARDS_OVERRIDE="0" ;;
+      *) die "YC_ENABLE_LIQUIPEDIA_FINAL_CARDS must be a boolean" ;;
+    esac
+  fi
+
+  if [[ "${LIQUIPEDIA_SHADOW_OVERRIDE}" == "1" || "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" == "1" ]] && [[ -z "${LIQUIPEDIA_SECRET_ID}" ]]; then
     printf '%s' "${PRODUCTION_JSON}" | "${JQ_BIN}" -e \
       'any((.secrets // [])[]; .environment_variable == "LIQUIPEDIA_API_KEY")' >/dev/null \
-      || die "Enabling Liquipedia shadow requires a pinned LIQUIPEDIA_API_KEY Lockbox reference"
+      || die "Enabling Liquipedia requires a pinned LIQUIPEDIA_API_KEY Lockbox reference"
   fi
 }
 
@@ -216,9 +225,10 @@ build_create_arguments() {
   value="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r '.concurrency // empty')"
   [[ -z "${value}" ]] || CREATE_ARGS+=(--concurrency "${value}")
 
-  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" '
+  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" --arg final_cards "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" '
     (.environment // {})
     | if $shadow == "" then . else . + {"ENABLE_LIQUIPEDIA_SHADOW": $shadow} end
+    | if $final_cards == "" then . else . + {"ENABLE_LIQUIPEDIA_FINAL_CARDS": $final_cards} end
     | to_entries
     | sort_by(.key)
     | map([(.key + "=" + (.value | tostring))] | @csv)

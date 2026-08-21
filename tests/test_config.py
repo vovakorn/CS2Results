@@ -27,10 +27,12 @@ def test_load_json_file_ignores_missing_file(tmp_path):
 
 def test_liquipedia_fallback_is_disabled_by_default(monkeypatch):
     monkeypatch.delenv("ENABLE_LIQUIPEDIA_FALLBACK", raising=False)
+    monkeypatch.delenv("ENABLE_LIQUIPEDIA_FINAL_CARDS", raising=False)
 
     reloaded = importlib.reload(match_source_config)
 
     assert reloaded.ENABLE_LIQUIPEDIA_FALLBACK is False
+    assert reloaded.ENABLE_LIQUIPEDIA_FINAL_CARDS is False
 
 
 def test_channel_config_is_normalized_and_validated(monkeypatch):

@@ -45,6 +45,73 @@ def _score_by_team(match: MatchNormalized) -> dict[str, int | None]:
     }
 
 
+def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
+    """Accept a final only when its complete card data came from Liquipedia."""
+    return (
+        match.source == "liquipedia"
+        and match.is_final
+        and match.winner_prize_usd is not None
+        and 3 <= len(match.maps) <= 5
+        and all(item.score1 is not None and item.score2 is not None for item in match.maps)
+    )
+
+
+def _same_match(left: MatchNormalized, right: MatchNormalized) -> bool:
+    left_time = _shadow_match_datetime(left)
+    right_time = _shadow_match_datetime(right)
+    return (
+        left_time is not None
+        and right_time is not None
+        and _shadow_match_teams(left) == _shadow_match_teams(right)
+        and abs(left_time - right_time) <= SHADOW_MATCH_TIME_WINDOW
+    )
+
+
+def _replace_with_liquipedia_finals(
+    primary_matches: list[MatchNormalized],
+    liquipedia_matches: list[MatchNormalized],
+) -> list[MatchNormalized]:
+    """Use Liquipedia as the complete source for eligible final cards only."""
+    merged = list(primary_matches)
+    replacements = additions = 0
+    for final in liquipedia_matches:
+        if not _is_eligible_liquipedia_final(final):
+            continue
+        index = next((i for i, match in enumerate(merged) if _same_match(match, final)), None)
+        if index is None:
+            merged.append(final)
+            additions += 1
+        else:
+            merged[index] = final
+            replacements += 1
+    logger.info(
+        "event=liquipedia_final_card_selection replacements=%s additions=%s",
+        replacements,
+        additions,
+    )
+    return merged
+
+
+async def _apply_liquipedia_final_card_selection(
+    primary_matches: list[MatchNormalized],
+    limit: int,
+    require_fresh: bool,
+) -> list[MatchNormalized]:
+    if not source_config.ENABLE_LIQUIPEDIA_FINAL_CARDS:
+        return primary_matches
+    if not source_config.LIQUIPEDIA_API_KEY:
+        logger.warning("event=liquipedia_final_card_skipped reason=missing_credentials")
+        return primary_matches
+    try:
+        matches = await _fetch_from_source("liquipedia", limit)
+        if require_fresh:
+            matches = [match for match in matches if is_match_fresh(match)]
+        return _replace_with_liquipedia_finals(primary_matches, matches)
+    except Exception as exc:
+        logger.warning("event=liquipedia_final_card_skipped error_type=%s", type(exc).__name__)
+        return primary_matches
+
+
 def compare_source_matches(
     primary_matches: list[MatchNormalized],
     liquipedia_matches: list[MatchNormalized],
@@ -416,6 +483,12 @@ async def get_new_finished_matches(
             )
         if shadow_diagnostics is not None and comparison is not None:
             shadow_diagnostics.update(comparison)
+        if selected_source == "auto":
+            fetched = await _apply_liquipedia_final_card_selection(
+                fetched,
+                fetch_limit,
+                require_fresh=require_fresh,
+            )
     if require_fresh:
         fresh_matches = [match for match in fetched if is_match_fresh(match)]
         dropped = len(fetched) - len(fresh_matches)
