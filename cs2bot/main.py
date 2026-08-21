@@ -530,6 +530,76 @@ def _safe_match_url(value: str, source: str) -> str:
     return value
 
 
+def _truncate_telegram_html(message: str, limit: int) -> str:
+    """Truncate HTML without leaving Telegram tags or entities incomplete."""
+    if len(message) <= limit:
+        return message
+    if limit <= 1:
+        return "…"[:limit]
+
+    tokens = re.findall(r"<[^>]*>|[^<]+", message)
+    output: List[str] = []
+    output_length = 0
+    open_tags: List[str] = []
+
+    for token in tokens:
+        if token.startswith("<"):
+            tag_match = re.match(r"</?([A-Za-z][\w-]*)", token)
+            tag_name = tag_match.group(1).casefold() if tag_match else ""
+            is_closing = token.startswith("</")
+            is_self_closing = token.rstrip().endswith("/>")
+            if is_closing:
+                if output_length + len(token) <= limit:
+                    if open_tags and open_tags[-1] == tag_name:
+                        open_tags.pop()
+                    output.append(token)
+                    output_length += len(token)
+                else:
+                    break
+                continue
+            if output_length + len(token) > limit:
+                break
+            output.append(token)
+            output_length += len(token)
+            if tag_name and not is_self_closing:
+                open_tags.append(tag_name)
+            continue
+
+        closing_length = sum(len(f"</{tag_name}>") for tag_name in open_tags)
+        if output_length + len(token) + closing_length <= limit:
+            output.append(token)
+            output_length += len(token)
+            continue
+
+        available = limit - output_length - closing_length - 1
+        if available > 0:
+            visible_text = html.unescape(token)
+            prefix = ""
+            for character in visible_text:
+                candidate = html.escape(prefix + character)
+                if len(candidate) > available:
+                    break
+                prefix += character
+            escaped_prefix = html.escape(prefix)
+            output.append(escaped_prefix + "…")
+            output_length += len(escaped_prefix) + 1
+        else:
+            if output_length + closing_length < limit:
+                output.append("…")
+                output_length += 1
+        break
+
+    # A truncation can happen inside an open tag. Close only tags that were
+    # emitted; all omitted content is intentionally discarded.
+    for tag_name in reversed(open_tags):
+        closing_tag = f"</{tag_name}>"
+        if output_length + len(closing_tag) > limit:
+            break
+        output.append(closing_tag)
+        output_length += len(closing_tag)
+    return "".join(output)
+
+
 def format_match(match: Any) -> str:
     """Convert a normalized match result into the final public Telegram template."""
     team1 = _get_attr(match, "team1_name") or _get_attr(match, "team1", "Team 1")
@@ -588,9 +658,7 @@ def format_match(match: Any) -> str:
         pieces.extend(["", "#CS2 #РезультатыМатчей"])
 
     message = "\n".join(pieces)
-    if len(message) > MAX_TELEGRAM_MESSAGE_LENGTH:
-        return message[: MAX_TELEGRAM_MESSAGE_LENGTH - 1] + "…"
-    return message
+    return _truncate_telegram_html(message, MAX_TELEGRAM_MESSAGE_LENGTH)
 
 
 def _local_day_window(

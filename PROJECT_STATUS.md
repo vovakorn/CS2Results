@@ -17,7 +17,7 @@ production и сверки фактического состояния. Теку
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
 - Последняя версия с тегом `production`: `d4eeti7g90s65uljqcsk` (PR #79).
 - Три timer trigger вызывают тег `production`, а не `$latest`.
-- Последняя проверка: 278 тестов локально и успешный GitHub Actions PR #79 на
+- Последняя проверка: 279 тестов локально и успешный GitHub Actions PR #79 на
   Python 3.11 и 3.12.
 - CI проверяет зависимости, безопасность, компиляцию, pytest и сборку архива.
 

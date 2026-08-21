@@ -152,6 +152,28 @@ def test_format_match_caps_telegram_message_length():
     assert len(main.format_match(match)) <= main.MAX_TELEGRAM_MESSAGE_LENGTH
 
 
+def test_format_match_truncation_preserves_html_structure():
+    match = _match(team1="&" * 200, team2="&" * 200)
+    match.tournament_name = "IEM " + ("&" * 200)
+    match.maps = [MapResult(name="&" * 100, score1=13, score2=11) for _ in range(10)]
+    match.match_url = "https://liquipedia.net/counterstrike/Match"
+    match.source = "liquipedia"
+
+    text = main.format_match(match)
+
+    assert len(text) <= main.MAX_TELEGRAM_MESSAGE_LENGTH
+    assert text.count("<b>") == text.count("</b>")
+    assert text.count("<a ") == text.count("</a>")
+    assert "…" in text
+
+    truncated_link = main._truncate_telegram_html(
+        '<a href="https://liquipedia.net/counterstrike/Match">' + ("x" * 5000) + "</a>",
+        100,
+    )
+    assert truncated_link.endswith("</a>")
+    assert truncated_link.count("<a ") == truncated_link.count("</a>")
+
+
 def test_result_delivery_uses_recovery_timeout_and_retry_budget():
     assert main.RESULT_TELEGRAM_TIMEOUT_SECONDS == 8
     assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 2
