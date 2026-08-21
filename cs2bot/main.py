@@ -28,6 +28,8 @@ from .logging_utils import log_event
 from .media_cards import (
     MAX_RESULT_MATCHES,
     MAX_SCHEDULE_TOTAL_MATCHES,
+    can_render_final_card,
+    render_final_card,
     render_result_card,
     render_results_card,
     render_schedule_cards,
@@ -65,6 +67,9 @@ from .match_sources.storage import (
     claim_content_delivery,
     mark_channel_processed,
     mark_content_processed,
+    mark_delivery_claim_sent,
+    reconcile_channel_delivery,
+    reconcile_content_delivery,
     release_delivery_claim,
 )
 
@@ -133,6 +138,10 @@ MAX_SCHEDULE_DAYS_AHEAD = 7
 
 class TelegramDeliveryError(RuntimeError):
     """A safe Telegram failure that never contains the bot token or request URL."""
+
+
+class TelegramDeliveryUncertainError(TelegramDeliveryError):
+    """Telegram may have accepted the request, so retrying could duplicate a post."""
 
 
 def _record_post_analytics(channel_id: str, content_uid: str, job: str, **metadata: Any) -> None:
@@ -273,12 +282,9 @@ def send_to_telegram(
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
-            if attempt < attempts:
-                time.sleep(min(2 ** (attempt - 1), 4))
-                continue
-            raise TelegramDeliveryError("Telegram request failed") from exc
+            raise TelegramDeliveryUncertainError("Telegram request outcome is unknown") from exc
 
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code == 429:
             if attempt < attempts:
                 retry_after = 0
                 try:
@@ -287,13 +293,17 @@ def send_to_telegram(
                     retry_after = 0
                 time.sleep(min(max(retry_after, 2 ** (attempt - 1)), 5))
                 continue
+        if response.status_code >= 500:
+            raise TelegramDeliveryUncertainError(
+                f"Telegram API returned HTTP {response.status_code}"
+            )
         if response.status_code >= 300:
             raise TelegramDeliveryError(f"Telegram API returned HTTP {response.status_code}")
 
         try:
             data = response.json()
         except requests.JSONDecodeError as exc:
-            raise TelegramDeliveryError("Telegram API returned invalid JSON") from exc
+            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from exc
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the message")
         return data
@@ -381,12 +391,9 @@ def send_photo_to_telegram(
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
-            if attempt < attempts:
-                time.sleep(min(2 ** (attempt - 1), 4))
-                continue
-            raise TelegramDeliveryError("Telegram photo request failed") from exc
+            raise TelegramDeliveryUncertainError("Telegram photo request outcome is unknown") from exc
 
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code == 429:
             if attempt < attempts:
                 retry_after = 0
                 try:
@@ -395,12 +402,16 @@ def send_photo_to_telegram(
                     retry_after = 0
                 time.sleep(min(max(retry_after, 2 ** (attempt - 1)), 5))
                 continue
+        if response.status_code >= 500:
+            raise TelegramDeliveryUncertainError(
+                f"Telegram API returned HTTP {response.status_code}"
+            )
         if response.status_code >= 300:
             raise TelegramDeliveryError(f"Telegram API returned HTTP {response.status_code}")
         try:
             data = response.json()
         except requests.JSONDecodeError as exc:
-            raise TelegramDeliveryError("Telegram API returned invalid JSON") from exc
+            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from exc
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the photo")
         return data
@@ -460,12 +471,9 @@ def send_media_group_to_telegram(
                 allow_redirects=False,
             )
         except requests.RequestException as exc:
-            if attempt < attempts:
-                time.sleep(min(2 ** (attempt - 1), 4))
-                continue
-            raise TelegramDeliveryError("Telegram media group request failed") from exc
+            raise TelegramDeliveryUncertainError("Telegram media group request outcome is unknown") from exc
 
-        if response.status_code == 429 or response.status_code >= 500:
+        if response.status_code == 429:
             if attempt < attempts:
                 retry_after = 0
                 try:
@@ -474,6 +482,10 @@ def send_media_group_to_telegram(
                     retry_after = 0
                 time.sleep(min(max(retry_after, 2 ** (attempt - 1)), 5))
                 continue
+        if response.status_code >= 500:
+            raise TelegramDeliveryUncertainError(
+                f"Telegram API returned HTTP {response.status_code}"
+            )
         if response.status_code >= 300:
             raise TelegramDeliveryError(
                 f"Telegram API returned HTTP {response.status_code}"
@@ -481,7 +493,7 @@ def send_media_group_to_telegram(
         try:
             data = response.json()
         except requests.JSONDecodeError as exc:
-            raise TelegramDeliveryError("Telegram API returned invalid JSON") from exc
+            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from exc
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the media group")
         return data
@@ -1056,7 +1068,11 @@ def _handle_content_job(
         if test_run_id:
             content_uid = f"{content_uid}_test_{test_run_id}"
         claim = None
+        telegram_confirmed = False
         try:
+            if asyncio.run(reconcile_content_delivery(content_uid, job)):
+                log_event(logger, logging.INFO, "delivery_state_reconciled", channel=channel_id, job=job)
+                continue
             claim = asyncio.run(claim_content_delivery(content_uid))
             if claim is None:
                 duplicates += 1
@@ -1092,7 +1108,9 @@ def _handle_content_job(
                             has_spoiler=has_spoiler,
                             filename=filename,
                         )
-                except Exception as exc:
+                except TelegramDeliveryUncertainError:
+                    raise
+                except TelegramDeliveryError as exc:
                     media_card_error = type(exc).__name__
                     log_event(
                         logger,
@@ -1106,6 +1124,8 @@ def _handle_content_job(
                     send_to_telegram(channel["chat_id"], text)
             else:
                 send_to_telegram(channel["chat_id"], text)
+            telegram_confirmed = True
+            claim = asyncio.run(mark_delivery_claim_sent(claim))
             if job == "schedule" and schedule_context_text:
                 try:
                     send_to_telegram(channel["chat_id"], schedule_context_text)
@@ -1129,7 +1149,13 @@ def _handle_content_job(
             sent += 1
         except Exception as exc:
             failures += 1
-            if claim is not None:
+            delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
+            if delivery_uncertain:
+                _notify_admin(
+                    "telegram_delivery_uncertain",
+                    f"Telegram не подтвердил исход доставки выпуска «{job}» в канал {channel_id}; повтор отключён.",
+                )
+            if claim is not None and not telegram_confirmed and not delivery_uncertain:
                 try:
                     asyncio.run(release_delivery_claim(claim))
                 except Exception:
@@ -1231,7 +1257,11 @@ def _handle_radar_job(
         if test_run_id:
             content_uid = f"{content_uid}_test_{test_run_id}"
         claim = None
+        telegram_confirmed = False
         try:
+            if asyncio.run(reconcile_content_delivery(content_uid, "radar")):
+                log_event(logger, logging.INFO, "delivery_state_reconciled", channel=channel_id, job="radar")
+                continue
             claim = asyncio.run(claim_content_delivery(content_uid))
             if claim is None:
                 duplicates += 1
@@ -1247,7 +1277,9 @@ def _handle_radar_job(
                         caption,
                         filename=f"cs2-radar-{tournament_id}-{day_key}.png",
                     )
-                except Exception as exc:
+                except TelegramDeliveryUncertainError:
+                    raise
+                except TelegramDeliveryError as exc:
                     media_card_error = type(exc).__name__
                     log_event(
                         logger,
@@ -1260,6 +1292,8 @@ def _handle_radar_job(
                     send_to_telegram(channel["chat_id"], text)
             else:
                 send_to_telegram(channel["chat_id"], text)
+            telegram_confirmed = True
+            claim = asyncio.run(mark_delivery_claim_sent(claim))
             asyncio.run(mark_content_processed(content_uid, "radar"))
             _record_post_analytics(
                 channel_id,
@@ -1272,7 +1306,7 @@ def _handle_radar_job(
             sent += 1
         except Exception as exc:
             failures += 1
-            if claim is not None:
+            if claim is not None and not telegram_confirmed:
                 try:
                     asyncio.run(release_delivery_claim(claim))
                 except Exception:
@@ -1332,7 +1366,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         if isinstance(event, dict):
             requested_job = event.get("job", "results")
             if requested_job not in CONTENT_JOBS:
-                raise ValueError("job must be results, schedule, digest, or radar")
+                raise ValueError("job must be results, schedule, digest, radar, or analytics")
             job = requested_job
             requested_test_run_id = event.get("test_run_id")
             if requested_test_run_id is not None:
@@ -1394,13 +1428,19 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
     if not dry_run:
         missing_config = []
-        if not TELEGRAM_TOKEN:
-            missing_config.append("telegram_credentials")
+        analytics_snapshot = job == "analytics" and (
+            not isinstance(event, dict) or event.get("analytics_operation", "snapshot") == "snapshot"
+        )
+        if job != "analytics" or analytics_snapshot:
+            if not TELEGRAM_TOKEN:
+                missing_config.append("telegram_credentials")
+            if not any(True for _ in _iter_channels()):
+                missing_config.append("delivery_channels")
         if not OBJECT_STORAGE_BUCKET:
             missing_config.append("object_storage_bucket")
-        if not any(True for _ in _iter_channels()):
-            missing_config.append("delivery_channels")
-        if job in {"schedule", "digest", "radar"} and not PANDASCORE_API_TOKEN:
+        if job == "analytics":
+            pass
+        elif job in {"schedule", "digest", "radar"} and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
         elif source == "pandascore" and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
@@ -1528,6 +1568,15 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 continue
 
             try:
+                if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "delivery_state_reconciled",
+                        channel=name,
+                        match_uid=match.match_uid,
+                    )
+                    continue
                 claim = asyncio.run(
                     claim_channel_delivery(
                         match,
@@ -1582,7 +1631,11 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 else:
                     render_started_at = _monotonic()
                     try:
-                        result_card = render_result_card(match)
+                        result_card = (
+                            render_final_card(match)
+                            if match.source == "liquipedia" and can_render_final_card(match)
+                            else render_result_card(match)
+                        )
                         log_event(
                             logger,
                             logging.INFO,
@@ -1602,6 +1655,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             error=_safe_error_message(exc),
                         )
 
+            telegram_confirmed = False
             try:
                 text = format_match(match)
                 if result_card is not None:
@@ -1615,7 +1669,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
                             max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
                         )
-                    except Exception as exc:
+                    except TelegramDeliveryUncertainError:
+                        raise
+                    except TelegramDeliveryError as exc:
                         log_event(
                             logger,
                             logging.WARNING,
@@ -1639,6 +1695,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                         timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
                         max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS,
                     )
+                telegram_confirmed = True
+                claim = asyncio.run(mark_delivery_claim_sent(claim))
                 channel_stats[name] += 1
                 sent_messages += 1
                 log_event(
@@ -1651,17 +1709,24 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 )
             except Exception as exc:
                 failed_messages += 1
-                try:
-                    asyncio.run(release_delivery_claim(claim))
-                except Exception as release_exc:
-                    log_event(
-                        logger,
-                        logging.ERROR,
-                        "delivery_claim_release_failed",
-                        channel=name,
-                        match_uid=match.match_uid,
-                        error_type=type(release_exc).__name__,
+                delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
+                if delivery_uncertain:
+                    _notify_admin(
+                        "telegram_delivery_uncertain",
+                        f"Telegram не подтвердил исход доставки результата {match.match_uid} в канал {name}; повтор отключён.",
                     )
+                if not telegram_confirmed and not delivery_uncertain:
+                    try:
+                        asyncio.run(release_delivery_claim(claim))
+                    except Exception as release_exc:
+                        log_event(
+                            logger,
+                            logging.ERROR,
+                            "delivery_claim_release_failed",
+                            channel=name,
+                            match_uid=match.match_uid,
+                            error_type=type(release_exc).__name__,
+                        )
                 log_event(
                     logger,
                     logging.ERROR,

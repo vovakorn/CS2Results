@@ -18,8 +18,9 @@ LIQUIPEDIA_MATCH_PATH = "/match"
 LIQUIPEDIA_MATCH_QUERY = (
     "pagename,match2id,match2bracketid,tournament,tickername,series,date,dateexact,"
     "type,finished,winner,bestof,resulttype,status,section,vod,liquipediatier,"
-    "liquipediatiertype,publishertier,match2opponents,match2games"
+    "liquipediatiertype,publishertier,parent,match2opponents,match2games"
 )
+LIQUIPEDIA_PLACEMENT_QUERY = "placement,opponentname,opponenttemplate,prizemoney"
 
 LIQUIPEDIA_TIER_MAP = {
     "1": "s",
@@ -99,6 +100,17 @@ def _normalize_games(value: Any) -> list[MapResult]:
     return maps
 
 
+def _is_grand_final(section: Any) -> bool:
+    """Accept only an explicit final stage, never infer one from a tournament name."""
+    value = _optional_text(section)
+    if not value:
+        return False
+    normalized = value.casefold().replace("-", " ")
+    if "final" not in normalized:
+        return False
+    return not any(marker in normalized for marker in ("semi", "lower", "upper", "consolation", "qualifier"))
+
+
 def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
     if str(item.get("finished") or "").strip().casefold() not in {"1", "true", "yes"}:
         return None
@@ -150,6 +162,7 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         tournament_tier_type=_optional_text(item.get("liquipediatiertype")),
         publisher_tier=_optional_text(item.get("publishertier")),
         tournament_section=_optional_text(item.get("section")),
+        is_final=_is_grand_final(item.get("section")),
         team1_name=str(team1),
         team2_name=str(team2),
         score1=score1,
@@ -169,6 +182,7 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         is_lan=is_lan,
         location=None,
         prize_pool_usd=None,
+        winner_prize_usd=None,
         operator=None,
     )
 
@@ -193,6 +207,49 @@ def _normalize_raw_matches(data: Any) -> list[MatchNormalized]:
         if match:
             matches.append(match)
     return matches
+
+
+def _winner_prize_from_placements(match: MatchNormalized, data: Any) -> int | None:
+    """Return the confirmed first-place prize for this match's winning team."""
+    if not isinstance(data, dict) or not isinstance(data.get("result"), list):
+        return None
+    if match.score1 is None or match.score2 is None or match.score1 == match.score2:
+        return None
+
+    winner_name = match.team1_name if match.score1 > match.score2 else match.team2_name
+    winner_identity = MatchNormalized._identity_part(winner_name)
+    prizes: set[int] = set()
+    for placement in data["result"]:
+        if not isinstance(placement, dict) or _optional_int(placement.get("placement")) != 1:
+            continue
+        names = (placement.get("opponentname"), placement.get("opponenttemplate"))
+        if not any(MatchNormalized._identity_part(_optional_text(name)) == winner_identity for name in names):
+            continue
+        prize = _optional_int(placement.get("prizemoney"))
+        if prize is not None and prize > 0:
+            prizes.add(prize)
+    return prizes.pop() if len(prizes) == 1 else None
+
+
+async def _fetch_winner_prize(
+    session: aiohttp.ClientSession,
+    *,
+    parent: str,
+    match: MatchNormalized,
+) -> int | None:
+    url = f"{source_config.LIQUIPEDIA_API_BASE_URL.rstrip('/')}/placement"
+    params = {
+        "wiki": source_config.LIQUIPEDIA_WIKI,
+        "conditions": f"[[parent::{parent}]] AND [[placement::1]]",
+        "query": LIQUIPEDIA_PLACEMENT_QUERY,
+        "limit": 10,
+        "offset": 0,
+    }
+    async with session.get(url, params=params, allow_redirects=False) as response:
+        if response.status >= 300:
+            raise SourceUnavailableError(f"Liquipedia placement returned HTTP {response.status}")
+        raw = await read_limited_response(response, source_config.MAX_SOURCE_RESPONSE_BYTES, "Liquipedia placement")
+    return _winner_prize_from_placements(match, json.loads(raw))
 
 
 async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
@@ -227,11 +284,29 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
                     "Liquipedia",
                 )
                 data = json.loads(raw)
+            matches = _normalize_raw_matches(data)
+            raw_matches = {
+                str(item.get("match2id")): item
+                for item in data.get("result", [])
+                if isinstance(item, dict) and item.get("match2id")
+            }
+            for match in matches:
+                item = raw_matches.get(match.match_id or "")
+                parent = _optional_text(item.get("parent")) if item else None
+                if not match.is_final or not parent:
+                    continue
+                try:
+                    match.winner_prize_usd = await _fetch_winner_prize(session, parent=parent, match=match)
+                except Exception as exc:
+                    logger.warning(
+                        "source=liquipedia winner_prize_unavailable match_id=%s error_type=%s",
+                        match.match_id,
+                        type(exc).__name__,
+                    )
     except SourceUnavailableError:
         raise
     except Exception as exc:
         raise SourceUnavailableError(f"Liquipedia request failed: {type(exc).__name__}") from exc
 
-    matches = _normalize_raw_matches(data)
     logger.info("source=liquipedia normalized=%s", len(matches))
     return matches[:limit]

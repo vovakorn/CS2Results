@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from .config import (
     ALERT_COOLDOWN_SECONDS,
@@ -161,11 +161,107 @@ def _etag_candidates(etag: str | None) -> tuple[str, ...]:
     """Return compatible conditional-write values without weakening atomicity."""
     if not etag:
         return ()
-    values = [etag]
-    unquoted = etag.strip('"')
-    if unquoted and unquoted != etag:
+    normalized = etag.strip()
+    values = [normalized]
+    unquoted = normalized.strip('"')
+    if unquoted and unquoted != normalized:
         values.append(unquoted)
+    if unquoted.startswith("W/"):
+        strong = unquoted[2:].strip('"')
+        if strong and strong not in values:
+            values.extend((strong, f'"{strong}"'))
     return tuple(values)
+
+
+CLAIM_RECLAIM_MAX_ATTEMPTS = 3
+CLAIM_RECLAIM_RETRY_DELAY_SECONDS = 0.05
+DELIVERY_SENT_TTL_SECONDS = 24 * 60 * 60
+DELIVERY_SENT_WRITE_MAX_ATTEMPTS = 3
+DELIVERY_SENT_WRITE_RETRY_DELAY_SECONDS = 0.1
+
+
+async def _reclaim_expired_claim(
+    *,
+    s3: Any,
+    bucket_name: str,
+    key: str,
+    uid: str,
+    claim_id: str,
+    existing: dict[str, Any],
+    reference: datetime,
+    put: Any,
+    event_name: str,
+) -> DeliveryClaim | None:
+    """Reclaim an expired lease with a fresh read after every CAS conflict."""
+
+    current = existing
+    reference_timestamp = int(reference.timestamp())
+    for attempt in range(1, CLAIM_RECLAIM_MAX_ATTEMPTS + 1):
+        raw_expiry = current.get("Metadata", {}).get("expires-at")
+        try:
+            current_expiry = int(raw_expiry)
+        except (TypeError, ValueError):
+            current_expiry = int(
+                (reference + timedelta(seconds=DELIVERY_CLAIM_TTL_SECONDS)).timestamp()
+            )
+        if current_expiry > reference_timestamp:
+            logger.info(
+                'event="%s" key="%s" reason="claim_owned_by_other_invocation"',
+                event_name,
+                key,
+            )
+            return None
+
+        logger.info(
+            'event="delivery_claim_reclaim_started" key="%s" expired_at="%s" attempt="%s"',
+            key,
+            current_expiry,
+            attempt,
+        )
+        etags = _etag_candidates(current.get("ETag"))
+        for etag in etags:
+            try:
+                response = await asyncio.to_thread(put, False, etag)
+                logger.info(
+                    'event="delivery_claim_reclaimed" key="%s" attempt="%s" etag_attempt="%s"',
+                    key,
+                    attempt,
+                    etags.index(etag) + 1,
+                )
+                return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
+            except ClientError as exc:
+                if _is_precondition_failed(exc):
+                    continue
+                code = str(exc.response.get("Error", {}).get("Code", "unknown"))
+                status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                logger.error(
+                    'event="delivery_claim_reclaim_failed" key="%s" code="%s" status="%s"',
+                    key,
+                    code,
+                    status,
+                )
+                raise StorageUnavailableError(f"claim reclaim failed for {key}") from exc
+
+        if attempt == CLAIM_RECLAIM_MAX_ATTEMPTS:
+            logger.error(
+                'event="delivery_claim_reclaim_unavailable" key="%s" reason="expired_claim_cas_failed"',
+                key,
+            )
+            raise StorageUnavailableError(f"expired claim cannot be reclaimed for {key}")
+
+        await asyncio.sleep(CLAIM_RECLAIM_RETRY_DELAY_SECONDS)
+        try:
+            current = await asyncio.to_thread(
+                s3.head_object,
+                Bucket=bucket_name,
+                Key=key,
+            )
+        except ClientError as exc:
+            if _is_not_found(exc):
+                raise StorageUnavailableError(f"claim disappeared during reclaim for {key}") from exc
+            raise StorageUnavailableError(f"claim refresh failed for {key}") from exc
+
+    raise AssertionError("expired claim reclaim loop did not terminate")
 
 
 async def claim_admin_alert(
@@ -292,7 +388,11 @@ async def claim_channel_delivery(
             "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         }
     ).encode("utf-8")
-    metadata = {"expires-at": str(int(expires_at.timestamp())), "claim-id": claim_id}
+    metadata = {
+        "expires-at": str(int(expires_at.timestamp())),
+        "claim-id": claim_id,
+        "delivery-state": "sending",
+    }
 
     def _put(if_none_match: bool = False, etag: str | None = None) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -333,38 +433,20 @@ async def claim_channel_delivery(
             )
         raise StorageUnavailableError(f"claim head failed for {key}") from exc
 
-    raw_expiry = existing.get("Metadata", {}).get("expires-at")
-    try:
-        existing_expiry = int(raw_expiry)
-    except (TypeError, ValueError):
-        existing_expiry = int((reference + timedelta(seconds=DELIVERY_CLAIM_TTL_SECONDS)).timestamp())
-    if existing_expiry > int(reference.timestamp()):
+    if existing.get("Metadata", {}).get("delivery-state") == "sent":
         return None
 
-    logger.info(
-        'event="delivery_claim_reclaim_started" key="%s" expired_at="%s"',
-        key,
-        existing_expiry,
+    return await _reclaim_expired_claim(
+        s3=s3,
+        bucket_name=bucket_name,
+        key=key,
+        uid=uid,
+        claim_id=claim_id,
+        existing=existing,
+        reference=reference,
+        put=_put,
+        event_name="delivery_claim_reclaim_state",
     )
-
-    for attempt, etag in enumerate(_etag_candidates(existing.get("ETag")), start=1):
-        try:
-            response = await asyncio.to_thread(_put, False, etag)
-            logger.info('event="delivery_claim_reclaimed" key="%s" attempt="%s"', key, attempt)
-            return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
-        except ClientError as exc:
-            if _is_precondition_failed(exc):
-                continue
-            code = str(exc.response.get("Error", {}).get("Code", "unknown"))
-            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
-            logger.error(
-                'event="delivery_claim_reclaim_failed" key="%s" code="%s" status="%s"',
-                key,
-                code,
-                status,
-            )
-            raise StorageUnavailableError(f"claim reclaim failed for {key}") from exc
-    return None
 
 
 async def claim_content_delivery(
@@ -393,7 +475,11 @@ async def claim_content_delivery(
             "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         }
     ).encode("utf-8")
-    metadata = {"expires-at": str(int(expires_at.timestamp())), "claim-id": claim_id}
+    metadata = {
+        "expires-at": str(int(expires_at.timestamp())),
+        "claim-id": claim_id,
+        "delivery-state": "sending",
+    }
 
     def _put(if_none_match: bool = False, etag: str | None = None) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
@@ -432,21 +518,20 @@ async def claim_content_delivery(
             )
         raise StorageUnavailableError(f"content claim head failed for {key}") from exc
 
-    try:
-        existing_expiry = int(existing.get("Metadata", {}).get("expires-at"))
-    except (TypeError, ValueError):
-        existing_expiry = int((reference + timedelta(seconds=DELIVERY_CLAIM_TTL_SECONDS)).timestamp())
-    if existing_expiry > int(reference.timestamp()):
+    if existing.get("Metadata", {}).get("delivery-state") == "sent":
         return None
-    for etag in _etag_candidates(existing.get("ETag")):
-        try:
-            response = await asyncio.to_thread(_put, False, etag)
-            return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
-        except ClientError as exc:
-            if _is_precondition_failed(exc):
-                continue
-            raise StorageUnavailableError(f"content claim reclaim failed for {key}") from exc
-    return None
+
+    return await _reclaim_expired_claim(
+        s3=s3,
+        bucket_name=bucket_name,
+        key=key,
+        uid=uid,
+        claim_id=claim_id,
+        existing=existing,
+        reference=reference,
+        put=_put,
+        event_name="content_claim_reclaim_state",
+    )
 
 
 async def release_delivery_claim(
@@ -471,7 +556,11 @@ async def release_delivery_claim(
             "Key": claim.key,
             "Body": json.dumps(payload).encode("utf-8"),
             "ContentType": "application/json",
-            "Metadata": {"expires-at": "0", "claim-id": claim.claim_id},
+            "Metadata": {
+                "expires-at": "0",
+                "claim-id": claim.claim_id,
+                "delivery-state": "released",
+            },
         }
         if etag:
             kwargs["IfMatch"] = etag
@@ -485,6 +574,110 @@ async def release_delivery_claim(
             if _is_precondition_failed(exc):
                 continue
             raise StorageUnavailableError(f"claim release failed for {claim.key}") from exc
+    raise StorageUnavailableError(f"claim release lost ownership for {claim.key}")
+
+
+async def mark_delivery_claim_sent(
+    claim: DeliveryClaim,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> DeliveryClaim:
+    """Persist a confirmed Telegram delivery before writing its processed marker."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    recorded_at = datetime.now(timezone.utc)
+    expires_at = recorded_at + timedelta(seconds=DELIVERY_SENT_TTL_SECONDS)
+    payload = {
+        "match_uid": claim.match_uid,
+        "claim_id": claim.claim_id,
+        "status": "sent",
+        "sent_at": recorded_at.isoformat().replace("+00:00", "Z"),
+    }
+
+    def _put(etag: str) -> dict[str, Any]:
+        return s3.put_object(
+            Bucket=bucket_name,
+            Key=claim.key,
+            Body=json.dumps(payload).encode("utf-8"),
+            ContentType="application/json",
+            Metadata={
+                "expires-at": str(int(expires_at.timestamp())),
+                "claim-id": claim.claim_id,
+                "delivery-state": "sent",
+            },
+            IfMatch=etag,
+        )
+
+    etags = _etag_candidates(claim.etag)
+    if not etags:
+        raise StorageUnavailableError(f"claim sent-state is missing an ETag for {claim.key}")
+
+    for attempt in range(1, DELIVERY_SENT_WRITE_MAX_ATTEMPTS + 1):
+        retryable_error: BotoCoreError | ClientError | None = None
+        for etag in etags:
+            try:
+                response = await asyncio.to_thread(_put, etag)
+                return DeliveryClaim(claim.match_uid, claim.key, claim.claim_id, response.get("ETag"))
+            except (BotoCoreError, ClientError) as exc:
+                if isinstance(exc, ClientError) and _is_precondition_failed(exc):
+                    continue
+                retryable_error = exc
+                break
+        if retryable_error is None:
+            break
+        if attempt == DELIVERY_SENT_WRITE_MAX_ATTEMPTS:
+            raise StorageUnavailableError(f"claim sent-state write failed for {claim.key}") from retryable_error
+        await asyncio.sleep(DELIVERY_SENT_WRITE_RETRY_DELAY_SECONDS)
+    raise StorageUnavailableError(f"claim sent-state lost ownership for {claim.key}")
+
+
+async def reconcile_channel_delivery(
+    match: MatchNormalized,
+    channel_id: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> bool:
+    """Finish a previously confirmed delivery without sending another Telegram post."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    if await is_channel_processed(match, channel_id, client=s3, bucket=bucket_name):
+        return False
+    try:
+        existing = await asyncio.to_thread(
+            s3.head_object, Bucket=bucket_name, Key=claim_key(channel_match_uid(match, channel_id))
+        )
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return False
+        raise StorageUnavailableError("channel delivery reconciliation head failed") from exc
+    if existing.get("Metadata", {}).get("delivery-state") != "sent":
+        return False
+    await mark_channel_processed(match, channel_id, client=s3, bucket=bucket_name)
+    return True
+
+
+async def reconcile_content_delivery(
+    content_uid: str,
+    content_type: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> bool:
+    """Finish a previously confirmed content delivery without a second send."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    uid = f"content_{safe_storage_part(content_uid)}"
+    if await is_processed(uid, client=s3, bucket=bucket_name):
+        return False
+    try:
+        existing = await asyncio.to_thread(s3.head_object, Bucket=bucket_name, Key=claim_key(uid))
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return False
+        raise StorageUnavailableError("content delivery reconciliation head failed") from exc
+    if existing.get("Metadata", {}).get("delivery-state") != "sent":
+        return False
+    await mark_content_processed(content_uid, content_type, client=s3, bucket=bucket_name)
+    return True
 
 
 async def mark_processed(match: MatchNormalized, client: Any | None = None, bucket: str | None = None) -> None:

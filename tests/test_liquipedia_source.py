@@ -58,6 +58,7 @@ def test_liquipedia_normalizes_finished_offline_match():
     assert match.tournament_tier_type == "General"
     assert match.publisher_tier == "Major"
     assert match.tournament_section == "Playoffs"
+    assert match.is_final is False
     assert match.date_exact is True
     assert match.vod_url == "https://www.youtube.com/watch?v=example"
     assert match.forfeit is False
@@ -75,6 +76,33 @@ def test_liquipedia_marks_online_match_as_not_lan():
     response["result"][0]["type"] = "online"
 
     assert liquipedia_source._normalize_raw_matches(response)[0].is_lan is False
+
+
+def test_liquipedia_accepts_explicit_grand_final_only():
+    response = _sample_response()
+    response["result"][0]["section"] = "Grand Final"
+
+    assert liquipedia_source._normalize_raw_matches(response)[0].is_final is True
+
+
+def test_liquipedia_uses_winner_prize_only_for_matching_first_place_team():
+    response = _sample_response()
+    match = liquipedia_source._normalize_raw_matches(response)[0]
+    placements = {
+        "result": [
+            {"placement": "1", "opponentname": "Natus Vincere", "prizemoney": "500000"},
+            {"placement": "2", "opponentname": "FaZe Clan", "prizemoney": "170000"},
+        ]
+    }
+
+    assert liquipedia_source._winner_prize_from_placements(match, placements) == 500_000
+
+
+def test_liquipedia_does_not_guess_winner_prize_for_another_team():
+    match = liquipedia_source._normalize_raw_matches(_sample_response())[0]
+    placements = {"result": [{"placement": "1", "opponentname": "Team Spirit", "prizemoney": "500000"}]}
+
+    assert liquipedia_source._winner_prize_from_placements(match, placements) is None
 
 
 def test_liquipedia_skips_match_not_confirmed_finished():

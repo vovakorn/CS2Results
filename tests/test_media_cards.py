@@ -5,6 +5,7 @@ from PIL import Image
 
 from cs2bot import media_cards
 from cs2bot.match_sources.models import (
+    MapResult,
     MatchNormalized,
     RadarBracketMatch,
     RadarStandingTeam,
@@ -53,6 +54,23 @@ def test_result_card_is_valid_square_png_without_logos():
     image = Image.open(io.BytesIO(data))
     assert image.format == "PNG"
     assert image.size == media_cards.RESULT_CARD_SIZE
+
+
+def test_final_card_requires_confirmed_final_data_and_is_square_png():
+    match = _result().model_copy(update={
+        "is_final": True,
+        "winner_prize_usd": 500_000,
+        "maps": [
+            MapResult(name="Mirage", score1=13, score2=9),
+            MapResult(name="Nuke", score1=11, score2=13),
+            MapResult(name="Ancient", score1=13, score2=10),
+        ],
+    })
+    image = Image.open(io.BytesIO(media_cards.render_final_card(match)))
+    assert image.format == "PNG"
+    assert image.size == media_cards.RESULT_CARD_SIZE
+    assert media_cards.can_render_final_card(match)
+    assert not media_cards.can_render_final_card(_result())
 
 
 def test_result_card_channel_logo_is_centered_at_top(monkeypatch):

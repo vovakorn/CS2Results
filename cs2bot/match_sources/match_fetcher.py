@@ -256,15 +256,21 @@ def latest_match_datetime(matches: list[MatchNormalized]) -> datetime | None:
     parsed_dates = [
         parsed
         for match in matches
-        if (parsed := _parse_match_datetime(match.end_date or match.date or match.start_date)) is not None
+        for value in (match.end_date, match.date, match.start_date)
+        if (parsed := _parse_match_datetime(value)) is not None
     ]
     return max(parsed_dates) if parsed_dates else None
 
 
 def is_match_fresh(match: MatchNormalized, now: datetime | None = None) -> bool:
-    parsed = _parse_match_datetime(match.end_date or match.date or match.start_date)
-    if parsed is None:
+    timestamps = [
+        parsed
+        for value in (match.end_date, match.date, match.start_date)
+        if (parsed := _parse_match_datetime(value)) is not None
+    ]
+    if not timestamps:
         return False
+    parsed = max(timestamps)
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
         reference = reference.replace(tzinfo=timezone.utc)

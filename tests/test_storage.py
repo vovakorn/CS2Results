@@ -18,10 +18,14 @@ from cs2bot.match_sources.storage import (
     logo_cache_key,
     mark_channel_processed,
     mark_content_processed,
+    mark_delivery_claim_sent,
     mark_processed,
     processed_key,
     release_delivery_claim,
+    reconcile_channel_delivery,
+    reconcile_content_delivery,
     read_cached_logo,
+    StorageUnavailableError,
     write_cached_logo,
 )
 
@@ -71,6 +75,22 @@ class FakeS3:
         return {"Body": io.BytesIO(self.objects[Key]["Body"])}
 
 
+class FlakySentStateS3(FakeS3):
+    def __init__(self):
+        super().__init__()
+        self.sent_state_failures = 0
+
+    def put_object(self, *args, **kwargs):
+        metadata = kwargs.get("Metadata")
+        if metadata and metadata.get("delivery-state") == "sent" and not self.sent_state_failures:
+            self.sent_state_failures += 1
+            raise ClientError(
+                {"Error": {"Code": "ServiceUnavailable"}, "ResponseMetadata": {"HTTPStatusCode": 503}},
+                "PutObject",
+            )
+        return super().put_object(*args, **kwargs)
+
+
 class FakeUnquotedETagS3(FakeS3):
     """Emulate an S3-compatible endpoint that compares ETags without quotes."""
 
@@ -96,6 +116,33 @@ class FakeUnquotedETagS3(FakeS3):
             finally:
                 if existing and original is not None:
                     existing["ETag"] = original
+        return super().put_object(*args, IfMatch=IfMatch, **kwargs)
+
+
+class FakeStaleHeadS3(FakeS3):
+    """Return one stale ETag to verify reclaim refreshes the lease state."""
+
+    def __init__(self):
+        super().__init__()
+        self.stale_head = True
+
+    def head_object(self, Bucket, Key):
+        result = super().head_object(Bucket, Key)
+        if self.stale_head and Key in self.objects:
+            self.stale_head = False
+            result["ETag"] = '"stale-etag"'
+        return result
+
+
+class FakeAlwaysConflictS3(FakeS3):
+    """Return conditional conflicts to ensure storage errors are not duplicates."""
+
+    def put_object(self, *args, IfMatch=None, **kwargs):
+        if IfMatch:
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}},
+                "PutObject",
+            )
         return super().put_object(*args, IfMatch=IfMatch, **kwargs)
 
 
@@ -197,6 +244,48 @@ def test_delivery_claim_prevents_concurrent_publication_and_can_be_released():
     assert third.claim_id != first.claim_id
 
 
+def test_confirmed_delivery_is_reconciled_without_a_second_claim():
+    s3 = FakeS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+    claim = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+
+    assert claim is not None
+    asyncio.run(mark_delivery_claim_sent(claim, client=s3, bucket="bucket"))
+    assert asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    ) is None
+    assert asyncio.run(reconcile_channel_delivery(match, "global", client=s3, bucket="bucket"))
+    assert asyncio.run(is_channel_processed(match, "global", client=s3, bucket="bucket"))
+
+
+def test_confirmed_delivery_retries_transient_sent_state_write():
+    s3 = FlakySentStateS3()
+    match = _match()
+    claim = asyncio.run(claim_channel_delivery(match, "global", client=s3, bucket="bucket"))
+
+    assert claim is not None
+    asyncio.run(mark_delivery_claim_sent(claim, client=s3, bucket="bucket"))
+
+    assert s3.sent_state_failures == 1
+    assert s3.objects[claim.key]["Metadata"]["delivery-state"] == "sent"
+
+
+def test_confirmed_content_delivery_is_reconciled_without_a_second_claim():
+    s3 = FakeS3()
+    content_uid = "schedule_2026-07-30_global"
+    claim = asyncio.run(claim_content_delivery(content_uid, client=s3, bucket="bucket"))
+
+    assert claim is not None
+    asyncio.run(mark_delivery_claim_sent(claim, client=s3, bucket="bucket"))
+    assert asyncio.run(
+        reconcile_content_delivery(content_uid, "schedule", client=s3, bucket="bucket")
+    )
+    assert asyncio.run(is_processed(f"content_{content_uid}", client=s3, bucket="bucket"))
+
+
 def test_expired_delivery_claim_is_atomically_reclaimed():
     s3 = FakeS3()
     match = _match()
@@ -242,6 +331,55 @@ def test_expired_delivery_claim_retries_unquoted_etag_for_compatible_s3_endpoint
     assert first is not None
     assert reclaimed is not None
     assert reclaimed.claim_id != first.claim_id
+
+
+def test_expired_delivery_claim_refreshes_etag_after_conditional_conflict():
+    s3 = FakeStaleHeadS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+    reclaimed = asyncio.run(
+        claim_channel_delivery(
+            match,
+            "global",
+            client=s3,
+            bucket="bucket",
+            now=now + timedelta(minutes=6),
+        )
+    )
+
+    assert first is not None
+    assert reclaimed is not None
+    assert reclaimed.claim_id != first.claim_id
+
+
+def test_expired_delivery_claim_conflict_is_reported_as_storage_error():
+    s3 = FakeAlwaysConflictS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+    assert first is not None
+
+    try:
+        asyncio.run(
+            claim_channel_delivery(
+                match,
+                "global",
+                client=s3,
+                bucket="bucket",
+                now=now + timedelta(minutes=6),
+            )
+        )
+    except StorageUnavailableError as exc:
+        assert "expired claim cannot be reclaimed" in str(exc)
+    else:
+        raise AssertionError("expired claim conflict must not be reported as a duplicate")
 
 
 def test_admin_alert_is_claimed_only_once_per_cooldown_window():
