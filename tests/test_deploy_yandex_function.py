@@ -247,6 +247,30 @@ def test_first_liquipedia_deploy_adds_pinned_secret_and_shadow_flag(
     ) in secret_flags
 
 
+def test_deploy_can_enable_liquipedia_final_cards(fake_cloud: dict[str, str]) -> None:
+    fake_cloud.update({"YC_DEPLOY_APPROVED": "1", "YC_ENABLE_LIQUIPEDIA_FINAL_CARDS": "1"})
+    version = json.loads(json.dumps(BASE_VERSION))
+    version["secrets"].append(
+        {
+            "id": "liquipedia-secret-id",
+            "version_id": "liquipedia-secret-version-id",
+            "key": "LIQUIPEDIA_API_KEY",
+            "environment_variable": "LIQUIPEDIA_API_KEY",
+        }
+    )
+    fake_cloud["FAKE_BASE_VERSION"] = json.dumps(version)
+
+    result = _run("deploy", fake_cloud)
+
+    assert result.returncode == 0, result.stderr
+    create_call = next(
+        call for call in _calls(fake_cloud) if call[:4] == ["serverless", "function", "version", "create"]
+    )
+    environment_csv = create_call[create_call.index("--environment") + 1]
+    environment = dict(item.split("=", 1) for item in next(csv.reader([environment_csv])))
+    assert environment["ENABLE_LIQUIPEDIA_FINAL_CARDS"] == "1"
+
+
 def test_enabling_liquipedia_shadow_requires_secret_reference(
     fake_cloud: dict[str, str],
 ) -> None:

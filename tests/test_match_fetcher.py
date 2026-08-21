@@ -32,6 +32,37 @@ def test_auto_uses_pandascore_when_it_returns_matches(monkeypatch):
     assert matches[0].source == "pandascore"
 
 
+def test_final_card_selection_replaces_primary_with_complete_liquipedia_final():
+    primary = _match()
+    primary.date = "2026-08-23T16:00:00Z"
+    final = _match(source="liquipedia", match_id="liquipedia-final")
+    final.date = primary.date
+    final.is_final = True
+    final.winner_prize_usd = 500_000
+    final.maps = [
+        MapResult(name="Mirage", score1=13, score2=9),
+        MapResult(name="Nuke", score1=11, score2=13),
+        MapResult(name="Ancient", score1=13, score2=10),
+    ]
+
+    selected = match_fetcher._replace_with_liquipedia_finals([primary], [final])
+
+    assert selected == [final]
+
+
+def test_final_card_selection_keeps_primary_when_liquipedia_final_is_incomplete():
+    primary = _match()
+    primary.date = "2026-08-23T16:00:00Z"
+    final = _match(source="liquipedia", match_id="liquipedia-final")
+    final.date = primary.date
+    final.is_final = True
+    final.winner_prize_usd = 500_000
+
+    selected = match_fetcher._replace_with_liquipedia_finals([primary], [final])
+
+    assert selected == [primary]
+
+
 def test_liquipedia_shadow_timeout_does_not_block_primary_results(monkeypatch, caplog):
     async def fake_fetch(source, limit):
         assert source == "pandascore"
