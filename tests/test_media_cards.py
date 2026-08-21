@@ -86,19 +86,20 @@ def test_result_card_channel_logo_is_centered_at_top(monkeypatch):
     assert drawn == [((media_cards.RESULT_CARD_SIZE[0] // 2, 98), 100)]
 
 
-def test_result_card_aligns_team_logos_and_names_to_outer_edges(monkeypatch):
+def test_result_card_centres_team_names_under_logos(monkeypatch):
     names = []
     logos = []
-    original = media_cards._aligned_text
+    original = media_cards._centered_text
 
-    def capture_text(draw, edge_x, y, text, font, fill, alignment):
-        names.append((edge_x, y, text, alignment))
-        return original(draw, edge_x, y, text, font, fill, alignment)
+    def capture_text(draw, center_x, y, text, font, fill):
+        if text in {"NATUS VINCERE JUNIOR", "GAIMIN GLADIATORS ACADEMY"}:
+            names.append((center_x, y, text))
+        return original(draw, center_x, y, text, font, fill)
 
     def capture_logo(canvas, draw, center, diameter, *args):
         logos.append((center, diameter))
 
-    monkeypatch.setattr(media_cards, "_aligned_text", capture_text)
+    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
     monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
     match = _result().model_copy(
         update={
@@ -109,14 +110,15 @@ def test_result_card_aligns_team_logos_and_names_to_outer_edges(monkeypatch):
 
     media_cards.render_result_card(match)
 
-    assert [alignment for _, _, _, alignment in names] == ["left", "right"]
-    assert logos[0][0][0] - logos[0][1] // 2 == names[0][0]
-    assert logos[1][0][0] + logos[1][1] // 2 == names[1][0]
+    assert [text for _, _, text in names] == ["NATUS VINCERE JUNIOR", "GAIMIN GLADIATORS ACADEMY"]
+    assert names[0][0] == logos[0][0][0]
+    assert names[1][0] == logos[1][0][0]
     assert names[0][1] - (logos[0][0][1] + logos[0][1] // 2) >= 24
     assert names[1][1] - (logos[1][0][1] + logos[1][1] // 2) >= 24
 
 
-def test_daily_results_card_supports_ten_matches():
+@pytest.mark.parametrize("match_count", [1, 2, 4, 6, 8, 10])
+def test_daily_results_card_supports_requested_match_counts(match_count):
     matches = [
         _result().model_copy(
             update={
@@ -125,7 +127,7 @@ def test_daily_results_card_supports_ten_matches():
                 "team2_name": f"Long Right Team {index}",
             }
         )
-        for index in range(10)
+        for index in range(match_count)
     ]
 
     data = media_cards.render_results_card(

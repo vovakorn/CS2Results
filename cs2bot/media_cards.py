@@ -158,6 +158,27 @@ def _centered_text(
     draw.text((center_x - (box[2] - box[0]) / 2, y), text, font=font, fill=fill)
 
 
+def _centered_text_on_point(
+    draw: ImageDraw.ImageDraw,
+    center_x: int,
+    center_y: int,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    fill: tuple[int, int, int],
+) -> None:
+    """Draw text whose visible bounding-box centre is at the requested point."""
+    box = draw.textbbox((0, 0), text, font=font)
+    draw.text(
+        (
+            center_x - (box[0] + box[2]) / 2,
+            center_y - (box[1] + box[3]) / 2,
+        ),
+        text,
+        font=font,
+        fill=fill,
+    )
+
+
 def _aligned_text(
     draw: ImageDraw.ImageDraw,
     edge_x: int,
@@ -920,15 +941,17 @@ def _draw_wide_result_match(
     draw.line((x0 + 28, y0 + 1, x0 + 168, y0 + 1), fill=(*CYAN, 190), width=3)
     draw.line((x1 - 168, y0 + 1, x1 - 28, y0 + 1), fill=(*AMBER, 190), width=3)
 
-    logo_diameter = min(210, max(88, int(height * 0.42)))
+    # Match the schedule card's visual language: each team is a centred block,
+    # with the score occupying the exact centre between the two blocks.
+    logo_diameter = min(210, max(96, int(height * 0.42)))
     logo_radius = logo_diameter // 2
     logo_y = y0 + int(height * 0.35)
-    team1_edge = x0 + 48
-    team2_edge = x1 - 48
+    team1_center = x0 + int((x1 - x0) * 0.18)
+    team2_center = x1 - int((x1 - x0) * 0.18)
     _draw_logo(
         canvas,
         draw,
-        (team1_edge + logo_radius, logo_y),
+        (team1_center, logo_y),
         logo_diameter,
         match.team1_name,
         match.team1_logo_url,
@@ -938,7 +961,7 @@ def _draw_wide_result_match(
     _draw_logo(
         canvas,
         draw,
-        (team2_edge - logo_radius, logo_y),
+        (team2_center, logo_y),
         logo_diameter,
         match.team2_name,
         match.team2_logo_url,
@@ -955,10 +978,10 @@ def _draw_wide_result_match(
     else:
         score_size, team_size, event_size = 46, 28, 15
     score = f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
-    _centered_text(
+    _centered_text_on_point(
         draw,
         (x0 + x1) // 2,
-        y0 + int(height * 0.27),
+        logo_y,
         score,
         _fit_font(draw, score, 260, score_size, 36),
         WHITE,
@@ -978,24 +1001,22 @@ def _draw_wide_result_match(
     team_y = logo_y + logo_radius + name_gap
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    name_width = (x1 - x0) // 2 - 105
-    _aligned_text(
+    name_width = int((x1 - x0) * 0.30)
+    _centered_text(
         draw,
-        team1_edge,
+        team1_center,
         team_y,
         team1,
         _fit_font(draw, team1, name_width, team_size, 16),
         AMBER if winner_side == "left" else WHITE,
-        "left",
     )
-    _aligned_text(
+    _centered_text(
         draw,
-        team2_edge,
+        team2_center,
         team_y,
         team2,
         _fit_font(draw, team2, name_width, team_size, 16),
         AMBER if winner_side == "right" else WHITE,
-        "right",
     )
 
     if show_tournament:
@@ -1029,22 +1050,22 @@ def _draw_compact_result_match(
     draw.line((center_x + 22, y0 + 1, x1 - 22, y0 + 1), fill=(*AMBER, 185), width=2)
 
     if height >= 210:
-        logo_diameter, score_size, team_size, event_size = 68, 42, 24, 15
-        score_y, logo_y, team_y, event_y = y0 + 19, y0 + 92, y0 + 137, y1 - 46
+        logo_diameter, score_size, team_size, event_size = 84, 46, 26, 15
+        logo_y, team_y, event_y = y0 + 92, y0 + 143, y1 - 46
     elif height >= 165:
-        logo_diameter, score_size, team_size, event_size = 52, 34, 20, 13
-        score_y, logo_y, team_y, event_y = y0 + 12, y0 + 70, y0 + 104, y1 - 34
+        logo_diameter, score_size, team_size, event_size = 70, 40, 22, 13
+        logo_y, team_y, event_y = y0 + 73, y0 + 116, y1 - 34
     else:
-        logo_diameter, score_size, team_size, event_size = 36, 25, 15, 10
-        score_y, logo_y, team_y, event_y = y0 + 3, y0 + 45, y0 + 72, y1 - 19
+        logo_diameter, score_size, team_size, event_size = 44, 29, 16, 10
+        logo_y, team_y, event_y = y0 + 42, y0 + 74, y1 - 19
 
     logo_radius = logo_diameter // 2
-    team1_edge = x0 + 22
-    team2_edge = x1 - 22
+    team1_center = x0 + int((x1 - x0) * 0.24)
+    team2_center = x1 - int((x1 - x0) * 0.24)
     _draw_logo(
         canvas,
         draw,
-        (team1_edge + logo_radius, logo_y),
+        (team1_center, logo_y),
         logo_diameter,
         match.team1_name,
         match.team1_logo_url,
@@ -1054,7 +1075,7 @@ def _draw_compact_result_match(
     _draw_logo(
         canvas,
         draw,
-        (team2_edge - logo_radius, logo_y),
+        (team2_center, logo_y),
         logo_diameter,
         match.team2_name,
         match.team2_logo_url,
@@ -1063,28 +1084,26 @@ def _draw_compact_result_match(
     )
 
     score = f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
-    _centered_text(draw, center_x, score_y, score, _font(score_size), WHITE)
+    _centered_text_on_point(draw, center_x, logo_y, score, _font(score_size), WHITE)
     winner_side = _winner_side(match)
-    name_width = 194 if height >= 210 else 184 if height >= 165 else 174
+    name_width = 180 if height >= 210 else 170 if height >= 165 else 150
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    _aligned_text(
+    _centered_text(
         draw,
-        team1_edge,
+        team1_center,
         team_y,
         team1,
         _fit_font(draw, team1, name_width, team_size, 11),
         AMBER if winner_side == "left" else WHITE,
-        "left",
     )
-    _aligned_text(
+    _centered_text(
         draw,
-        team2_edge,
+        team2_center,
         team_y,
         team2,
         _fit_font(draw, team2, name_width, team_size, 11),
         AMBER if winner_side == "right" else WHITE,
-        "right",
     )
     event = match.tournament_name.upper()
     _centered_text(
