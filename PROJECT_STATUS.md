@@ -15,9 +15,9 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последняя версия с тегом `production`: `d4eeti7g90s65uljqcsk` (PR #79).
+- Последняя версия с тегом `production`: `d4eaif0a9n52ubj1ml7l` (PR #81).
 - Три timer trigger вызывают тег `production`, а не `$latest`.
-- Последняя проверка: 279 тестов локально и успешный GitHub Actions PR #79 на
+- Последняя проверка: 279 тестов локально и успешный GitHub Actions PR #81 на
   Python 3.11 и 3.12.
 - CI проверяет зависимости, безопасность, компиляцию, pytest и сборку архива.
 

@@ -15,7 +15,7 @@ CS2 без информационного шума. Ближайшая прод�
 ## Текущее состояние
 
 - MVP работает в production на Yandex Cloud Functions, runtime Python 3.12.
-- Последний production-релиз: PR #79; версия `d4eeti7g90s65uljqcsk`.
+- Последний production-релиз: PR #81; версия `d4eaif0a9n52ubj1ml7l`.
 - Handler: `cs2bot.main.handler`.
 - Результаты проверяются каждые 15 минут, расписание публикуется в 10:00, итог —
   в 23:00 по Москве.
