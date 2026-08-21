@@ -6,6 +6,7 @@ import html
 import json
 import logging
 import re
+import sys
 import time
 from datetime import datetime, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Sequence
@@ -69,11 +70,19 @@ from .match_sources.storage import (
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-# Cloud Functions does not always install a root handler. Without one the
-# structured delivery events below are silently dropped, which makes a
-# recoverable Telegram failure impossible to diagnose from Cloud Logging.
-if not logging.getLogger().handlers:
-    logging.basicConfig(level=logging.INFO)
+# Cloud Functions may install a handler on stderr that is not forwarded to
+# Cloud Logging for application output. Ensure the root logger also emits the
+# structured events to stdout, while avoiding duplicate handlers on warm starts.
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+if not any(
+    getattr(handler, "_cs2results_stdout", False)
+    for handler in root_logger.handlers
+):
+    stdout_handler = logging.StreamHandler(sys.stdout)
+    stdout_handler.setFormatter(logging.Formatter("%(message)s"))
+    stdout_handler._cs2results_stdout = True
+    root_logger.addHandler(stdout_handler)
 
 TELEGRAM_API_URL = "https://api.telegram.org"
 TELEGRAM_METHOD = "sendMessage"
@@ -83,8 +92,8 @@ MAX_MATCHES = 30
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MAX_TELEGRAM_CAPTION_LENGTH = 1024
 RESULT_MEDIA_BUDGET_SECONDS = 35.0
-RESULT_TELEGRAM_TIMEOUT_SECONDS = 4
-RESULT_TELEGRAM_MAX_ATTEMPTS = 1
+RESULT_TELEGRAM_TIMEOUT_SECONDS = 8
+RESULT_TELEGRAM_MAX_ATTEMPTS = 2
 # A result can fall out of a provider's short recent-results page after one
 # failed delivery. Give the lightweight text fallback one extra chance while
 # keeping the potentially expensive photo upload bounded to one attempt.

@@ -142,6 +142,12 @@ def test_format_match_caps_telegram_message_length():
     assert len(main.format_match(match)) <= main.MAX_TELEGRAM_MESSAGE_LENGTH
 
 
+def test_result_delivery_uses_recovery_timeout_and_retry_budget():
+    assert main.RESULT_TELEGRAM_TIMEOUT_SECONDS == 8
+    assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 2
+    assert main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS == 2
+
+
 def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
     sent = []
     marked = []
