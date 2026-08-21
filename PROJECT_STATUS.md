@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 20 августа 2026 года.
+Обновлено: 21 августа 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,9 +15,9 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последняя версия с тегом `production`: `d4eap7krb1f7bvhdoes6`.
+- Последняя версия с тегом `production`: `d4e2bghr4vrcb8eh0bbc` (PR #77).
 - Три timer trigger вызывают тег `production`, а не `$latest`.
-- Последняя проверка: 257 тестов локально и успешный GitHub Actions PR #75 на
+- Последняя проверка: 273 теста локально и успешный GitHub Actions PR #77 на
   Python 3.11 и 3.12.
 - CI проверяет зависимости, безопасность, компиляцию, pytest и сборку архива.
 
