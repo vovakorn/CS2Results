@@ -7,7 +7,16 @@ from typing import Any
 
 
 def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
-    payload = {"event": event, **fields}
+    level_name = logging.getLevelName(level)
+    if level_name == "WARNING":
+        level_name = "WARN"
+    payload = {
+        "message": event,
+        "level": level_name,
+        "stream_name": "cs2results",
+        "event": event,
+        **fields,
+    }
     message = json.dumps(payload, ensure_ascii=False, default=str)
 
     # Yandex Cloud reliably ingests flushed stdout from Python functions, while
