@@ -20,6 +20,7 @@ from .config import (
     CHANNELS,
     TELEGRAM_ADMIN_CHAT_ID,
     TELEGRAM_MEDIA_CARDS,
+    TELEGRAM_PROXY_URL,
     TELEGRAM_SPOILERS,
     TELEGRAM_TOKEN,
 )
@@ -248,11 +249,18 @@ def _notify_admin(alert_code: str, message: str) -> None:
 
 def _safe_error_message(exc: Exception) -> str:
     message = str(exc)
-    for secret in (TELEGRAM_TOKEN, PANDASCORE_API_TOKEN, LIQUIPEDIA_API_KEY):
+    for secret in (TELEGRAM_TOKEN, TELEGRAM_PROXY_URL, PANDASCORE_API_TOKEN, LIQUIPEDIA_API_KEY):
         if secret:
             message = message.replace(secret, "[REDACTED]")
     message = re.sub(r"/bot[^/\s]+/", "/bot[REDACTED]/", message, flags=re.IGNORECASE)
     return message[:500] or type(exc).__name__
+
+
+def _telegram_request_options() -> Dict[str, Any]:
+    """Return shared HTTP options without relying on ambient proxy variables."""
+    if not TELEGRAM_PROXY_URL:
+        return {}
+    return {"proxies": {"http": TELEGRAM_PROXY_URL, "https": TELEGRAM_PROXY_URL}}
 
 
 def send_to_telegram(
@@ -280,9 +288,10 @@ def send_to_telegram(
                 json=payload,
                 timeout=timeout,
                 allow_redirects=False,
+                **_telegram_request_options(),
             )
         except requests.RequestException as exc:
-            raise TelegramDeliveryUncertainError("Telegram request outcome is unknown") from exc
+            raise TelegramDeliveryUncertainError("Telegram request outcome is unknown") from None
 
         if response.status_code == 429:
             if attempt < attempts:
@@ -303,7 +312,7 @@ def send_to_telegram(
         try:
             data = response.json()
         except requests.JSONDecodeError as exc:
-            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from exc
+            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from None
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the message")
         return data
@@ -315,15 +324,24 @@ def get_telegram_member_count(chat_id: str | int) -> int:
     """Read a channel subscriber snapshot; bot must be an administrator."""
     if not TELEGRAM_TOKEN:
         raise TelegramDeliveryError("Telegram credentials are not configured")
-    response = requests.post(
-        f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/getChatMemberCount",
-        json={"chat_id": str(chat_id)},
-        timeout=7,
-        allow_redirects=False,
-    )
+    try:
+        response = requests.post(
+            f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/getChatMemberCount",
+            json={"chat_id": str(chat_id)},
+            timeout=7,
+            allow_redirects=False,
+            **_telegram_request_options(),
+        )
+    except requests.RequestException:
+        raise TelegramDeliveryUncertainError("Telegram member-count request outcome is unknown") from None
+    if response.status_code >= 500:
+        raise TelegramDeliveryUncertainError(f"Telegram API returned HTTP {response.status_code}")
     if response.status_code >= 300:
         raise TelegramDeliveryError(f"Telegram API returned HTTP {response.status_code}")
-    data = response.json()
+    try:
+        data = response.json()
+    except requests.JSONDecodeError:
+        raise TelegramDeliveryUncertainError("Telegram API returned invalid member count") from None
     if not isinstance(data, dict) or data.get("ok") is not True or not isinstance(data.get("result"), int):
         raise TelegramDeliveryError("Telegram API returned invalid member count")
     return data["result"]
@@ -348,7 +366,17 @@ def _handle_analytics_job(event: Dict[str, Any], dry_run: bool) -> Dict[str, Any
     snapshots = []
     for channel in _iter_channels():
         channel_id = str(channel.get("id") or channel.get("name", "unknown"))
-        count = get_telegram_member_count(channel["chat_id"])
+        try:
+            count = get_telegram_member_count(channel["chat_id"])
+        except TelegramDeliveryError as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "analytics_telegram_delivery_failed",
+                channel=channel_id,
+                error=_safe_error_message(exc),
+            )
+            return _error_response(502, "telegram_delivery_unavailable")
         snapshots.append({"channel_id": channel_id, "member_count": count})
         if not dry_run:
             asyncio.run(record_subscriber_snapshot(channel_id, count))
@@ -389,9 +417,10 @@ def send_photo_to_telegram(
                 files={"photo": (filename, photo, "image/png")},
                 timeout=timeout,
                 allow_redirects=False,
+                **_telegram_request_options(),
             )
         except requests.RequestException as exc:
-            raise TelegramDeliveryUncertainError("Telegram photo request outcome is unknown") from exc
+            raise TelegramDeliveryUncertainError("Telegram photo request outcome is unknown") from None
 
         if response.status_code == 429:
             if attempt < attempts:
@@ -411,7 +440,7 @@ def send_photo_to_telegram(
         try:
             data = response.json()
         except requests.JSONDecodeError as exc:
-            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from exc
+            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from None
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the photo")
         return data
@@ -469,9 +498,10 @@ def send_media_group_to_telegram(
                 files=files,
                 timeout=timeout,
                 allow_redirects=False,
+                **_telegram_request_options(),
             )
         except requests.RequestException as exc:
-            raise TelegramDeliveryUncertainError("Telegram media group request outcome is unknown") from exc
+            raise TelegramDeliveryUncertainError("Telegram media group request outcome is unknown") from None
 
         if response.status_code == 429:
             if attempt < attempts:
@@ -493,7 +523,7 @@ def send_media_group_to_telegram(
         try:
             data = response.json()
         except requests.JSONDecodeError as exc:
-            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from exc
+            raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from None
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the media group")
         return data
