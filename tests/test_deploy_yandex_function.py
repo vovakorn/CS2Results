@@ -247,6 +247,64 @@ def test_first_liquipedia_deploy_adds_pinned_secret_and_shadow_flag(
     ) in secret_flags
 
 
+def test_deploy_can_add_pinned_telegram_proxy_secret(fake_cloud: dict[str, str]) -> None:
+    fake_cloud.update(
+        {
+            "YC_DEPLOY_APPROVED": "1",
+            "YC_TELEGRAM_PROXY_SECRET_ID": "proxy-secret-id",
+            "YC_TELEGRAM_PROXY_SECRET_VERSION_ID": "proxy-secret-version-id",
+        }
+    )
+
+    result = _run("deploy", fake_cloud)
+
+    assert result.returncode == 0, result.stderr
+    create_call = next(
+        call
+        for call in _calls(fake_cloud)
+        if call[:4] == ["serverless", "function", "version", "create"]
+    )
+    secret_flags = [
+        create_call[index + 1]
+        for index, value in enumerate(create_call)
+        if value == "--secret"
+    ]
+    assert len(secret_flags) == 5
+    assert (
+        "id=proxy-secret-id,version-id=proxy-secret-version-id,"
+        "key=TELEGRAM_PROXY_URL,environment-variable=TELEGRAM_PROXY_URL"
+    ) in secret_flags
+
+
+def test_deploy_can_rotate_pinned_telegram_token(fake_cloud: dict[str, str]) -> None:
+    fake_cloud.update(
+        {
+            "YC_DEPLOY_APPROVED": "1",
+            "YC_TELEGRAM_TOKEN_SECRET_ID": "telegram-secret-id",
+            "YC_TELEGRAM_TOKEN_SECRET_VERSION_ID": "telegram-secret-version-id",
+        }
+    )
+
+    result = _run("deploy", fake_cloud)
+
+    assert result.returncode == 0, result.stderr
+    create_call = next(
+        call
+        for call in _calls(fake_cloud)
+        if call[:4] == ["serverless", "function", "version", "create"]
+    )
+    secret_flags = [
+        create_call[index + 1]
+        for index, value in enumerate(create_call)
+        if value == "--secret"
+    ]
+    assert len(secret_flags) == 4
+    assert (
+        "id=telegram-secret-id,version-id=telegram-secret-version-id,"
+        "key=TELEGRAM_TOKEN,environment-variable=TELEGRAM_TOKEN"
+    ) in secret_flags
+
+
 def test_deploy_can_enable_liquipedia_final_cards(fake_cloud: dict[str, str]) -> None:
     fake_cloud.update({"YC_DEPLOY_APPROVED": "1", "YC_ENABLE_LIQUIPEDIA_FINAL_CARDS": "1"})
     version = json.loads(json.dumps(BASE_VERSION))

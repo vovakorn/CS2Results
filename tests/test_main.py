@@ -909,6 +909,47 @@ def test_telegram_network_exception_never_exposes_token(monkeypatch):
     assert "SECRET" not in str(exc_info.value)
 
 
+def test_member_count_network_exception_never_exposes_token(monkeypatch):
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "123456:SECRET")
+
+    def fail(*args, **kwargs):
+        raise requests.ConnectTimeout(
+            "failed for https://api.telegram.org/bot123456:SECRET/getChatMemberCount"
+        )
+
+    monkeypatch.setattr(main.requests, "post", fail)
+
+    with pytest.raises(main.TelegramDeliveryUncertainError) as exc_info:
+        main.get_telegram_member_count("chat")
+
+    assert "SECRET" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
+def test_telegram_proxy_is_used_for_delivery(monkeypatch):
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(*args, **kwargs):
+        seen.update(kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(main, "TELEGRAM_PROXY_URL", "https://proxy.example")
+    monkeypatch.setattr(main.requests, "post", fake_post)
+
+    main.send_to_telegram("chat", "text", max_attempts=1)
+
+    assert seen["proxies"] == {
+        "http": "https://proxy.example",
+        "https": "https://proxy.example",
+    }
+
+
 def test_handler_returns_generic_fetch_error_and_redacts_logs(monkeypatch, caplog):
     monkeypatch.setattr(main, "TELEGRAM_TOKEN", "123456:SECRET")
 

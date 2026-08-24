@@ -2,6 +2,7 @@ import os
 import json
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 # Токен бота берём из переменных окружения Yandex Cloud.
 # TELEGRAM_BOT_TOKEN оставлен как совместимое имя из README.
@@ -27,6 +28,23 @@ def _bool_env(name: str, default: bool) -> bool:
 TELEGRAM_SPOILERS = _bool_env("TELEGRAM_SPOILERS", True)
 TELEGRAM_MEDIA_CARDS = _bool_env("TELEGRAM_MEDIA_CARDS", False)
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+
+
+def _optional_proxy_url() -> str | None:
+    """Return a safe HTTP(S) proxy endpoint when Telegram needs alternate egress."""
+    raw = os.getenv("TELEGRAM_PROXY_URL")
+    if not raw:
+        return None
+    value = raw.strip()
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("TELEGRAM_PROXY_URL must be an absolute HTTP(S) URL")
+    return value
+
+
+# Keep this in Lockbox in production. It is optional because direct access is
+# still the normal path outside environments where Telegram egress is blocked.
+TELEGRAM_PROXY_URL = _optional_proxy_url()
 
 
 def _load_channels_from_env() -> list[dict[str, Any]] | None:

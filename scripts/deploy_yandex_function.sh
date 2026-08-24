@@ -16,6 +16,12 @@ LIQUIPEDIA_SECRET_VERSION_ID="${YC_LIQUIPEDIA_SECRET_VERSION_ID:-}"
 LIQUIPEDIA_SECRET_KEY="${YC_LIQUIPEDIA_SECRET_KEY:-LIQUIPEDIA_API_KEY}"
 LIQUIPEDIA_SHADOW_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_SHADOW:-}"
 LIQUIPEDIA_FINAL_CARDS_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_FINAL_CARDS:-}"
+TELEGRAM_PROXY_SECRET_ID="${YC_TELEGRAM_PROXY_SECRET_ID:-}"
+TELEGRAM_PROXY_SECRET_VERSION_ID="${YC_TELEGRAM_PROXY_SECRET_VERSION_ID:-}"
+TELEGRAM_PROXY_SECRET_KEY="${YC_TELEGRAM_PROXY_SECRET_KEY:-TELEGRAM_PROXY_URL}"
+TELEGRAM_TOKEN_SECRET_ID="${YC_TELEGRAM_TOKEN_SECRET_ID:-}"
+TELEGRAM_TOKEN_SECRET_VERSION_ID="${YC_TELEGRAM_TOKEN_SECRET_VERSION_ID:-}"
+TELEGRAM_TOKEN_SECRET_KEY="${YC_TELEGRAM_TOKEN_SECRET_KEY:-TELEGRAM_TOKEN}"
 TARGET_EXECUTION_TIMEOUT="${YC_EXECUTION_TIMEOUT:-120s}"
 
 readonly -a REQUIRED_ENVIRONMENT=(
@@ -61,6 +67,12 @@ also use that tag; otherwise the script stops before creating a version.
 For Liquipedia overrides, use YC_ENABLE_LIQUIPEDIA_SHADOW or
 YC_ENABLE_LIQUIPEDIA_FINAL_CARDS. Only Lockbox references are passed; the API
 key value is never read by this script.
+
+To add or rotate an optional Telegram egress proxy, pass all three
+YC_TELEGRAM_PROXY_SECRET_* reference fields. The proxy URL is never read.
+
+To rotate the bot token, pass all three YC_TELEGRAM_TOKEN_SECRET_* reference
+fields. The token value is never read.
 EOF
 }
 
@@ -171,6 +183,20 @@ validate_liquipedia_override() {
   fi
 }
 
+validate_telegram_proxy_override() {
+  if [[ -n "${TELEGRAM_PROXY_SECRET_ID}" || -n "${TELEGRAM_PROXY_SECRET_VERSION_ID}" ]]; then
+    [[ -n "${TELEGRAM_PROXY_SECRET_ID}" && -n "${TELEGRAM_PROXY_SECRET_VERSION_ID}" && -n "${TELEGRAM_PROXY_SECRET_KEY}" ]] \
+      || die "Set all YC_TELEGRAM_PROXY_SECRET_* reference fields together"
+  fi
+}
+
+validate_telegram_token_override() {
+  if [[ -n "${TELEGRAM_TOKEN_SECRET_ID}" || -n "${TELEGRAM_TOKEN_SECRET_VERSION_ID}" ]]; then
+    [[ -n "${TELEGRAM_TOKEN_SECRET_ID}" && -n "${TELEGRAM_TOKEN_SECRET_VERSION_ID}" && -n "${TELEGRAM_TOKEN_SECRET_KEY}" ]] \
+      || die "Set all YC_TELEGRAM_TOKEN_SECRET_* reference fields together"
+  fi
+}
+
 validate_trigger_tags() {
   local triggers_json="$1"
   local bad_triggers
@@ -238,9 +264,11 @@ build_create_arguments() {
 
   while IFS= read -r value; do
     [[ -z "${value}" ]] || CREATE_ARGS+=(--secret "${value}")
-  done < <(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg override_id "${LIQUIPEDIA_SECRET_ID}" '
+  done < <(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg liquipedia_override_id "${LIQUIPEDIA_SECRET_ID}" --arg proxy_override_id "${TELEGRAM_PROXY_SECRET_ID}" --arg token_override_id "${TELEGRAM_TOKEN_SECRET_ID}" '
     (.secrets // [])[]
-    | select($override_id == "" or .environment_variable != "LIQUIPEDIA_API_KEY")
+    | select($liquipedia_override_id == "" or .environment_variable != "LIQUIPEDIA_API_KEY")
+    | select($proxy_override_id == "" or .environment_variable != "TELEGRAM_PROXY_URL")
+    | select($token_override_id == "" or .environment_variable != "TELEGRAM_TOKEN")
     | "id=\(.id),version-id=\(.version_id),key=\(.key),environment-variable=\(.environment_variable)"
   ')
 
@@ -248,6 +276,20 @@ build_create_arguments() {
     CREATE_ARGS+=(
       --secret
       "id=${LIQUIPEDIA_SECRET_ID},version-id=${LIQUIPEDIA_SECRET_VERSION_ID},key=${LIQUIPEDIA_SECRET_KEY},environment-variable=LIQUIPEDIA_API_KEY"
+    )
+  fi
+
+  if [[ -n "${TELEGRAM_PROXY_SECRET_ID}" ]]; then
+    CREATE_ARGS+=(
+      --secret
+      "id=${TELEGRAM_PROXY_SECRET_ID},version-id=${TELEGRAM_PROXY_SECRET_VERSION_ID},key=${TELEGRAM_PROXY_SECRET_KEY},environment-variable=TELEGRAM_PROXY_URL"
+    )
+  fi
+
+  if [[ -n "${TELEGRAM_TOKEN_SECRET_ID}" ]]; then
+    CREATE_ARGS+=(
+      --secret
+      "id=${TELEGRAM_TOKEN_SECRET_ID},version-id=${TELEGRAM_TOKEN_SECRET_VERSION_ID},key=${TELEGRAM_TOKEN_SECRET_KEY},environment-variable=TELEGRAM_TOKEN"
     )
   fi
 
@@ -310,6 +352,8 @@ preflight() {
 
   validate_required_configuration "${PRODUCTION_JSON}"
   validate_liquipedia_override
+  validate_telegram_proxy_override
+  validate_telegram_token_override
 
   triggers_json="$("${YC_BIN}" serverless trigger list \
     --folder-id "${EXPECTED_FOLDER_ID}" \

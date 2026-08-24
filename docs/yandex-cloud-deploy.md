@@ -41,6 +41,21 @@ TELEGRAM_SPOILERS=1
 TELEGRAM_MEDIA_CARDS=0
 ```
 
+Если исходящий доступ Cloud Functions к Telegram недоступен, используйте
+доступный HTTP(S)-прокси и храните его URL в Lockbox. Скрипт безопасного
+деплоя добавляет или обновляет только ссылку на секрет:
+
+```bash
+YC_FUNCTION_ID=<function_id> \
+YC_DEPLOY_APPROVED=1 \
+YC_TELEGRAM_PROXY_SECRET_ID=<lockbox_secret_id> \
+YC_TELEGRAM_PROXY_SECRET_VERSION_ID=<pinned_version_id> \
+scripts/deploy_yandex_function.sh deploy
+```
+
+Значение `TELEGRAM_PROXY_URL` не передавайте в командной строке и не кладите в
+обычные environment variables.
+
 Для нескольких каналов используйте:
 
 ```text

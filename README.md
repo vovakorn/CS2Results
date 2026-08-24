@@ -24,6 +24,7 @@
 | `TELEGRAM_ADMIN_CHAT_ID` | Приватный chat ID администратора для технических алертов. Не указывайте публичный канал. |
 | `TELEGRAM_SPOILERS` | `1` скрывает счёт и победителя Telegram-спойлером; по умолчанию `1`. |
 | `TELEGRAM_MEDIA_CARDS` | `1` включает брендированные PNG-карточки для расписания и результатов; по умолчанию `0` для безопасного поэтапного запуска. |
+| `TELEGRAM_PROXY_URL` | Необязательный URL HTTP(S)-прокси для исходящих запросов Telegram. В production передавайте только через Lockbox. |
 | `AWS_ACCESS_KEY_ID` | Access key сервисного аккаунта для Object Storage. |
 | `AWS_SECRET_ACCESS_KEY` | Secret key сервисного аккаунта для Object Storage. |
 | `OBJECT_STORAGE_BUCKET` | Bucket для дедупликации обработанных матчей. |
