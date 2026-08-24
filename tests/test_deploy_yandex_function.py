@@ -363,6 +363,16 @@ def test_check_rejects_payload_without_dry_run(fake_cloud: dict[str, str]) -> No
     assert _calls(fake_cloud) == []
 
 
+def test_check_accepts_custom_dry_run_payload(fake_cloud: dict[str, str]) -> None:
+    fake_cloud["YC_DRY_RUN_PAYLOAD"] = json.dumps(
+        {"job": "analytics", "analytics_operation": "snapshot", "dry_run": True}
+    )
+
+    result = _run("check", fake_cloud)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_check_rejects_missing_lockbox_binding(fake_cloud: dict[str, str]) -> None:
     version = dict(BASE_VERSION)
     version["secrets"] = [
