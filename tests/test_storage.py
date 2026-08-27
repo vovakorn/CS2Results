@@ -75,6 +75,18 @@ class FakeS3:
         return {"Body": io.BytesIO(self.objects[Key]["Body"])}
 
 
+class TitleCaseMetadataS3(FakeS3):
+    """Mirror Yandex Object Storage metadata spelling observed in production."""
+
+    def head_object(self, Bucket, Key):
+        response = super().head_object(Bucket=Bucket, Key=Key)
+        response["Metadata"] = {
+            "-".join(part.capitalize() for part in key.split("-")): value
+            for key, value in response["Metadata"].items()
+        }
+        return response
+
+
 class FlakySentStateS3(FakeS3):
     def __init__(self):
         super().__init__()
@@ -308,6 +320,41 @@ def test_expired_delivery_claim_is_atomically_reclaimed():
     assert reclaimed is not None
     assert reclaimed.claim_id != first.claim_id
     assert reclaimed.etag != first.etag
+
+
+def test_expired_delivery_claim_accepts_title_case_metadata_from_yandex_storage():
+    s3 = TitleCaseMetadataS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+    reclaimed = asyncio.run(
+        claim_channel_delivery(
+            match,
+            "global",
+            client=s3,
+            bucket="bucket",
+            now=now + timedelta(minutes=6),
+        )
+    )
+
+    assert first is not None
+    assert reclaimed is not None
+    assert reclaimed.claim_id != first.claim_id
+
+
+def test_confirmed_delivery_reconciles_title_case_metadata_from_yandex_storage():
+    s3 = TitleCaseMetadataS3()
+    match = _match()
+    claim = asyncio.run(claim_channel_delivery(match, "global", client=s3, bucket="bucket"))
+
+    assert claim is not None
+    asyncio.run(mark_delivery_claim_sent(claim, client=s3, bucket="bucket"))
+
+    assert asyncio.run(reconcile_channel_delivery(match, "global", client=s3, bucket="bucket"))
+    assert asyncio.run(is_channel_processed(match, "global", client=s3, bucket="bucket"))
 
 
 def test_expired_delivery_claim_retries_unquoted_etag_for_compatible_s3_endpoint():
