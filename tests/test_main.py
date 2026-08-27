@@ -175,9 +175,9 @@ def test_format_match_truncation_preserves_html_structure():
 
 
 def test_result_delivery_uses_recovery_timeout_and_retry_budget():
-    assert main.RESULT_TELEGRAM_TIMEOUT_SECONDS == 8
-    assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 2
-    assert main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS == 2
+    assert main.RESULT_TELEGRAM_TIMEOUT_SECONDS == 10
+    assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 3
+    assert main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS == 3
 
 
 def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
@@ -907,6 +907,39 @@ def test_telegram_network_exception_never_exposes_token(monkeypatch):
         main.send_to_telegram("chat", "text", max_attempts=1)
 
     assert "SECRET" not in str(exc_info.value)
+
+
+def test_telegram_connect_timeout_is_retried_and_safe_to_release(monkeypatch):
+    calls = 0
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ok": True}
+
+    def fake_post(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise requests.ConnectTimeout("connection timed out")
+        return FakeResponse()
+
+    monkeypatch.setattr(main.requests, "post", fake_post)
+    monkeypatch.setattr(main.time, "sleep", lambda _: None)
+
+    main.send_to_telegram("chat", "text", max_attempts=2)
+
+    assert calls == 2
+
+
+def test_telegram_connect_timeout_is_not_delivery_uncertain(monkeypatch):
+    monkeypatch.setattr(main.requests, "post", lambda *args, **kwargs: (_ for _ in ()).throw(requests.ConnectTimeout()))
+
+    with pytest.raises(main.TelegramDeliveryError) as exc_info:
+        main.send_to_telegram("chat", "text", max_attempts=1)
+
+    assert not isinstance(exc_info.value, main.TelegramDeliveryUncertainError)
 
 
 def test_member_count_network_exception_never_exposes_token(monkeypatch):

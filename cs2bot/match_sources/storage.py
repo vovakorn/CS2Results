@@ -173,6 +173,20 @@ def _etag_candidates(etag: str | None) -> tuple[str, ...]:
     return tuple(values)
 
 
+def _object_metadata(response: dict[str, Any]) -> dict[str, Any]:
+    """Return S3 user metadata with case-insensitive keys.
+
+    S3 metadata keys are case-insensitive, but compatible endpoints and SDK
+    versions may return their spelling differently. Yandex Object Storage, for
+    example, can return ``Delivery-State`` for a value written as
+    ``delivery-state``.
+    """
+    raw = response.get("Metadata") or response.get("metadata") or {}
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key).casefold(): value for key, value in raw.items()}
+
+
 CLAIM_RECLAIM_MAX_ATTEMPTS = 3
 CLAIM_RECLAIM_RETRY_DELAY_SECONDS = 0.05
 DELIVERY_SENT_TTL_SECONDS = 24 * 60 * 60
@@ -197,7 +211,7 @@ async def _reclaim_expired_claim(
     current = existing
     reference_timestamp = int(reference.timestamp())
     for attempt in range(1, CLAIM_RECLAIM_MAX_ATTEMPTS + 1):
-        raw_expiry = current.get("Metadata", {}).get("expires-at")
+        raw_expiry = _object_metadata(current).get("expires-at")
         try:
             current_expiry = int(raw_expiry)
         except (TypeError, ValueError):
@@ -433,7 +447,7 @@ async def claim_channel_delivery(
             )
         raise StorageUnavailableError(f"claim head failed for {key}") from exc
 
-    if existing.get("Metadata", {}).get("delivery-state") == "sent":
+    if _object_metadata(existing).get("delivery-state") == "sent":
         return None
 
     return await _reclaim_expired_claim(
@@ -518,7 +532,7 @@ async def claim_content_delivery(
             )
         raise StorageUnavailableError(f"content claim head failed for {key}") from exc
 
-    if existing.get("Metadata", {}).get("delivery-state") == "sent":
+    if _object_metadata(existing).get("delivery-state") == "sent":
         return None
 
     return await _reclaim_expired_claim(
@@ -650,7 +664,7 @@ async def reconcile_channel_delivery(
         if _is_not_found(exc):
             return False
         raise StorageUnavailableError("channel delivery reconciliation head failed") from exc
-    if existing.get("Metadata", {}).get("delivery-state") != "sent":
+    if _object_metadata(existing).get("delivery-state") != "sent":
         return False
     await mark_channel_processed(match, channel_id, client=s3, bucket=bucket_name)
     return True
@@ -674,7 +688,7 @@ async def reconcile_content_delivery(
         if _is_not_found(exc):
             return False
         raise StorageUnavailableError("content delivery reconciliation head failed") from exc
-    if existing.get("Metadata", {}).get("delivery-state") != "sent":
+    if _object_metadata(existing).get("delivery-state") != "sent":
         return False
     await mark_content_processed(content_uid, content_type, client=s3, bucket=bucket_name)
     return True

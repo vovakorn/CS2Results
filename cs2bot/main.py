@@ -98,12 +98,12 @@ MAX_MATCHES = 30
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MAX_TELEGRAM_CAPTION_LENGTH = 1024
 RESULT_MEDIA_BUDGET_SECONDS = 35.0
-RESULT_TELEGRAM_TIMEOUT_SECONDS = 8
-RESULT_TELEGRAM_MAX_ATTEMPTS = 2
-# A result can fall out of a provider's short recent-results page after one
-# failed delivery. Give the lightweight text fallback one extra chance while
-# keeping the potentially expensive photo upload bounded to one attempt.
-RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS = 2
+RESULT_TELEGRAM_TIMEOUT_SECONDS = 10
+RESULT_TELEGRAM_MAX_ATTEMPTS = 3
+# Use the same bounded retry budget for the text fallback. Connect timeouts are
+# safe to retry because Telegram has not received an HTTP request yet; other
+# network failures remain delivery-uncertain and are never retried here.
+RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS = 3
 _monotonic = time.monotonic
 MATCH_URL_HOSTS = {
     "pandascore": {"pandascore.co", "www.pandascore.co"},
@@ -263,6 +263,14 @@ def _telegram_request_options() -> Dict[str, Any]:
     return {"proxies": {"http": TELEGRAM_PROXY_URL, "https": TELEGRAM_PROXY_URL}}
 
 
+def _retry_connect_timeout(attempt: int, attempts: int) -> bool:
+    """Retry only before a TCP connection exists; no Telegram request was sent."""
+    if attempt >= attempts:
+        return False
+    time.sleep(min(2 ** (attempt - 1), 5))
+    return True
+
+
 def send_to_telegram(
     chat_id: str | int,
     text: str,
@@ -290,7 +298,11 @@ def send_to_telegram(
                 allow_redirects=False,
                 **_telegram_request_options(),
             )
-        except requests.RequestException as exc:
+        except requests.ConnectTimeout:
+            if _retry_connect_timeout(attempt, attempts):
+                continue
+            raise TelegramDeliveryError("Telegram connection could not be established") from None
+        except requests.RequestException:
             raise TelegramDeliveryUncertainError("Telegram request outcome is unknown") from None
 
         if response.status_code == 429:
@@ -419,7 +431,11 @@ def send_photo_to_telegram(
                 allow_redirects=False,
                 **_telegram_request_options(),
             )
-        except requests.RequestException as exc:
+        except requests.ConnectTimeout:
+            if _retry_connect_timeout(attempt, attempts):
+                continue
+            raise TelegramDeliveryError("Telegram photo connection could not be established") from None
+        except requests.RequestException:
             raise TelegramDeliveryUncertainError("Telegram photo request outcome is unknown") from None
 
         if response.status_code == 429:
@@ -500,7 +516,11 @@ def send_media_group_to_telegram(
                 allow_redirects=False,
                 **_telegram_request_options(),
             )
-        except requests.RequestException as exc:
+        except requests.ConnectTimeout:
+            if _retry_connect_timeout(attempt, attempts):
+                continue
+            raise TelegramDeliveryError("Telegram media group connection could not be established") from None
+        except requests.RequestException:
             raise TelegramDeliveryUncertainError("Telegram media group request outcome is unknown") from None
 
         if response.status_code == 429:
