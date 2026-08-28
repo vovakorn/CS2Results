@@ -63,15 +63,25 @@ from .match_sources.sources.pandascore_source import (
     fetch_upcoming_matches,
 )
 from .match_sources.storage import (
+    PendingDelivery,
     claim_admin_alert,
     claim_channel_delivery,
     claim_content_delivery,
+    clear_telegram_media_degraded,
+    delete_result_delivery,
+    enqueue_result_delivery,
+    is_channel_processed,
+    is_telegram_media_degraded,
+    list_pending_result_deliveries,
     mark_channel_processed,
     mark_content_processed,
     mark_delivery_claim_sent,
+    mark_telegram_media_degraded,
+    record_result_delivery_attempt,
     reconcile_channel_delivery,
     reconcile_content_delivery,
     release_delivery_claim,
+    result_outbox_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -99,11 +109,14 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MAX_TELEGRAM_CAPTION_LENGTH = 1024
 RESULT_MEDIA_BUDGET_SECONDS = 35.0
 RESULT_TELEGRAM_TIMEOUT_SECONDS = 10
-RESULT_TELEGRAM_MAX_ATTEMPTS = 3
-# Use the same bounded retry budget for the text fallback. Connect timeouts are
-# safe to retry because Telegram has not received an HTTP request yet; other
-# network failures remain delivery-uncertain and are never retried here.
-RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS = 3
+RESULT_TELEGRAM_MAX_ATTEMPTS = 1
+# Results make one bounded photo attempt and one text fallback attempt per timer
+# invocation. The durable outbox and five-minute trigger provide spaced retries
+# without letting one match monopolize the function execution window.
+RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS = 1
+RESULT_DELIVERY_START_BUDGET_SECONDS = 90.0
+RESULT_MEDIA_DEGRADED_SECONDS = 60 * 60
+RESULT_OUTBOX_LIMIT = 200
 _monotonic = time.monotonic
 MATCH_URL_HOSTS = {
     "pandascore": {"pandascore.co", "www.pandascore.co"},
@@ -139,6 +152,10 @@ MAX_SCHEDULE_DAYS_AHEAD = 7
 
 class TelegramDeliveryError(RuntimeError):
     """A safe Telegram failure that never contains the bot token or request URL."""
+
+
+class TelegramConnectTimeoutError(TelegramDeliveryError):
+    """The Telegram TCP connection was not established, so retrying is safe."""
 
 
 class TelegramDeliveryUncertainError(TelegramDeliveryError):
@@ -299,9 +316,17 @@ def send_to_telegram(
                 **_telegram_request_options(),
             )
         except requests.ConnectTimeout:
+            log_event(
+                logger,
+                logging.WARNING,
+                "telegram_request_connect_timeout",
+                delivery_format="text",
+                attempt=attempt,
+                max_attempts=attempts,
+            )
             if _retry_connect_timeout(attempt, attempts):
                 continue
-            raise TelegramDeliveryError("Telegram connection could not be established") from None
+            raise TelegramConnectTimeoutError("Telegram connection could not be established") from None
         except requests.RequestException:
             raise TelegramDeliveryUncertainError("Telegram request outcome is unknown") from None
 
@@ -327,6 +352,7 @@ def send_to_telegram(
             raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from None
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the message")
+        data["_cs2results_attempt"] = attempt
         return data
 
     raise TelegramDeliveryError("Telegram request failed")
@@ -432,9 +458,17 @@ def send_photo_to_telegram(
                 **_telegram_request_options(),
             )
         except requests.ConnectTimeout:
+            log_event(
+                logger,
+                logging.WARNING,
+                "telegram_request_connect_timeout",
+                delivery_format="photo",
+                attempt=attempt,
+                max_attempts=attempts,
+            )
             if _retry_connect_timeout(attempt, attempts):
                 continue
-            raise TelegramDeliveryError("Telegram photo connection could not be established") from None
+            raise TelegramConnectTimeoutError("Telegram photo connection could not be established") from None
         except requests.RequestException:
             raise TelegramDeliveryUncertainError("Telegram photo request outcome is unknown") from None
 
@@ -459,6 +493,7 @@ def send_photo_to_telegram(
             raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from None
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the photo")
+        data["_cs2results_attempt"] = attempt
         return data
 
     raise TelegramDeliveryError("Telegram photo request failed")
@@ -517,9 +552,17 @@ def send_media_group_to_telegram(
                 **_telegram_request_options(),
             )
         except requests.ConnectTimeout:
+            log_event(
+                logger,
+                logging.WARNING,
+                "telegram_request_connect_timeout",
+                delivery_format="media_group",
+                attempt=attempt,
+                max_attempts=attempts,
+            )
             if _retry_connect_timeout(attempt, attempts):
                 continue
-            raise TelegramDeliveryError("Telegram media group connection could not be established") from None
+            raise TelegramConnectTimeoutError("Telegram media group connection could not be established") from None
         except requests.RequestException:
             raise TelegramDeliveryUncertainError("Telegram media group request outcome is unknown") from None
 
@@ -546,6 +589,7 @@ def send_media_group_to_telegram(
             raise TelegramDeliveryUncertainError("Telegram API returned invalid JSON") from None
         if not isinstance(data, dict) or data.get("ok") is not True:
             raise TelegramDeliveryError("Telegram API rejected the media group")
+        data["_cs2results_attempt"] = attempt
         return data
 
     raise TelegramDeliveryError("Telegram media group request failed")
@@ -1473,6 +1517,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     mode = _parse_mode(None)
     dry_run = False
     include_filtered = False
+    retry_only = False
     days_ahead = 1
     job = "results"
     test_run_id: str | None = None
@@ -1521,6 +1566,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             source = _parse_source(event.get("source"))
             mode = _parse_mode(event.get("mode"))
             dry_run = _parse_bool(event.get("dry_run"), default=False)
+            retry_only = _parse_bool(event.get("retry_only"), default=False)
+            if retry_only and (job != "results" or dry_run):
+                raise ValueError("retry_only is supported only for production results")
             requested_filtered = _parse_bool(event.get("include_filtered"), default=mode == "debug")
             include_filtered = requested_filtered and dry_run
             requested_days_ahead = event.get("days_ahead", 1)
@@ -1557,6 +1605,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         if not OBJECT_STORAGE_BUCKET:
             missing_config.append("object_storage_bucket")
         if job == "analytics":
+            pass
+        elif retry_only:
             pass
         elif job in {"schedule", "digest", "radar"} and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
@@ -1600,34 +1650,46 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             days_ahead=days_ahead,
         )
 
-    try:
-        log_event(logger, logging.INFO, "handler_start", limit=limit, source=source, mode=mode, dry_run=dry_run)
-        rejected_matches: List[MatchNormalized] = []
-        shadow_diagnostics: Dict[str, int] = {}
-        matches = asyncio.run(
-            get_new_finished_matches(
-                limit=limit,
-                source=source,
-                dry_run=dry_run,
-                include_filtered=include_filtered,
-                check_processed=False,
-                rejected_matches=rejected_matches,
-                shadow_diagnostics=shadow_diagnostics,
+    log_event(
+        logger,
+        logging.INFO,
+        "handler_start",
+        limit=limit,
+        source=source,
+        mode=mode,
+        dry_run=dry_run,
+        retry_only=retry_only,
+    )
+    rejected_matches: List[MatchNormalized] = []
+    shadow_diagnostics: Dict[str, int] = {}
+    if retry_only:
+        matches: list[MatchNormalized] = []
+    else:
+        try:
+            matches = asyncio.run(
+                get_new_finished_matches(
+                    limit=limit,
+                    source=source,
+                    dry_run=dry_run,
+                    include_filtered=include_filtered,
+                    check_processed=False,
+                    rejected_matches=rejected_matches,
+                    shadow_diagnostics=shadow_diagnostics,
+                )
             )
-        )
-    except Exception as exc:
-        log_event(
-            logger,
-            logging.ERROR,
-            "fetch_failed",
-            error_type=type(exc).__name__,
-            error=_safe_error_message(exc),
-        )
-        _notify_admin(
-            "match_source_unavailable",
-            "Источник матчей недоступен, пуст или не обновлялся более 48 часов.",
-        )
-        return _error_response(502, "match_source_unavailable")
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "fetch_failed",
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+            _notify_admin(
+                "match_source_unavailable",
+                "Источник матчей недоступен, пуст или не обновлялся более 48 часов.",
+            )
+            return _error_response(502, "match_source_unavailable")
 
     unconfirmed_tier1 = [
         match
@@ -1659,230 +1721,413 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     skipped_filtered = 0
     sent_messages = 0
     failed_messages = 0
+    channels = list(_iter_channels())
+    channels_by_id: dict[str, dict[str, Any]] = {}
+    for channel in channels:
+        name = str(channel.get("name", "unknown"))
+        channel_id = str(channel.get("id") or name)
+        channel_stats.setdefault(name, 0)
+        channels_by_id[channel_id] = channel
 
+    eligible_matches: list[MatchNormalized] = []
     for match in matches:
-        if isinstance(match, MatchNormalized) and not match.is_tier1_lan and not include_filtered:
+        if not isinstance(match, MatchNormalized):
             skipped_filtered += 1
             continue
+        if not match.is_tier1_lan and not include_filtered:
+            skipped_filtered += 1
+            continue
+        eligible_matches.append(match)
 
-        result_card: bytes | None = None
-        result_card_attempted = False
-
-        for channel in _iter_channels():
-            name = str(channel.get("name", "unknown"))
-            channel_id = str(channel.get("id") or name)
-            teams = channel.get("teams")
-            channel_stats.setdefault(name, 0)
-            if not _match_matches_channel(match, teams):
-                continue
-
-            if dry_run:
+    if dry_run:
+        for match in eligible_matches:
+            for channel in channels:
+                if not _match_matches_channel(match, channel.get("teams")):
+                    continue
+                name = str(channel.get("name", "unknown"))
                 channel_stats[name] += 1
                 sent_messages += 1
-                continue
-
-            if not isinstance(match, MatchNormalized):
-                skipped_filtered += 1
-                continue
-
-            try:
-                if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+        pending_deliveries: list[PendingDelivery] = []
+    else:
+        current_targets: dict[str, PendingDelivery] = {}
+        queued_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        for match in eligible_matches:
+            for channel in channels:
+                if not _match_matches_channel(match, channel.get("teams")):
+                    continue
+                name = str(channel.get("name", "unknown"))
+                channel_id = str(channel.get("id") or name)
+                key = result_outbox_key(match, channel_id)
+                try:
+                    if asyncio.run(
+                        is_channel_processed(
+                            match,
+                            channel_id,
+                            legacy_channel_name=name,
+                        )
+                    ):
+                        skipped_duplicates += 1
+                        continue
+                    created = asyncio.run(enqueue_result_delivery(match, channel_id, name))
+                    if created:
+                        current_targets[key] = PendingDelivery(
+                            key=key,
+                            channel_id=channel_id,
+                            channel_name=name,
+                            match=match,
+                            created_at=queued_at,
+                        )
+                except Exception as exc:
+                    failed_messages += 1
                     log_event(
                         logger,
-                        logging.INFO,
-                        "delivery_state_reconciled",
+                        logging.ERROR,
+                        "result_outbox_enqueue_failed",
                         channel=name,
                         match_uid=match.match_uid,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
                     )
-                    continue
-                claim = asyncio.run(
-                    claim_channel_delivery(
-                        match,
-                        channel_id,
-                        legacy_channel_name=name,
-                    )
-                )
+
+        try:
+            stored_targets = asyncio.run(
+                list_pending_result_deliveries(limit=RESULT_OUTBOX_LIMIT)
+            )
+        except Exception as exc:
+            failed_messages += 1
+            stored_targets = []
+            log_event(
+                logger,
+                logging.ERROR,
+                "result_outbox_load_failed",
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+        for pending in stored_targets:
+            current_targets[pending.key] = pending
+        pending_deliveries = sorted(
+            current_targets.values(),
+            key=lambda item: (
+                item.last_attempt_at is not None,
+                item.last_attempt_at or item.created_at,
+                item.created_at,
+                item.key,
+            ),
+        )
+
+    media_degraded = False
+    if not dry_run and TELEGRAM_MEDIA_CARDS:
+        try:
+            media_degraded = asyncio.run(is_telegram_media_degraded())
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "telegram_media_health_read_failed",
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+        if media_degraded:
+            log_event(logger, logging.WARNING, "telegram_text_only_mode_active", job="results")
+
+    for pending_index, pending in enumerate(pending_deliveries):
+        elapsed = _monotonic() - handler_started_at
+        if elapsed >= RESULT_DELIVERY_START_BUDGET_SECONDS:
+            log_event(
+                logger,
+                logging.WARNING,
+                "result_delivery_budget_exhausted",
+                elapsed_seconds=round(elapsed, 3),
+                remaining=len(pending_deliveries) - pending_index,
+            )
+            break
+
+        match = pending.match
+        channel = channels_by_id.get(pending.channel_id)
+        if channel is None:
+            try:
+                asyncio.run(record_result_delivery_attempt(pending))
             except Exception as exc:
-                failed_messages += 1
                 log_event(
                     logger,
-                    logging.ERROR,
-                    "delivery_claim_failed",
-                    channel=name,
+                    logging.WARNING,
+                    "result_outbox_attempt_failed",
+                    channel_id=pending.channel_id,
                     match_uid=match.match_uid,
                     error_type=type(exc).__name__,
-                    error=_safe_error_message(exc),
                 )
-                continue
+            log_event(
+                logger,
+                logging.WARNING,
+                "result_outbox_channel_missing",
+                channel_id=pending.channel_id,
+                match_uid=match.match_uid,
+            )
+            continue
+        name = str(channel.get("name", pending.channel_name))
+        channel_id = pending.channel_id
 
-            if claim is None:
-                skipped_duplicates += 1
+        try:
+            if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+                asyncio.run(delete_result_delivery(pending))
                 log_event(
                     logger,
                     logging.INFO,
-                    "duplicate_or_inflight_skipped",
-                    match_uid=match.match_uid,
+                    "delivery_state_reconciled",
                     channel=name,
+                    match_uid=match.match_uid,
                 )
                 continue
+            claim = asyncio.run(
+                claim_channel_delivery(
+                    match,
+                    channel_id,
+                    legacy_channel_name=name,
+                )
+            )
+        except Exception as exc:
+            failed_messages += 1
+            log_event(
+                logger,
+                logging.ERROR,
+                "delivery_claim_failed",
+                channel=name,
+                match_uid=match.match_uid,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+            continue
 
+        if claim is None:
+            skipped_duplicates += 1
+            try:
+                if asyncio.run(is_channel_processed(match, channel_id, legacy_channel_name=name)):
+                    asyncio.run(delete_result_delivery(pending))
+            except Exception as exc:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "result_outbox_cleanup_failed",
+                    channel=name,
+                    match_uid=match.match_uid,
+                    error_type=type(exc).__name__,
+                )
             log_event(
                 logger,
                 logging.INFO,
-                "delivery_claim_acquired",
+                "duplicate_or_inflight_skipped",
                 match_uid=match.match_uid,
                 channel=name,
             )
+            continue
 
-            if TELEGRAM_MEDIA_CARDS and not result_card_attempted:
-                result_card_attempted = True
-                elapsed = _monotonic() - handler_started_at
-                if elapsed >= RESULT_MEDIA_BUDGET_SECONDS:
+        log_event(
+            logger,
+            logging.INFO,
+            "delivery_claim_acquired",
+            match_uid=match.match_uid,
+            channel=name,
+            outbox_attempt=pending.attempt_count + 1,
+        )
+
+        result_card: bytes | None = None
+        if TELEGRAM_MEDIA_CARDS and not media_degraded:
+            elapsed = _monotonic() - handler_started_at
+            if elapsed >= RESULT_MEDIA_BUDGET_SECONDS:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "media_card_budget_exhausted",
+                    job="results",
+                    match_uid=match.match_uid,
+                    elapsed_seconds=round(elapsed, 3),
+                )
+            else:
+                render_started_at = _monotonic()
+                try:
+                    result_card = (
+                        render_final_card(match)
+                        if match.source == "liquipedia" and can_render_final_card(match)
+                        else render_result_card(match)
+                    )
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "media_card_ready",
+                        job="results",
+                        match_uid=match.match_uid,
+                        duration_seconds=round(_monotonic() - render_started_at, 3),
+                    )
+                except Exception as exc:
                     log_event(
                         logger,
                         logging.WARNING,
-                        "media_card_budget_exhausted",
+                        "media_card_fallback",
                         job="results",
                         match_uid=match.match_uid,
-                        elapsed_seconds=round(elapsed, 3),
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
                     )
-                else:
-                    render_started_at = _monotonic()
-                    try:
-                        result_card = (
-                            render_final_card(match)
-                            if match.source == "liquipedia" and can_render_final_card(match)
-                            else render_result_card(match)
-                        )
-                        log_event(
-                            logger,
-                            logging.INFO,
-                            "media_card_ready",
-                            job="results",
-                            match_uid=match.match_uid,
-                            duration_seconds=round(_monotonic() - render_started_at, 3),
-                        )
-                    except Exception as exc:
-                        log_event(
-                            logger,
-                            logging.WARNING,
-                            "media_card_fallback",
-                            job="results",
-                            match_uid=match.match_uid,
-                            error_type=type(exc).__name__,
-                            error=_safe_error_message(exc),
-                        )
 
-            telegram_confirmed = False
-            try:
-                text = format_match(match)
-                if result_card is not None:
+        telegram_confirmed = False
+        delivery_format = "text"
+        delivery_attempt: int | None = None
+        try:
+            text = format_match(match)
+            response: dict[str, Any] | None = None
+            if result_card is not None:
+                try:
+                    response = send_photo_to_telegram(
+                        channel["chat_id"],
+                        result_card,
+                        text,
+                        has_spoiler=TELEGRAM_SPOILERS,
+                        filename=f"cs2-result-{match.match_id or 'match'}.png",
+                        timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                        max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
+                    )
+                    delivery_format = "photo"
                     try:
-                        send_photo_to_telegram(
-                            channel["chat_id"],
-                            result_card,
-                            text,
-                            has_spoiler=TELEGRAM_SPOILERS,
-                            filename=f"cs2-result-{match.match_id or 'match'}.png",
-                            timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
-                            max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
-                        )
-                    except TelegramDeliveryUncertainError:
-                        raise
-                    except TelegramDeliveryError as exc:
+                        asyncio.run(clear_telegram_media_degraded())
+                    except Exception as health_exc:
                         log_event(
                             logger,
                             logging.WARNING,
-                            "media_card_delivery_fallback",
-                            job="results",
-                            channel=name,
-                            match_uid=match.match_uid,
-                            error_type=type(exc).__name__,
-                            error=_safe_error_message(exc),
+                            "telegram_media_health_clear_failed",
+                            error_type=type(health_exc).__name__,
                         )
-                        send_to_telegram(
-                            channel["chat_id"],
-                            text,
-                            timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
-                            max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS,
-                        )
-                else:
-                    send_to_telegram(
+                except TelegramDeliveryUncertainError:
+                    raise
+                except TelegramDeliveryError as exc:
+                    if isinstance(exc, TelegramConnectTimeoutError):
+                        media_degraded = True
+                        try:
+                            asyncio.run(
+                                mark_telegram_media_degraded(
+                                    datetime.now(timezone.utc)
+                                    + timedelta(seconds=RESULT_MEDIA_DEGRADED_SECONDS)
+                                )
+                            )
+                        except Exception as health_exc:
+                            log_event(
+                                logger,
+                                logging.WARNING,
+                                "telegram_media_health_write_failed",
+                                error_type=type(health_exc).__name__,
+                            )
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "media_card_delivery_fallback",
+                        job="results",
+                        channel=name,
+                        match_uid=match.match_uid,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
+                    response = send_to_telegram(
                         channel["chat_id"],
                         text,
                         timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
                         max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS,
                     )
-                telegram_confirmed = True
-                claim = asyncio.run(mark_delivery_claim_sent(claim))
-                channel_stats[name] += 1
-                sent_messages += 1
-                log_event(
-                    logger,
-                    logging.INFO,
-                    "telegram_delivery_succeeded",
-                    channel=name,
-                    match_uid=match.match_uid,
-                    media_card=result_card is not None,
+                    delivery_format = "text"
+            else:
+                response = send_to_telegram(
+                    channel["chat_id"],
+                    text,
+                    timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                    max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS,
                 )
-            except Exception as exc:
-                failed_messages += 1
-                delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
-                if delivery_uncertain:
-                    _notify_admin(
-                        "telegram_delivery_uncertain",
-                        f"Telegram не подтвердил исход доставки результата {match.match_uid} в канал {name}; повтор отключён.",
+            if isinstance(response, dict) and isinstance(response.get("_cs2results_attempt"), int):
+                delivery_attempt = int(response["_cs2results_attempt"])
+            telegram_confirmed = True
+            claim = asyncio.run(mark_delivery_claim_sent(claim))
+            channel_stats[name] += 1
+            sent_messages += 1
+            log_event(
+                logger,
+                logging.INFO,
+                "telegram_delivery_succeeded",
+                channel=name,
+                match_uid=match.match_uid,
+                delivery_format=delivery_format,
+                telegram_attempt=delivery_attempt,
+                outbox_attempt=pending.attempt_count + 1,
+                media_card=delivery_format == "photo",
+            )
+        except Exception as exc:
+            failed_messages += 1
+            delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
+            if delivery_uncertain:
+                _notify_admin(
+                    "telegram_delivery_uncertain",
+                    f"Telegram не подтвердил исход доставки результата {match.match_uid} в канал {name}; повтор отключён.",
+                )
+            if not telegram_confirmed and not delivery_uncertain:
+                try:
+                    asyncio.run(release_delivery_claim(claim))
+                except Exception as release_exc:
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "delivery_claim_release_failed",
+                        channel=name,
+                        match_uid=match.match_uid,
+                        error_type=type(release_exc).__name__,
                     )
-                if not telegram_confirmed and not delivery_uncertain:
-                    try:
-                        asyncio.run(release_delivery_claim(claim))
-                    except Exception as release_exc:
-                        log_event(
-                            logger,
-                            logging.ERROR,
-                            "delivery_claim_release_failed",
-                            channel=name,
-                            match_uid=match.match_uid,
-                            error_type=type(release_exc).__name__,
-                        )
-                log_event(
-                    logger,
-                    logging.ERROR,
-                    "publish_failed",
-                    channel=name,
-                    match_uid=match.match_uid,
-                    error_type=type(exc).__name__,
-                    error=_safe_error_message(exc),
-                )
-                continue
-
             try:
-                asyncio.run(mark_channel_processed(match, channel_id))
-                log_event(
-                    logger,
-                    logging.INFO,
-                    "delivery_marked_processed",
-                    channel=name,
-                    match_uid=match.match_uid,
-                )
-                _record_post_analytics(
-                    channel_id,
-                    match.match_uid,
-                    "results",
-                    tournament=match.tournament_name,
-                    media_card=result_card is not None,
-                )
-            except Exception as exc:
-                failed_messages += 1
+                asyncio.run(record_result_delivery_attempt(pending))
+            except Exception as outbox_exc:
                 log_event(
                     logger,
                     logging.ERROR,
-                    "delivery_state_failed",
+                    "result_outbox_attempt_failed",
                     channel=name,
                     match_uid=match.match_uid,
-                    error_type=type(exc).__name__,
-                    error=_safe_error_message(exc),
+                    error_type=type(outbox_exc).__name__,
                 )
+            log_event(
+                logger,
+                logging.ERROR,
+                "publish_failed",
+                channel=name,
+                match_uid=match.match_uid,
+                outbox_attempt=pending.attempt_count + 1,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+            continue
+
+        try:
+            asyncio.run(mark_channel_processed(match, channel_id))
+            asyncio.run(delete_result_delivery(pending))
+            log_event(
+                logger,
+                logging.INFO,
+                "delivery_marked_processed",
+                channel=name,
+                match_uid=match.match_uid,
+            )
+            _record_post_analytics(
+                channel_id,
+                match.match_uid,
+                "results",
+                tournament=match.tournament_name,
+                media_card=delivery_format == "photo",
+                delivery_format=delivery_format,
+            )
+        except Exception as exc:
+            failed_messages += 1
+            log_event(
+                logger,
+                logging.ERROR,
+                "delivery_state_failed",
+                channel=name,
+                match_uid=match.match_uid,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
 
     metrics = {
         "matches_received": len(matches),
@@ -1891,6 +2136,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "duplicates_skipped": skipped_duplicates,
         "filtered_skipped": skipped_filtered,
         "delivery_failures": failed_messages,
+        "retry_only": retry_only,
         "channels": channel_stats,
     }
     log_event(logger, logging.INFO, "handler_complete", **metrics)
@@ -1908,6 +2154,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "duplicates_skipped": skipped_duplicates,
         "filtered_skipped": skipped_filtered,
         "delivery_failures": failed_messages,
+        "retry_only": retry_only,
         "metrics": metrics,
         "dry_run": dry_run,
         "mode": mode,

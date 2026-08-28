@@ -13,7 +13,7 @@ from cs2bot.match_sources.models import (
     TournamentRadar,
     UpcomingMatchNormalized,
 )
-from cs2bot.match_sources.storage import DeliveryClaim
+from cs2bot.match_sources.storage import DeliveryClaim, PendingDelivery
 
 
 @pytest.fixture(autouse=True)
@@ -28,9 +28,29 @@ def configured_runtime(monkeypatch):
     async def mark_sent(claim, *args, **kwargs):
         return claim
 
+    async def enqueue_result(*args, **kwargs):
+        return True
+
+    async def no_pending(*args, **kwargs):
+        return []
+
+    async def no_op(*args, **kwargs):
+        return None
+
+    async def not_processed(*args, **kwargs):
+        return False
+
     monkeypatch.setattr(main, "reconcile_channel_delivery", no_reconciliation)
     monkeypatch.setattr(main, "reconcile_content_delivery", no_reconciliation)
     monkeypatch.setattr(main, "mark_delivery_claim_sent", mark_sent)
+    monkeypatch.setattr(main, "enqueue_result_delivery", enqueue_result)
+    monkeypatch.setattr(main, "list_pending_result_deliveries", no_pending)
+    monkeypatch.setattr(main, "record_result_delivery_attempt", no_op)
+    monkeypatch.setattr(main, "delete_result_delivery", no_op)
+    monkeypatch.setattr(main, "is_channel_processed", not_processed)
+    monkeypatch.setattr(main, "is_telegram_media_degraded", not_processed)
+    monkeypatch.setattr(main, "mark_telegram_media_degraded", no_op)
+    monkeypatch.setattr(main, "clear_telegram_media_degraded", no_op)
 
 
 def _match(match_id="1", team1="NAVI", team2="FaZe"):
@@ -176,8 +196,8 @@ def test_format_match_truncation_preserves_html_structure():
 
 def test_result_delivery_uses_recovery_timeout_and_retry_budget():
     assert main.RESULT_TELEGRAM_TIMEOUT_SECONDS == 10
-    assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 3
-    assert main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS == 3
+    assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 1
+    assert main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS == 1
 
 
 def test_handler_dry_run_does_not_send_or_mark(monkeypatch):
@@ -307,7 +327,7 @@ def test_result_uses_spoiler_photo_when_media_cards_enabled(monkeypatch):
 def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch):
     sent_text = []
     match = _match()
-    monotonic_values = iter([0.0, main.RESULT_MEDIA_BUDGET_SECONDS + 1.0])
+    monotonic_values = iter([0.0, 1.0, main.RESULT_MEDIA_BUDGET_SECONDS + 1.0])
 
     async def fake_get_new_finished_matches(**kwargs):
         return [match]
@@ -377,6 +397,101 @@ def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):
     assert response["statusCode"] == 200
     assert sent_text[0][0] == "chat"
     assert "<b>NAVI</b>  <tg-spoiler>2 : 1</tg-spoiler>  <b>FAZE</b>" in sent_text[0][1]
+
+
+def test_result_connect_timeout_enables_text_only_mode(monkeypatch):
+    sent_text = []
+    degraded_until = []
+    match = _match()
+
+    async def fake_get_new_finished_matches(**kwargs):
+        return [match]
+
+    async def fake_claim(*args, **kwargs):
+        return _claim(match, "global")
+
+    async def fake_mark_degraded(value):
+        degraded_until.append(value)
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(main, "mark_telegram_media_degraded", fake_mark_degraded)
+    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            main.TelegramConnectTimeoutError("connect failed")
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "send_to_telegram",
+        lambda *args, **kwargs: sent_text.append(args) or {"ok": True},
+    )
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 200
+    assert len(sent_text) == 1
+    assert len(degraded_until) == 1
+
+
+def test_result_delivers_durable_outbox_item_after_source_drops_it(monkeypatch):
+    sent = []
+    deleted = []
+    match = _match()
+    pending = PendingDelivery(
+        key=f"outbox/results/global_{match.match_uid}.json",
+        channel_id="global",
+        channel_name="global",
+        match=match,
+        created_at="2026-08-28T00:00:00Z",
+        last_attempt_at="2026-08-28T00:05:00Z",
+        attempt_count=1,
+    )
+
+    async def fake_get_new_finished_matches(**kwargs):
+        pytest.fail("retry-only invocation must not call PandaScore")
+
+    async def fake_pending(*args, **kwargs):
+        return [pending]
+
+    async def fake_claim(*args, **kwargs):
+        return _claim(match, "global")
+
+    async def fake_delete(item):
+        deleted.append(item.key)
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", None)
+    monkeypatch.setattr(main, "LIQUIPEDIA_API_KEY", None)
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "list_pending_result_deliveries", fake_pending)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "delete_result_delivery", fake_delete)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(
+        main,
+        "send_to_telegram",
+        lambda *args, **kwargs: sent.append(args) or {"ok": True},
+    )
+
+    response = main.handler({"retry_only": True}, None)
+
+    assert response["statusCode"] == 200
+    assert len(sent) == 1
+    assert deleted == [pending.key]
+    assert json.loads(response["body"])["retry_only"] is True
 
 
 def test_handler_dry_run_reports_rejected_match_diagnostics(monkeypatch):

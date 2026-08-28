@@ -135,13 +135,17 @@ python -m cs2bot.match_sources.match_fetcher --source auto --limit 10 --channel 
 ```text
 claims/{channel_id}_match_v1_{fingerprint}.json
 processed/{channel_id}_match_v1_{fingerprint}.json
+outbox/results/{channel_id}_match_v1_{fingerprint}.json
 ```
 
 Обычный claim живёт `DELIVERY_CLAIM_TTL_SECONDS`. Подтверждённая отправка переводит
 его в `sent` на 24 часа: такой claim не перехватывается, а используется только для
-восстановления отсутствующего processed marker. При тайм-ауте сети, HTTP 5xx или
-нечитаемом ответе Telegram исход доставки неизвестен, поэтому бот не делает
-автоматический повтор или текстовый fallback — это могло бы создать дубль.
+восстановления отсутствующего processed marker. Outbox хранит нормализованный
+матч до подтверждённой доставки и сортируется по времени последней попытки, поэтому
+матч не теряется после исчезновения из короткой выдачи PandaScore и один сбой не
+блокирует остальные публикации. `ConnectTimeout` до установления TCP-соединения
+считается определённым отказом; остальные сетевые ошибки, HTTP 5xx и нечитаемый
+ответ остаются delivery-uncertain и не повторяются автоматически.
 
 Старые адаптеры BO3.gg и HLTV сохранены только для миграционных тестов и диагностики. Production selector их не вызывает.
 
@@ -161,6 +165,7 @@ processed/{channel_id}_match_v1_{fingerprint}.json
 | Параметр | Где применяется | Правило |
 |---|---|---|
 | `job` | все вызовы | `results` по умолчанию; также `schedule`, `digest`, `radar`, `analytics` |
+| `retry_only` | результаты | `true` обрабатывает только durable outbox без запроса PandaScore |
 | `source` | результаты | `auto`, `pandascore` или `liquipedia` |
 | `limit` | результаты | целое число от 1 до 30; значения вне диапазона ограничиваются границами |
 | `mode` | результаты | `production` или `debug` |
@@ -408,9 +413,10 @@ ENABLE_LIQUIPEDIA_SHADOW=1
 BOT_MODE=production
 ```
 
-10. Создайте три timer trigger: результаты раз в 15 минут, расписание в 10:00 МСК и итоги в 23:00 МСК.
+10. Создайте четыре timer trigger: получение результатов раз в 15 минут,
+    `retry_only` для outbox раз в 5 минут, расписание в 10:00 МСК и итоги в 23:00 МСК.
 11. Для каждого `job` сначала запустите функцию вручную с `dry_run=true`.
-12. После проверки отключите `dry_run` и проверьте, что объекты появляются в `claims/` и `processed/`; у подтверждённой отправки claim имеет состояние `sent` до завершения записи marker.
+12. После проверки отключите `dry_run` и проверьте, что объекты появляются в `outbox/results/`, `claims/` и `processed/`; после подтверждения outbox удаляется, а claim имеет состояние `sent` до завершения записи marker.
 
 Функция не должна быть публичной: право invocation выдавайте только trigger/service account. Не передавайте токены и ключи внутри event payload.
 
