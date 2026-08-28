@@ -12,15 +12,22 @@ from cs2bot.match_sources.storage import (
     claim_channel_delivery,
     claim_content_delivery,
     channel_match_uid,
+    clear_telegram_media_degraded,
+    delete_result_delivery,
+    enqueue_result_delivery,
     is_channel_processed,
     is_processed,
+    is_telegram_media_degraded,
     legacy_channel_match_uid,
+    list_pending_result_deliveries,
     logo_cache_key,
     mark_channel_processed,
     mark_content_processed,
     mark_delivery_claim_sent,
+    mark_telegram_media_degraded,
     mark_processed,
     processed_key,
+    record_result_delivery_attempt,
     release_delivery_claim,
     reconcile_channel_delivery,
     reconcile_content_delivery,
@@ -73,6 +80,17 @@ class FakeS3:
                 "GetObject",
             )
         return {"Body": io.BytesIO(self.objects[Key]["Body"])}
+
+    def list_objects_v2(self, Bucket, Prefix, MaxKeys, ContinuationToken=None):
+        keys = sorted(key for key in self.objects if key.startswith(Prefix))[:MaxKeys]
+        return {
+            "Contents": [{"Key": key} for key in keys],
+            "IsTruncated": False,
+        }
+
+    def delete_object(self, Bucket, Key):
+        self.objects.pop(Key, None)
+        return {}
 
 
 class TitleCaseMetadataS3(FakeS3):
@@ -187,6 +205,119 @@ def test_logo_cache_round_trips_png_by_source_url():
     assert read_cached_logo(url, client=s3, bucket="bucket") == raw
     assert logo_cache_key(url) in s3.objects
     assert s3.objects[logo_cache_key(url)]["ContentType"] == "image/png"
+
+
+def test_result_outbox_preserves_retry_state_and_deletes_after_success():
+    s3 = FakeS3()
+    match = _match()
+    created = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
+
+    assert asyncio.run(
+        enqueue_result_delivery(
+            match,
+            "global",
+            "Global",
+            client=s3,
+            bucket="bucket",
+            now=created,
+        )
+    )
+    pending = asyncio.run(
+        list_pending_result_deliveries(client=s3, bucket="bucket")
+    )[0]
+    updated = asyncio.run(
+        record_result_delivery_attempt(
+            pending,
+            client=s3,
+            bucket="bucket",
+            now=created + timedelta(minutes=5),
+        )
+    )
+
+    assert updated.attempt_count == 1
+    assert asyncio.run(
+        enqueue_result_delivery(
+            match,
+            "global",
+            "Global",
+            client=s3,
+            bucket="bucket",
+            now=created + timedelta(minutes=10),
+        )
+    ) is False
+    reloaded = asyncio.run(
+        list_pending_result_deliveries(client=s3, bucket="bucket")
+    )[0]
+    assert reloaded.attempt_count == 1
+    assert reloaded.created_at == "2026-08-28T08:00:00Z"
+
+    asyncio.run(delete_result_delivery(reloaded, client=s3, bucket="bucket"))
+    assert asyncio.run(
+        list_pending_result_deliveries(client=s3, bucket="bucket")
+    ) == []
+
+
+def test_result_outbox_prioritizes_never_attempted_and_least_recent_items():
+    s3 = FakeS3()
+    first = _match()
+    second = _match().model_copy(
+        update={
+            "match_id": "2378482",
+            "match_url": "https://example.com/2",
+            "team2_name": "MOUZ",
+        }
+    )
+    created = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
+    asyncio.run(enqueue_result_delivery(first, "global", "Global", client=s3, bucket="bucket", now=created))
+    asyncio.run(
+        enqueue_result_delivery(
+            second,
+            "global",
+            "Global",
+            client=s3,
+            bucket="bucket",
+            now=created + timedelta(seconds=1),
+        )
+    )
+    queued = asyncio.run(list_pending_result_deliveries(client=s3, bucket="bucket"))
+    asyncio.run(
+        record_result_delivery_attempt(
+            queued[0],
+            client=s3,
+            bucket="bucket",
+            now=created + timedelta(minutes=1),
+        )
+    )
+
+    reordered = asyncio.run(list_pending_result_deliveries(client=s3, bucket="bucket"))
+    assert reordered[0].match.match_id == "2378482"
+    assert reordered[1].attempt_count == 1
+
+
+def test_telegram_media_degraded_window_expires_and_can_be_cleared():
+    s3 = FakeS3()
+    now = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
+
+    assert asyncio.run(
+        is_telegram_media_degraded(client=s3, bucket="bucket", now=now)
+    ) is False
+    asyncio.run(
+        mark_telegram_media_degraded(
+            now + timedelta(hours=1), client=s3, bucket="bucket"
+        )
+    )
+    assert asyncio.run(
+        is_telegram_media_degraded(client=s3, bucket="bucket", now=now)
+    ) is True
+    assert asyncio.run(
+        is_telegram_media_degraded(
+            client=s3, bucket="bucket", now=now + timedelta(hours=2)
+        )
+    ) is False
+    asyncio.run(clear_telegram_media_degraded(client=s3, bucket="bucket"))
+    assert asyncio.run(
+        is_telegram_media_degraded(client=s3, bucket="bucket", now=now)
+    ) is False
 
 
 def test_mark_processed_creates_object():

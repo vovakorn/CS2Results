@@ -36,6 +36,23 @@ class DeliveryClaim:
     etag: str | None = None
 
 
+@dataclass(frozen=True)
+class PendingDelivery:
+    """A durable result delivery waiting for a Telegram confirmation."""
+
+    key: str
+    channel_id: str
+    channel_name: str
+    match: MatchNormalized
+    created_at: str
+    last_attempt_at: str | None = None
+    attempt_count: int = 0
+
+
+RESULT_OUTBOX_PREFIX = "outbox/results/"
+TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
+
+
 def _client():
     return boto3.client("s3", endpoint_url=OBJECT_STORAGE_ENDPOINT)
 
@@ -52,6 +69,10 @@ def processed_key(match_uid: str) -> str:
 
 def claim_key(match_uid: str) -> str:
     return f"claims/{match_uid}.json"
+
+
+def result_outbox_key(match: MatchNormalized, channel_id: str) -> str:
+    return f"{RESULT_OUTBOX_PREFIX}{channel_match_uid(match, channel_id)}.json"
 
 
 def alert_key(alert_code: str, now: datetime) -> str:
@@ -143,6 +164,272 @@ def channel_match_uid(match: MatchNormalized, channel_name: str) -> str:
 
 def legacy_channel_match_uid(match: MatchNormalized, channel_name: str) -> str:
     return f"{safe_storage_part(channel_name)}_{match.legacy_match_uid}"
+
+
+def _pending_delivery_payload(
+    match: MatchNormalized,
+    channel_id: str,
+    channel_name: str,
+    *,
+    created_at: str,
+    last_attempt_at: str | None,
+    attempt_count: int,
+) -> bytes:
+    return json.dumps(
+        {
+            "version": 1,
+            "channel_id": channel_id,
+            "channel_name": channel_name,
+            "created_at": created_at,
+            "last_attempt_at": last_attempt_at,
+            "attempt_count": attempt_count,
+            "match": match.model_dump(mode="json"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+async def enqueue_result_delivery(
+    match: MatchNormalized,
+    channel_id: str,
+    channel_name: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Create a durable result outbox item without resetting existing retry state."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = result_outbox_key(match, channel_id)
+    created_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+    body = _pending_delivery_payload(
+        match,
+        channel_id,
+        channel_name,
+        created_at=created_at,
+        last_attempt_at=None,
+        attempt_count=0,
+    )
+
+    try:
+        await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=key,
+            Body=body,
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+        return True
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return False
+        raise StorageUnavailableError(f"result outbox write failed for {key}") from exc
+
+
+async def list_pending_result_deliveries(
+    client: Any | None = None,
+    bucket: str | None = None,
+    limit: int = 200,
+) -> list[PendingDelivery]:
+    """Load durable result deliveries, ordered by least recent attempt first."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    pending: list[PendingDelivery] = []
+    continuation_token: str | None = None
+
+    while len(pending) < max(1, limit):
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket_name,
+            "Prefix": RESULT_OUTBOX_PREFIX,
+            "MaxKeys": min(1000, max(1, limit)),
+        }
+        if continuation_token:
+            kwargs["ContinuationToken"] = continuation_token
+        try:
+            page = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
+        except ClientError as exc:
+            raise StorageUnavailableError("result outbox list failed") from exc
+
+        for item in page.get("Contents", []):
+            key = item.get("Key")
+            if not isinstance(key, str) or not key.startswith(RESULT_OUTBOX_PREFIX):
+                continue
+            try:
+                response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+                stream = response["Body"]
+                try:
+                    payload = json.loads(stream.read())
+                finally:
+                    stream.close()
+                pending.append(
+                    PendingDelivery(
+                        key=key,
+                        channel_id=str(payload["channel_id"]),
+                        channel_name=str(payload["channel_name"]),
+                        match=MatchNormalized.model_validate(payload["match"]),
+                        created_at=str(payload["created_at"]),
+                        last_attempt_at=(
+                            str(payload["last_attempt_at"])
+                            if payload.get("last_attempt_at")
+                            else None
+                        ),
+                        attempt_count=max(0, int(payload.get("attempt_count", 0))),
+                    )
+                )
+            except (ClientError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                logger.error(
+                    'storage_error="invalid result outbox item" key="%s" error_type="%s"',
+                    key,
+                    type(exc).__name__,
+                )
+            if len(pending) >= limit:
+                break
+
+        continuation_token = page.get("NextContinuationToken")
+        if not page.get("IsTruncated") or not continuation_token:
+            break
+
+    pending.sort(
+        key=lambda item: (
+            item.last_attempt_at is not None,
+            item.last_attempt_at or item.created_at,
+            item.created_at,
+            item.key,
+        )
+    )
+    return pending
+
+
+async def record_result_delivery_attempt(
+    pending: PendingDelivery,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> PendingDelivery:
+    """Move a failed outbox item to the back of the fair retry order."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    attempted_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+    updated = PendingDelivery(
+        key=pending.key,
+        channel_id=pending.channel_id,
+        channel_name=pending.channel_name,
+        match=pending.match,
+        created_at=pending.created_at,
+        last_attempt_at=attempted_at,
+        attempt_count=pending.attempt_count + 1,
+    )
+    body = _pending_delivery_payload(
+        updated.match,
+        updated.channel_id,
+        updated.channel_name,
+        created_at=updated.created_at,
+        last_attempt_at=updated.last_attempt_at,
+        attempt_count=updated.attempt_count,
+    )
+    try:
+        await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=updated.key,
+            Body=body,
+            ContentType="application/json",
+        )
+        return updated
+    except ClientError as exc:
+        raise StorageUnavailableError(f"result outbox attempt write failed for {updated.key}") from exc
+
+
+async def delete_result_delivery(
+    pending: PendingDelivery,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> None:
+    """Remove a durable result only after it is processed or reconciled."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    try:
+        await asyncio.to_thread(s3.delete_object, Bucket=bucket_name, Key=pending.key)
+    except ClientError as exc:
+        raise StorageUnavailableError(f"result outbox delete failed for {pending.key}") from exc
+
+
+async def is_telegram_media_degraded(
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether recent photo connection failures require text-only delivery."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    try:
+        response = await asyncio.to_thread(
+            s3.get_object,
+            Bucket=bucket_name,
+            Key=TELEGRAM_MEDIA_HEALTH_KEY,
+        )
+        stream = response["Body"]
+        try:
+            payload = json.loads(stream.read())
+        finally:
+            stream.close()
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return False
+        raise StorageUnavailableError("telegram media health read failed") from exc
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+    raw_until = payload.get("degraded_until")
+    if not isinstance(raw_until, str):
+        return False
+    try:
+        degraded_until = datetime.fromisoformat(raw_until.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return degraded_until > (now or datetime.now(timezone.utc))
+
+
+async def mark_telegram_media_degraded(
+    degraded_until: datetime,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> None:
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    payload = {
+        "status": "text_only",
+        "degraded_until": degraded_until.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    try:
+        await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=TELEGRAM_MEDIA_HEALTH_KEY,
+            Body=json.dumps(payload).encode("utf-8"),
+            ContentType="application/json",
+        )
+    except ClientError as exc:
+        raise StorageUnavailableError("telegram media health write failed") from exc
+
+
+async def clear_telegram_media_degraded(
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> None:
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    try:
+        await asyncio.to_thread(
+            s3.delete_object,
+            Bucket=bucket_name,
+            Key=TELEGRAM_MEDIA_HEALTH_KEY,
+        )
+    except ClientError as exc:
+        raise StorageUnavailableError("telegram media health delete failed") from exc
 
 
 def _is_not_found(exc: ClientError) -> bool:

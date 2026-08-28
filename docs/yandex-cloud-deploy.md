@@ -175,10 +175,10 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 
 ## 7. Timer triggers
 
-Создайте три timer trigger. Расписание Yandex Cloud задаётся в UTC; Москва
+Создайте четыре timer trigger. Расписание Yandex Cloud задаётся в UTC; Москва
 круглый год использует UTC+3.
 
-Результаты — каждые 15 минут:
+Получение новых результатов — каждые 15 минут:
 
 ```text
 0/15 * ? * * *
@@ -189,6 +189,21 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
   "job": "results",
   "limit": 30,
   "source": "auto",
+  "mode": "production"
+}
+```
+
+Повтор outbox — каждые 5 минут. Этот trigger не вызывает PandaScore или
+Liquipedia shadow; claims и processed markers предотвращают параллельные дубли:
+
+```text
+0/5 * ? * * *
+```
+
+```json
+{
+  "job": "results",
+  "retry_only": true,
   "mode": "production"
 }
 ```
