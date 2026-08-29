@@ -89,7 +89,7 @@ def _upcoming():
 def test_format_match_uses_normalized_fields():
     text = main.format_match(_match())
     assert "<b>NAVI</b>  <tg-spoiler>2 : 1</tg-spoiler>  <b>FAZE</b>" in text
-    assert "Победитель: <tg-spoiler><b>NAVI</b></tg-spoiler>" in text
+    assert "Победитель:" not in text
     assert "<b>IEM COLOGNE 2026</b>" in text
     assert "Match ID" not in text
     assert "PandaScore · #CS2 #РезультатыМатчей" in text

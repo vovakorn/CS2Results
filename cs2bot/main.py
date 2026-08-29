@@ -714,18 +714,9 @@ def format_match(match: Any) -> str:
         pieces.append("")
     if score1 != "" and score2 != "":
         safe_score = f"{html.escape(score1)} : {html.escape(score2)}"
-        try:
-            winner = team1 if int(score1) > int(score2) else team2 if int(score2) > int(score1) else ""
-        except ValueError:
-            winner = ""
         if TELEGRAM_SPOILERS:
             safe_score = f"<tg-spoiler>{safe_score}</tg-spoiler>"
         pieces.append(f"<b>{safe_team1}</b>  {safe_score}  <b>{safe_team2}</b>")
-        if winner:
-            safe_winner = f"<b>{html.escape(winner.upper())}</b>"
-            if TELEGRAM_SPOILERS:
-                safe_winner = f"<tg-spoiler>{safe_winner}</tg-spoiler>"
-            pieces.append(f"Победитель: {safe_winner}")
     else:
         pieces.append(f"<b>{safe_team1}</b> — <b>{safe_team2}</b>")
     if maps:
