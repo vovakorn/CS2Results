@@ -15,13 +15,14 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-релиз: PR #89; таймеры вызывают актуальную версию по тегу
-  `production`, поэтому ID версии проверяется непосредственно в Yandex Cloud.
+- Последний production-деплой: 29 августа 2026, версия `d4ecr5fg2s0kc40hgc8v`;
+  таймеры вызывают актуальную версию по тегу `production`.
 - В production включён флаг `ENABLE_LIQUIPEDIA_FINAL_CARDS=1`; Liquipedia fallback
   остаётся выключен.
 - Четыре timer trigger вызывают тег `production`, а не `$latest`.
-- Последняя проверка: 297 тестов локально, сборка функции, GitHub Actions и
-  candidate `dry_run` перед переключением production-тега.
+- Последняя локальная проверка: 300 тестов и сборка OAuth-архива. Production
+  проверен candidate `dry_run` перед переключением тега и безопасным запросом
+  Telegram API через прокси.
 - CI проверяет зависимости, безопасность, компиляцию, pytest и сборку архива.
 
 ## Расписание jobs
@@ -89,10 +90,17 @@ production и сверки фактического состояния. Теку
   частичным результатом при недоступности отдельных endpoints.
 - Analytics journal для событий публикаций, снимков подписчиков, invite links и
   ручного импорта метрик.
-- Отдельный OAuth handler для Instagram и Threads подготовлен, но production
-  развёртывание не выполнялось; до включения для каждой платформы должен быть
-  задан её `*_EXPECTED_USER_ID`, иначе запросы отзыва доступа и удаления данных
-  отклоняются.
+- Отдельный OAuth handler для Instagram и Threads развёрнут в production как
+  функция `cs2-social-oauth`, версия `d4es5dcfc69mfmrqm95q`. Запросы к Meta идут
+  через `SOCIAL_PROXY_URL` из отдельного Lockbox-секрета, а запросы к Yandex
+  Lockbox остаются прямыми. Health и OAuth redirect проверены; осталось повторно
+  пройти OAuth обеих платформ и закрепить полученные `*_EXPECTED_USER_ID`, иначе
+  запросы отзыва доступа и удаления данных отклоняются.
+- Telegram-прокси подключён отдельным Lockbox-секретом к основной production-функции;
+  dry-run, запрос `getChatMemberCount` и один изолированный тестовый PNG-пост
+  выполнены успешно.
+- Локально подготовлено и протестировано увеличение повторов результата при
+  `ConnectTimeout` с одной до двух попыток; оно ещё не развёрнуто в production.
 - Deploy-скрипт копирует environment variables и Lockbox bindings из production,
   выполняет candidate dry-run и только затем переключает тег.
 

@@ -109,10 +109,10 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MAX_TELEGRAM_CAPTION_LENGTH = 1024
 RESULT_MEDIA_BUDGET_SECONDS = 35.0
 RESULT_TELEGRAM_TIMEOUT_SECONDS = 10
-RESULT_TELEGRAM_MAX_ATTEMPTS = 1
-# Results make one bounded photo attempt and one text fallback attempt per timer
-# invocation. The durable outbox and five-minute trigger provide spaced retries
-# without letting one match monopolize the function execution window.
+RESULT_TELEGRAM_MAX_ATTEMPTS = 2
+# Results make up to two bounded photo attempts, but retry only before a TCP
+# connection exists. A confirmed or uncertain Telegram request is never retried.
+# The durable outbox and five-minute trigger provide further spaced retries.
 RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS = 1
 RESULT_DELIVERY_START_BUDGET_SECONDS = 90.0
 RESULT_MEDIA_DEGRADED_SECONDS = 60 * 60

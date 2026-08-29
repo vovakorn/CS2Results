@@ -196,7 +196,7 @@ def test_format_match_truncation_preserves_html_structure():
 
 def test_result_delivery_uses_recovery_timeout_and_retry_budget():
     assert main.RESULT_TELEGRAM_TIMEOUT_SECONDS == 10
-    assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 1
+    assert main.RESULT_TELEGRAM_MAX_ATTEMPTS == 2
     assert main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS == 1
 
 

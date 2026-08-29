@@ -17,7 +17,7 @@ import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import parse_qs, urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -75,6 +75,23 @@ def _base_url() -> str:
 
 def _callback_url(platform: str) -> str:
     return f"{_base_url()}/oauth/meta/{platform}/callback"
+
+
+def _social_proxy() -> dict[str, str] | None:
+    """Return the explicit Meta egress proxy without exposing it in logs."""
+    value = os.getenv("SOCIAL_PROXY_URL", "").strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise OAuthConfigurationError(
+            "SOCIAL_PROXY_URL must be an absolute HTTP(S) URL"
+        )
+    if parsed.path not in {"", "/"} or parsed.params or parsed.query or parsed.fragment:
+        raise OAuthConfigurationError(
+            "SOCIAL_PROXY_URL must not contain a path, query, or fragment"
+        )
+    return {"http": value, "https": value}
 
 
 def _b64encode(raw: bytes) -> str:
@@ -203,6 +220,7 @@ def _request_json(
             params=params,
             data=data,
             headers=headers,
+            proxies=_social_proxy(),
             timeout=HTTP_TIMEOUT_SECONDS,
             allow_redirects=False,
         )

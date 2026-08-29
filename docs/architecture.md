@@ -97,6 +97,8 @@ Object Storage содержит дополнительные типы состо
 - Несекретные правила отбора находятся в `tier1_filter.json`.
 - Runtime-конфигурация читается из переменных окружения.
 - Токены и ключи передаются через Yandex Lockbox и не хранятся в репозитории.
+- Отдельная OAuth-функция направляет запросы к Meta через `SOCIAL_PROXY_URL`,
+  подключённый из Lockbox; запросы к Yandex Lockbox через этот прокси не идут.
 - `cs2bot/config.py` отвечает за Telegram и каналы;
   `cs2bot/match_sources/config.py` — за источники, фильтры, freshness и storage.
 - Production-триггеры должны ссылаться на тег `production`.

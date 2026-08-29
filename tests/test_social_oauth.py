@@ -11,6 +11,7 @@ from cs2bot import social_oauth
 
 @pytest.fixture(autouse=True)
 def oauth_environment(monkeypatch):
+    monkeypatch.delenv("SOCIAL_PROXY_URL", raising=False)
     values = {
         "SOCIAL_OAUTH_BASE_URL": "https://oauth.example.test",
         "SOCIAL_OAUTH_EXPECTED_USERNAME": "cs2results",
@@ -87,6 +88,52 @@ def test_state_rejects_wrong_platform_and_expiry():
         social_oauth._verify_state(state, "threads", "ig-app-secret", now=1_100)
     with pytest.raises(social_oauth.OAuthFlowError, match="expired"):
         social_oauth._verify_state(state, "instagram", "ig-app-secret", now=2_000)
+
+
+def test_meta_requests_use_explicit_social_proxy(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"ok": True}
+
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setenv(
+        "SOCIAL_PROXY_URL",
+        "http://proxy-user:proxy-password@proxy.example:8443",
+    )
+    monkeypatch.setattr(social_oauth.requests, "request", fake_request)
+
+    assert social_oauth._request_json("GET", "https://graph.instagram.com/me") == {
+        "ok": True
+    }
+    assert captured["proxies"] == {
+        "http": "http://proxy-user:proxy-password@proxy.example:8443",
+        "https": "http://proxy-user:proxy-password@proxy.example:8443",
+    }
+
+
+def test_social_proxy_rejects_non_http_url(monkeypatch):
+    monkeypatch.setenv("SOCIAL_PROXY_URL", "socks5://proxy.example:1080")
+    monkeypatch.setattr(
+        social_oauth.requests,
+        "request",
+        lambda *args, **kwargs: pytest.fail("invalid proxy must fail before request"),
+    )
+
+    with pytest.raises(
+        social_oauth.OAuthConfigurationError,
+        match="absolute HTTP",
+    ):
+        social_oauth._request_json("GET", "https://graph.threads.net/me")
 
 
 def test_callback_stores_token_without_returning_it(monkeypatch):
@@ -198,6 +245,30 @@ def test_store_credentials_adds_lockbox_version(monkeypatch):
     assert entries["ACCESS_TOKEN"] == "threads-secret-token"
     assert entries["USER_ID"] == "789"
     assert entries["USERNAME"] == "cs2results"
+
+
+def test_lockbox_write_does_not_use_social_proxy(monkeypatch):
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+    def fake_post(url, **kwargs):
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setenv("SOCIAL_PROXY_URL", "http://proxy.example:8443")
+    monkeypatch.setattr(social_oauth.requests, "post", fake_post)
+
+    social_oauth._store_credentials(
+        "threads",
+        social_oauth._platform_config("threads"),
+        {"access_token": "token", "expires_in": 60},
+        {"id": "789", "username": "cs2results"},
+        {"token": "iam-token"},
+    )
+
+    assert "proxies" not in captured
 
 
 def test_data_deletion_requires_meta_signature(monkeypatch):

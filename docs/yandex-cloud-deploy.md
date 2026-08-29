@@ -56,6 +56,12 @@ scripts/deploy_yandex_function.sh deploy
 Значение `TELEGRAM_PROXY_URL` не передавайте в командной строке и не кладите в
 обычные environment variables.
 
+Отдельная функция `cs2-social-oauth` использует `SOCIAL_PROXY_URL` для запросов
+к Instagram и Threads, если прямой доступ к Meta недоступен. URL с логином и
+паролем храните отдельным секретом Lockbox и подключайте к версии OAuth-функции
+как secret environment variable. Прокси применяется только к Meta API; запись
+полученных токенов в Yandex Lockbox выполняется напрямую.
+
 Для нескольких каналов используйте:
 
 ```text
