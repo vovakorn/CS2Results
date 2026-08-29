@@ -1021,19 +1021,14 @@ def _draw_wide_result_match(
 
     if show_tournament:
         footer_text = match.tournament_name.upper()
-        footer_fill = MUTED
-    else:
-        winner_name = match.team1_name if winner_side == "left" else match.team2_name
-        footer_text = f"ПОБЕДИТЕЛЬ · {winner_name.upper()}" if winner_side else "РЕЗУЛЬТАТ ЗАВЕРШЁН"
-        footer_fill = AMBER
-    _centered_text(
-        draw,
-        (x0 + x1) // 2,
-        y1 - (58 if height >= 300 else 43),
-        footer_text,
-        _fit_font(draw, footer_text, x1 - x0 - 160, event_size, 12, display=True),
-        footer_fill,
-    )
+        _centered_text(
+            draw,
+            (x0 + x1) // 2,
+            y1 - (58 if height >= 300 else 43),
+            footer_text,
+            _fit_font(draw, footer_text, x1 - x0 - 160, event_size, 12, display=True),
+            MUTED,
+        )
 
 
 def _draw_compact_result_match(

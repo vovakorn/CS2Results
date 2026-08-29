@@ -86,6 +86,22 @@ def test_result_card_channel_logo_is_centered_at_top(monkeypatch):
     assert drawn == [((media_cards.RESULT_CARD_SIZE[0] // 2, 98), 100)]
 
 
+def test_result_card_omits_winner_footer(monkeypatch):
+    texts = []
+    original = media_cards._centered_text
+
+    def capture_text(draw, center_x, y, text, font, fill):
+        texts.append(text)
+        return original(draw, center_x, y, text, font, fill)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
+
+    media_cards.render_result_card(_result())
+
+    assert not any("ПОБЕДИТЕЛЬ" in text for text in texts)
+    assert not any("РЕЗУЛЬТАТ ЗАВЕРШЁН" in text for text in texts)
+
+
 def test_result_card_centres_team_names_under_logos(monkeypatch):
     names = []
     logos = []
