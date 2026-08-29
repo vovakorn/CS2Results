@@ -91,11 +91,11 @@ production и сверки фактического состояния. Теку
 - Analytics journal для событий публикаций, снимков подписчиков, invite links и
   ручного импорта метрик.
 - Отдельный OAuth handler для Instagram и Threads развёрнут в production как
-  функция `cs2-social-oauth`, версия `d4es5dcfc69mfmrqm95q`. Запросы к Meta идут
-  через `SOCIAL_PROXY_URL` из отдельного Lockbox-секрета, а запросы к Yandex
-  Lockbox остаются прямыми. Health и OAuth redirect проверены; осталось повторно
-  пройти OAuth обеих платформ и закрепить полученные `*_EXPECTED_USER_ID`, иначе
-  запросы отзыва доступа и удаления данных отклоняются.
+  функция `cs2-social-oauth`, версия `d4e188fbebm1iegmc5bi`. Запросы к Meta идут
+  через проверенный Lockbox-прокси, общий с Telegram, а запросы к Yandex Lockbox
+  остаются прямыми. Health и OAuth redirect проверены; осталось повторно пройти
+  OAuth обеих платформ и закрепить полученные `*_EXPECTED_USER_ID`, иначе запросы
+  отзыва доступа и удаления данных отклоняются.
 - Telegram-прокси подключён отдельным Lockbox-секретом к основной production-функции;
   dry-run, запрос `getChatMemberCount` и один изолированный тестовый PNG-пост
   выполнены успешно.
