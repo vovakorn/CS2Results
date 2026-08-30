@@ -1279,7 +1279,7 @@ def test_schedule_context_explains_form_and_series_format():
     assert "<b>Последние 5 матчей каждой команды:</b> NAVI — 4 победы и 1 поражение; FaZe — 2 победы и 3 поражения." in text
     assert "не рейтинг команд и не прогноз" in text
     assert "<b>Очные встречи за 3 месяца:</b> 3 матча. <b>NAVI</b>  2 : 1  <b>FAZE</b>." in text
-    assert "🏆 Турнир IEM Cologne 2026 · Формат: Bo3" in text
+    assert "🏆 Турнир IEM Cologne 2026 · Bo3" in text
     assert text.index("🏆 Турнир IEM Cologne 2026") < text.index("NAVI — FaZe")
     assert text.index("не рейтинг команд и не прогноз") > text.index("<b>Последние 5 матчей каждой команды:</b>")
 
@@ -1307,9 +1307,38 @@ def test_schedule_context_shows_shared_format_once_before_matches():
         {first_match.match_id: first_context, second_match.match_id: second_context},
     )
 
-    assert text.count("🏆 Турнир IEM Cologne 2026 · Формат: Bo3") == 1
-    assert text.index("🏆 Турнир") < text.index("<b>NAVI — FaZe</b>")
-    assert text.index("🏆 Турнир") < text.index("<b>Spirit — Vitality</b>")
+    header = "🏆 Турнир IEM Cologne 2026 · Bo3"
+    assert text.count(header) == 1
+    assert text.index(header) < text.index("<b>NAVI — FaZe</b>")
+    assert text.index("<b>Spirit — Vitality</b>") > text.index("<b>NAVI — FaZe</b>")
+
+
+def test_schedule_context_places_each_tournament_before_its_matches():
+    first_match = _upcoming()
+    second_match = _upcoming().model_copy(
+        update={
+            "match_id": "second-tournament-match",
+            "tournament_name": "ESL Pro League",
+            "competition_key": "ESL Pro League",
+            "team1_name": "Spirit",
+            "team2_name": "Vitality",
+        }
+    )
+    contexts = {
+        match.match_id: ScheduleMatchContext(
+            match_id=match.match_id,
+            team1_form=TeamForm(team_name=match.team1_name, wins=3, losses=2),
+            team2_form=TeamForm(team_name=match.team2_name, wins=2, losses=3),
+        )
+        for match in (first_match, second_match)
+    }
+
+    text = main.format_schedule_context([first_match, second_match], contexts)
+
+    first_match_start = text.index("<b>NAVI — FaZe</b>")
+    second_header_start = text.index("🏆 Турнир ESL Pro League · Bo3")
+    second_match_start = text.index("<b>Spirit — Vitality</b>")
+    assert first_match_start < second_header_start < second_match_start
 
 
 def test_schedule_context_groups_tournament_stages_and_omits_match_format():
@@ -1340,7 +1369,7 @@ def test_schedule_context_groups_tournament_stages_and_omits_match_format():
 
     text = main.format_schedule_context([group_a, group_b], contexts)
 
-    assert text.count("🏆 Турнир BLAST Open — Porto · Формат: Bo3") == 1
+    assert text.count("🏆 Турнир BLAST Open — Porto · Bo3") == 1
     assert "<b>G2 — Natus Vincere</b> · Bo3" not in text
     assert "<b>G2 — Natus Vincere</b>" in text
     assert text.count("<b>Очные встречи за 3 месяца:</b> команды не встречались.") == 2
@@ -1368,7 +1397,7 @@ def test_schedule_context_does_not_turn_recent_results_into_a_prediction():
 
     assert "явного фаворита" not in text
     assert "не рейтинг команд и не прогноз" in text
-    assert "🏆 Турнир IEM Cologne 2026 · Формат: Bo1" in text
+    assert "🏆 Турнир IEM Cologne 2026 · Bo1" in text
 
 
 def test_tournament_radar_formats_standings_without_raw_ids():
