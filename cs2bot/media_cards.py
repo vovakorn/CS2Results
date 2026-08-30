@@ -1044,7 +1044,13 @@ def _draw_compact_result_match(
     draw.line((x0 + 22, y0 + 1, center_x - 22, y0 + 1), fill=(*CYAN, 185), width=2)
     draw.line((center_x + 22, y0 + 1, x1 - 22, y0 + 1), fill=(*AMBER, 185), width=2)
 
-    if height >= 210:
+    # Four-match daily digests are the most common grid. Give that layout a
+    # clearly dominant score and logo treatment rather than styling it like a
+    # dense six-to-ten-match variant.
+    if height >= 280:
+        logo_diameter, score_size, team_size, event_size = 106, 60, 30, 17
+        logo_y, team_y, event_y = y0 + 122, y0 + 190, y1 - 54
+    elif height >= 210:
         logo_diameter, score_size, team_size, event_size = 84, 46, 26, 15
         logo_y, team_y, event_y = y0 + 92, y0 + 143, y1 - 46
     elif height >= 165:
@@ -1256,14 +1262,17 @@ def render_results_card(
     sorted_matches = sorted(matches, key=lambda item: item.end_date or item.date or item.start_date or "")
     columns = 1 if len(sorted_matches) <= 3 else 2
     rows = math.ceil(len(sorted_matches) / columns)
-    area_top = 340
-    area_bottom = 960
+    # Keep the grid close to the title and let a four-match digest use most of
+    # the card. This makes the actual results readable at a glance while the
+    # denser variants continue to fit in the same safe area.
+    area_top = 330
+    area_bottom = 970
     gap = 14
     available_height = area_bottom - area_top - gap * (rows - 1)
     if columns == 1:
         max_row_height = {1: 390, 2: 280, 3: 195}[len(sorted_matches)]
     else:
-        max_row_height = 230
+        max_row_height = 300 if len(sorted_matches) == 4 else 230
     row_height = min(max_row_height, available_height // rows)
     group_height = row_height * rows + gap * (rows - 1)
     top = area_top + ((area_bottom - area_top) - group_height) // 2

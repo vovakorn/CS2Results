@@ -164,6 +164,24 @@ def test_daily_results_card_rejects_more_than_ten_matches():
         )
 
 
+def test_four_match_daily_results_use_prominent_grid(monkeypatch):
+    boxes = []
+    original = media_cards._draw_compact_result_match
+
+    def capture_box(canvas, draw, match, box):
+        boxes.append(box)
+        return original(canvas, draw, match, box)
+
+    monkeypatch.setattr(media_cards, "_draw_compact_result_match", capture_box)
+    media_cards.render_results_card(
+        [_result().model_copy(update={"match_id": str(index)}) for index in range(4)],
+        media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
+    )
+
+    assert len(boxes) == 4
+    assert all(y1 - y0 == 300 for _, y0, _, y1 in boxes)
+
+
 def test_schedule_card_is_valid_square_png():
     data = media_cards.render_schedule_card(
         [_upcoming()],
