@@ -1276,12 +1276,12 @@ def test_schedule_context_explains_form_and_series_format():
     text = main.format_schedule_context([match], {match.match_id: context})
 
     assert "Контекст к матчам дня" in text
-    assert "Последние 5 матчей: NAVI — 4 победы и 1 поражение; FaZe — 2 победы и 3 поражения." in text
+    assert "<b>Последние 5 матчей каждой команды:</b> NAVI — 4 победы и 1 поражение; FaZe — 2 победы и 3 поражения." in text
     assert "не рейтинг команд и не прогноз" in text
-    assert "Очные встречи за последние 3 месяца: 2–1 в пользу NAVI (3 матча)." in text
-    assert "Формат IEM Cologne 2026 · Bo3: для победы нужно выиграть большинство карт." in text
-    assert text.index("Формат IEM Cologne 2026") < text.index("NAVI — FaZe")
-    assert text.index("не рейтинг команд и не прогноз") > text.index("Последние 5 матчей")
+    assert "<b>Очные встречи за 3 месяца:</b> 3 матча. <b>NAVI</b>  2 : 1  <b>FAZE</b>." in text
+    assert "🏆 Турнир IEM Cologne 2026 · Формат: Bo3" in text
+    assert text.index("🏆 Турнир IEM Cologne 2026") < text.index("NAVI — FaZe")
+    assert text.index("не рейтинг команд и не прогноз") > text.index("<b>Последние 5 матчей каждой команды:</b>")
 
 
 def test_schedule_context_shows_shared_format_once_before_matches():
@@ -1307,9 +1307,52 @@ def test_schedule_context_shows_shared_format_once_before_matches():
         {first_match.match_id: first_context, second_match.match_id: second_context},
     )
 
-    assert text.count("🎮 Формат IEM Cologne 2026 · Bo3") == 1
-    assert text.index("🎮 Формат") < text.index("<b>NAVI — FaZe</b>")
-    assert text.index("🎮 Формат") < text.index("<b>Spirit — Vitality</b>")
+    assert text.count("🏆 Турнир IEM Cologne 2026 · Формат: Bo3") == 1
+    assert text.index("🏆 Турнир") < text.index("<b>NAVI — FaZe</b>")
+    assert text.index("🏆 Турнир") < text.index("<b>Spirit — Vitality</b>")
+
+
+def test_schedule_context_groups_tournament_stages_and_omits_match_format():
+    group_a = _upcoming().model_copy(
+        update={
+            "tournament_name": "BLAST Open — Porto — Group A",
+            "competition_key": "BLAST Open — Porto",
+        }
+    )
+    group_b = _upcoming().model_copy(
+        update={
+            "match_id": "group-b",
+            "tournament_name": "BLAST Open — Porto — Group B",
+            "competition_key": "BLAST Open — Porto",
+            "team1_name": "G2",
+            "team2_name": "Natus Vincere",
+        }
+    )
+    contexts = {
+        match.match_id: ScheduleMatchContext(
+            match_id=match.match_id,
+            team1_form=TeamForm(team_name=match.team1_name, wins=3, losses=2),
+            team2_form=TeamForm(team_name=match.team2_name, wins=2, losses=3),
+            head_to_head=HeadToHead(match_count=0),
+        )
+        for match in (group_a, group_b)
+    }
+
+    text = main.format_schedule_context([group_a, group_b], contexts)
+
+    assert text.count("🏆 Турнир BLAST Open — Porto · Формат: Bo3") == 1
+    assert "<b>G2 — Natus Vincere</b> · Bo3" not in text
+    assert "<b>G2 — Natus Vincere</b>" in text
+    assert text.count("<b>Очные встречи за 3 месяца:</b> команды не встречались.") == 2
+
+
+def test_schedule_context_keeps_match_when_its_context_request_fails():
+    match = _upcoming()
+
+    text = main.format_schedule_context([match], {})
+
+    assert "<b>NAVI — FaZe</b>" in text
+    assert "Контекст по командам пока недоступен." in text
 
 
 def test_schedule_context_does_not_turn_recent_results_into_a_prediction():
@@ -1325,7 +1368,7 @@ def test_schedule_context_does_not_turn_recent_results_into_a_prediction():
 
     assert "явного фаворита" not in text
     assert "не рейтинг команд и не прогноз" in text
-    assert "Bo1: одна карта решает исход матча." in text
+    assert "🏆 Турнир IEM Cologne 2026 · Формат: Bo1" in text
 
 
 def test_tournament_radar_formats_standings_without_raw_ids():
@@ -1366,7 +1409,7 @@ def test_schedule_dry_run_includes_optional_context(monkeypatch):
 
     assert response["statusCode"] == 200
     assert body["context_matches_ready"] == 1
-    assert "Последние 5 матчей: NAVI — 3 победы и 2 поражения; FaZe — 4 победы и 1 поражение." in body["context_preview"]
+    assert "<b>Последние 5 матчей каждой команды:</b> NAVI — 3 победы и 2 поражения; FaZe — 4 победы и 1 поражение." in body["context_preview"]
 
 
 def test_radar_dry_run_returns_preview_without_sending(monkeypatch):
@@ -1499,6 +1542,11 @@ def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monke
     monkeypatch.setattr(main, "_local_day_window", fake_window)
     monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
 
+    async def no_context(matches):
+        return []
+
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", no_context)
+
     response = main.handler(
         {
             "job": "schedule",
@@ -1512,12 +1560,12 @@ def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monke
 
     assert response["statusCode"] == 200
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 0
+    assert body["matches_selected"] == 1
     assert body["messages_sent"] == 0
     assert body["days_ahead"] == 3
     assert body["window_start"] == "2026-07-29T21:00:00+00:00"
     assert body["window_end"] == "2026-08-01T21:00:00+00:00"
-    assert body["preview"] is None
+    assert "NAVI vs FaZe" in body["preview"]
     assert body["diagnostics"][0]["teams"] == ["NAVI", "FaZe"]
     assert body["diagnostics"][0]["selected"] is False
     assert body["diagnostics"][0]["filter_reason"] == "excluded_tournament"
@@ -1533,12 +1581,17 @@ def test_schedule_dry_run_omits_filtered_diagnostics_by_default(monkeypatch):
 
     monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
 
+    async def no_context(matches):
+        return []
+
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", no_context)
+
     response = main.handler({"job": "schedule", "dry_run": True}, None)
     body = json.loads(response["body"])
 
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 0
-    assert body["diagnostics"] == []
+    assert body["matches_selected"] == 1
+    assert body["diagnostics"][0]["selected"] is False
 
 
 @pytest.mark.parametrize("days_ahead", [0, 8, True, "3"])
