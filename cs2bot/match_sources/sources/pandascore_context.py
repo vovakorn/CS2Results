@@ -102,9 +102,8 @@ def _head_to_head(
     team1_id: str,
     team2_id: str,
     matches: list[MatchNormalized],
-    limit: int = 3,
     now: datetime | None = None,
-) -> HeadToHead | None:
+) -> HeadToHead:
     """Build a H2H record from the last 90 days."""
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
@@ -139,10 +138,6 @@ def _head_to_head(
         else:
             team2_wins += 1
         counted += 1
-        if counted >= limit:
-            break
-    if counted < 2:
-        return None
     return HeadToHead(match_count=counted, team1_wins=team1_wins, team2_wins=team2_wins)
 
 

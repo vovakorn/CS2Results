@@ -526,17 +526,21 @@ def _draw_tournament_logo(
 def _schedule_tournament_header(
     matches: Sequence[UpcomingMatchNormalized],
 ) -> tuple[str, str | None]:
-    """Return one truthful event label for the whole card, or a neutral mixed-day label."""
+    """Return the shared competition label and its official logo for one card."""
     labels: dict[str, tuple[str, str | None]] = {}
     for match in matches:
-        # Keep the full title, including the stage. It is the same source of truth
-        # as the individual fixture cards and avoids silently merging group and
-        # playoff matches under one series name.
-        label = match.tournament_name
+        # PandaScore's tournament name includes a bracket stage (e.g. Group A),
+        # while competition_key identifies the event that owns its official mark.
+        label = match.competition_key or match.tournament_name
         labels.setdefault(label.casefold(), (label, match.tournament_logo_url))
     if len(labels) == 1:
         return next(iter(labels.values()))
     return "ТУРНИРЫ ДНЯ", None
+
+
+def _schedule_tournament_key(match: UpcomingMatchNormalized) -> str:
+    """Group schedule fixtures under the event that owns their logo."""
+    return (match.competition_key or match.tournament_name).casefold()
 
 
 def _draw_schedule_header(
@@ -1373,14 +1377,22 @@ def render_schedule_card(
 def paginate_schedule_matches(
     matches: Sequence[UpcomingMatchNormalized],
 ) -> list[list[UpcomingMatchNormalized]]:
-    """Split a busy schedule into one or two chronological, balanced pages."""
+    """Split fixtures by tournament, then balance each tournament's pages."""
     if not matches or len(matches) > MAX_SCHEDULE_TOTAL_MATCHES:
         raise MediaCardError("Schedule album supports between one and twenty matches")
     sorted_matches = sorted(matches, key=lambda item: item.scheduled_at)
-    if len(sorted_matches) <= MAX_SCHEDULE_MATCHES:
-        return [sorted_matches]
-    first_page_size = math.ceil(len(sorted_matches) / 2)
-    return [sorted_matches[:first_page_size], sorted_matches[first_page_size:]]
+    tournament_groups: dict[str, list[UpcomingMatchNormalized]] = {}
+    for match in sorted_matches:
+        tournament_groups.setdefault(_schedule_tournament_key(match), []).append(match)
+
+    pages: list[list[UpcomingMatchNormalized]] = []
+    for tournament_matches in tournament_groups.values():
+        if len(tournament_matches) <= MAX_SCHEDULE_MATCHES:
+            pages.append(tournament_matches)
+            continue
+        first_page_size = math.ceil(len(tournament_matches) / 2)
+        pages.extend((tournament_matches[:first_page_size], tournament_matches[first_page_size:]))
+    return pages
 
 
 def render_schedule_cards(

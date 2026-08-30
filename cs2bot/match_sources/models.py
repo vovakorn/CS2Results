@@ -182,9 +182,9 @@ class HeadToHead(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    match_count: int = Field(ge=2, le=10)
-    team1_wins: int = Field(default=0, ge=0, le=10)
-    team2_wins: int = Field(default=0, ge=0, le=10)
+    match_count: int = Field(ge=0, le=100)
+    team1_wins: int = Field(default=0, ge=0, le=100)
+    team2_wins: int = Field(default=0, ge=0, le=100)
 
 
 class ScheduleMatchContext(BaseModel):

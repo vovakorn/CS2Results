@@ -44,7 +44,6 @@ from .match_sources.config import (
     OBJECT_STORAGE_BUCKET,
     PANDASCORE_API_TOKEN,
     POPULAR_TEAMS,
-    SCHEDULE_CONTEXT_MATCH_LIMIT,
 )
 from .match_sources.filters import is_tier1_candidate, tier1_autopilot_decision
 from .match_sources.match_fetcher import SourceName, apply_quality_filters, get_new_finished_matches
@@ -884,25 +883,36 @@ def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
     record = context.head_to_head
     if record is None:
         return None
-    score = f"{record.team1_wins}–{record.team2_wins}"
-    if record.team1_wins == record.team2_wins:
-        outcome = "без преимущества"
-    else:
-        leader = context.team1_form.team_name if record.team1_wins > record.team2_wins else context.team2_form.team_name
-        outcome = f"в пользу {html.escape(leader)}"
-    return f"🤝 Очные встречи за последние 3 месяца: {score} {outcome} ({record.match_count} матча)."
+    if record.match_count == 0:
+        return "<b>Очные встречи за 3 месяца:</b> команды не встречались."
+    return (
+        f"<b>Очные встречи за 3 месяца:</b> "
+        f"{_russian_count(record.match_count, ('матч', 'матча', 'матчей'))}. "
+        f"<b>{html.escape(context.team1_form.team_name.upper())}</b>  "
+        f"{record.team1_wins} : {record.team2_wins}  "
+        f"<b>{html.escape(context.team2_form.team_name.upper())}</b>."
+    )
+
+
+def _context_tournament_name(match: UpcomingMatchNormalized) -> str:
+    """Use the shared competition label instead of its individual group/stage."""
+    if match.competition_key:
+        return match.competition_key
+    parts = [part.strip() for part in match.tournament_name.split(" — ") if part.strip()]
+    if len(parts) > 1 and re.fullmatch(r"(?:group|группа)\s+[\w\d]+", parts[-1], re.IGNORECASE):
+        return " — ".join(parts[:-1])
+    return match.tournament_name
 
 
 def format_schedule_context(
     matches: Sequence[UpcomingMatchNormalized],
     contexts: dict[str, ScheduleMatchContext],
 ) -> str:
-    """Format optional, compact pre-match context for the strongest fixtures."""
+    """Format optional, compact pre-match context for every scheduled fixture."""
     context_matches = [
-        (match, contexts[match.match_id])
+        (match, contexts.get(match.match_id))
         for match in sorted(matches, key=_context_priority)
-        if match.match_id in contexts
-    ][:SCHEDULE_CONTEXT_MATCH_LIMIT]
+    ]
     if not context_matches:
         return ""
 
@@ -910,37 +920,31 @@ def format_schedule_context(
     format_lines: list[str] = []
     seen_formats: set[tuple[str, int | None]] = set()
     for match, _ in context_matches:
-        format_key = (match.tournament_name, match.best_of)
+        tournament_name = _context_tournament_name(match)
+        format_key = (tournament_name, match.best_of)
         if format_key in seen_formats:
             continue
         seen_formats.add(format_key)
-        if match.best_of == 1:
-            format_note = "Bo1: одна карта решает исход матча."
-        elif match.best_of:
-            format_note = f"Bo{match.best_of}: для победы нужно выиграть большинство карт."
-        else:
-            format_note = "Формат серии пока не указан."
-        format_lines.append(f"🎮 Формат {html.escape(match.tournament_name)} · {format_note}")
+        format_note = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
+        format_lines.append(f"🏆 Турнир {html.escape(tournament_name)} · Формат: {format_note}")
     lines.extend([*format_lines, ""])
 
     for match, context in context_matches:
-        best_of = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
-        lines.extend(
-            [
-                f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b> · {best_of}",
-                (
-                    f"Последние 5 матчей: {html.escape(context.team1_form.team_name)} — "
-                    f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
-                    f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
-                    f"{html.escape(context.team2_form.team_name)} — "
-                    f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
-                    f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
-                ),
-            ]
-        )
-        head_to_head = _head_to_head_takeaway(context)
-        if head_to_head:
-            lines.append(head_to_head)
+        lines.append(f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>")
+        if context is None:
+            lines.append("Контекст по командам пока недоступен.")
+        else:
+            head_to_head = _head_to_head_takeaway(context)
+            if head_to_head:
+                lines.append(head_to_head)
+            lines.append(
+                f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
+                f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
+                f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
+                f"{html.escape(context.team2_form.team_name)} — "
+                f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
+                f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
+            )
         lines.append("")
     lines.extend(
         [
@@ -1124,9 +1128,9 @@ def _handle_content_job(
     try:
         if job == "schedule":
             fetched = asyncio.run(fetch_upcoming_matches(start, end))
-            selected = [match for match in fetched if match.is_featured]
+            selected = fetched
             text = format_daily_schedule(selected, local_now) if selected else ""
-            context_matches = sorted(selected, key=_context_priority)[:SCHEDULE_CONTEXT_MATCH_LIMIT]
+            context_matches = sorted(selected, key=_context_priority)
             if context_matches:
                 context_results = asyncio.run(_fetch_schedule_contexts(context_matches))
                 for match, result in zip(context_matches, context_results):
@@ -1194,6 +1198,16 @@ def _handle_content_job(
         try:
             if job == "schedule":
                 media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
+                if len(media_cards) > 10:
+                    media_card_error = "too_many_tournament_cards"
+                    media_cards = []
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "media_card_fallback",
+                        job=job,
+                        reason="too_many_tournament_cards",
+                    )
             else:
                 media_cards = [render_results_card(selected, local_now)]
         except Exception as exc:
