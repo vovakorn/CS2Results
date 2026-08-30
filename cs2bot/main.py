@@ -916,36 +916,33 @@ def format_schedule_context(
     if not context_matches:
         return ""
 
-    lines = ["🔎 <b>Контекст к матчам дня</b>", ""]
-    format_lines: list[str] = []
-    seen_formats: set[tuple[str, int | None]] = set()
-    for match, _ in context_matches:
-        tournament_name = _context_tournament_name(match)
-        format_key = (tournament_name, match.best_of)
-        if format_key in seen_formats:
-            continue
-        seen_formats.add(format_key)
-        format_note = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
-        format_lines.append(f"🏆 Турнир {html.escape(tournament_name)} · Формат: {format_note}")
-    lines.extend([*format_lines, ""])
-
+    grouped_matches: dict[tuple[str, int | None], list[tuple[UpcomingMatchNormalized, ScheduleMatchContext | None]]] = {}
     for match, context in context_matches:
-        lines.append(f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>")
-        if context is None:
-            lines.append("Контекст по командам пока недоступен.")
-        else:
-            head_to_head = _head_to_head_takeaway(context)
-            if head_to_head:
-                lines.append(head_to_head)
-            lines.append(
-                f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
-                f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
-                f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
-                f"{html.escape(context.team2_form.team_name)} — "
-                f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
-                f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
-            )
+        group_key = (_context_tournament_name(match), match.best_of)
+        grouped_matches.setdefault(group_key, []).append((match, context))
+
+    lines = ["🔎 <b>Контекст к матчам дня</b>", ""]
+    for (tournament_name, best_of), tournament_matches in grouped_matches.items():
+        format_note = f"Bo{best_of}" if best_of else "формат уточняется"
+        lines.append(f"🏆 Турнир {html.escape(tournament_name)} · {format_note}")
         lines.append("")
+        for match, context in tournament_matches:
+            lines.append(f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>")
+            if context is None:
+                lines.append("Контекст по командам пока недоступен.")
+            else:
+                head_to_head = _head_to_head_takeaway(context)
+                if head_to_head:
+                    lines.append(head_to_head)
+                lines.append(
+                    f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
+                    f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
+                    f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
+                    f"{html.escape(context.team2_form.team_name)} — "
+                    f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
+                    f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
+                )
+            lines.append("")
     lines.extend(
         [
             "ℹ️ Это последние результаты, а не рейтинг команд и не прогноз на матч.",
