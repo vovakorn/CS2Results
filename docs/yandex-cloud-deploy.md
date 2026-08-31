@@ -182,6 +182,16 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 
 Если оба источника stale/invalid, ожидается `502` с `match_source_unavailable` и ноль публикаций. Это fail-closed поведение.
 
+Чтобы проверить код и dry-run без переключения production-тега, используйте
+candidate-режим deploy-скрипта:
+
+```bash
+YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh candidate
+```
+
+Он создаёт новую версию с тегом `candidate`, выполняет dry-run и не меняет
+таймеры или `production`.
+
 ## 7. Timer triggers
 
 Создайте пять timer trigger. Расписание Yandex Cloud задаётся в UTC; Москва
@@ -258,7 +268,7 @@ Liquipedia shadow; claims и processed markers предотвращают пар
 }
 ```
 
-Все четыре задания используют атомарную дедупликацию. Обычный `results` сохраняет
+Все пять заданий используют атомарную дедупликацию. Обычный `results` сохраняет
 нормализованные матчи в durable outbox, а `retry_only` обрабатывает эту очередь
 без повторного запроса источников. Расписание и итог получают отдельный ключ на
 календарный день и канал. Пустой выпуск не отправляется и не помечается
