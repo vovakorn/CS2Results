@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from .match_sources.models import MatchNormalized, TournamentRadar, UpcomingMatchNormalized
+from .match_sources.models import MatchNormalized, RadarBracketMatch, TournamentRadar, UpcomingMatchNormalized
 from .match_sources.storage import read_cached_logo, write_cached_logo
 
 RESULT_CARD_SIZE = (1080, 1080)
@@ -841,37 +841,36 @@ def _draw_radar_standings(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar:
         _aligned_text(draw, 305, y0 + 37, name.upper(), _fit_font(draw, name.upper(), 530, 34, 18), WHITE, "left")
 
 
-def _draw_radar_bracket(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar: TournamentRadar) -> None:
-    if not radar.bracket_matches:
-        _draw_radar_standings(canvas, draw, radar)
-        return
+def _draw_radar_bracket(canvas: Image.Image, draw: ImageDraw.ImageDraw, matches: Sequence[RadarBracketMatch], page: int, pages: int) -> None:
     _centered_text(draw, 540, 390, "ПОДТВЕРЖДЁННЫЕ ПАРЫ", _font(20, display=True), MUTED)
-    for index, match in enumerate(radar.bracket_matches[:2]):
-        y0 = 440 + index * 210
-        draw.rounded_rectangle((100, y0, 980, y0 + 160), radius=26, fill=(*PANEL, 238))
+    if pages > 1:
+        _centered_text(draw, 540, 420, f"{page}/{pages}", _font(18, display=True), AMBER)
+    for index, match in enumerate(matches):
+        y0 = (450 if pages > 1 else 425) + index * 135
+        draw.rounded_rectangle((80, y0, 1000, y0 + 112), radius=22, fill=(*PANEL, 238))
         _aligned_text(
-            draw, 150, y0 + 38, match.team1_name.upper(),
-            _fit_font(draw, match.team1_name.upper(), 310, 32, 15), WHITE, "left"
+            draw, 120, y0 + 24, match.team1_name.upper(),
+            _fit_font(draw, match.team1_name.upper(), 340, 28, 14), WHITE, "left"
         )
         _aligned_text(
-            draw, 930, y0 + 38, match.team2_name.upper(),
-            _fit_font(draw, match.team2_name.upper(), 310, 32, 15), WHITE, "right"
+            draw, 960, y0 + 24, match.team2_name.upper(),
+            _fit_font(draw, match.team2_name.upper(), 340, 28, 14), WHITE, "right"
         )
-        _centered_text(draw, 540, y0 + 40, "VS", _font(32, display=True), AMBER)
+        _centered_text(draw, 540, y0 + 25, "VS", _font(26, display=True), AMBER)
         label = (match.round_name or "СЕТКА ТУРНИРА").upper()
         _centered_text(
             draw,
             540,
-            y0 + 104,
+            y0 + 72,
             label,
-            _fit_font(draw, label, 620, 17, 11, display=True),
+            _fit_font(draw, label, 700, 15, 10, display=True),
             MUTED,
         )
 
 
 def _draw_radar_next_match(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar: TournamentRadar, timezone_name: str) -> None:
     if not radar.next_matches:
-        _draw_radar_standings(canvas, draw, radar)
+        _centered_text(draw, 540, 560, "ПОДТВЕРЖДЁННЫЕ ПАРЫ ПОКА НЕ ОПУБЛИКОВАНЫ", _font(22, display=True), MUTED)
         return
     match = radar.next_matches[0]
     try:
@@ -896,24 +895,41 @@ def render_tournament_radar_card(
     variant: str = "auto",
 ) -> bytes:
     """Render one of the branded radar cards without fabricating tournament data."""
-    if variant not in {"auto", "standings", "bracket", "next_match"}:
+    if variant not in {"auto", "bracket", "next_match"}:
         raise MediaCardError("Unsupported radar card variant")
     chosen = variant
     if chosen == "auto":
-        chosen = "next_match" if radar.next_matches else "bracket" if radar.bracket_matches else "standings"
+        chosen = "bracket" if radar.bracket_matches else "next_match"
     canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
-    subtitles = {"standings": "ПОЛОЖЕНИЕ", "bracket": "ПЛЕЙ-ОФФ", "next_match": "СЛЕДУЮЩИЙ МАТЧ"}
+    subtitles = {"bracket": "СЕТКА", "next_match": "БЛИЖАЙШИЙ МАТЧ"}
     _radar_header(canvas, draw, tournament_name, subtitles[chosen])
-    if chosen == "standings":
-        _draw_radar_standings(canvas, draw, radar)
-    elif chosen == "bracket":
-        _draw_radar_bracket(canvas, draw, radar)
+    if chosen == "bracket":
+        _draw_radar_bracket(canvas, draw, radar.bracket_matches[:4], 1, 1)
     else:
         _draw_radar_next_match(canvas, draw, radar, timezone_name)
     facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
     _centered_text(draw, 540, 1007, facts, _fit_font(draw, facts, 900, 20, 13, display=True), MUTED)
     return _as_png(canvas)
+
+
+def render_tournament_radar_cards(radar: TournamentRadar, tournament_name: str, timezone_name: str, variant: str = "auto") -> list[bytes]:
+    """Render confirmed bracket pairs as a numbered Telegram-ready album."""
+    if variant not in {"auto", "bracket", "next_match"}:
+        raise MediaCardError("Unsupported radar card variant")
+    if variant == "next_match" or (variant == "auto" and not radar.bracket_matches):
+        return [render_tournament_radar_card(radar, tournament_name, timezone_name, "next_match")]
+    pages = [radar.bracket_matches[index:index + 4] for index in range(0, len(radar.bracket_matches), 4)]
+    cards: list[bytes] = []
+    for number, matches in enumerate(pages, start=1):
+        canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
+        draw = ImageDraw.Draw(canvas, "RGBA")
+        _radar_header(canvas, draw, tournament_name, "СЕТКА")
+        _draw_radar_bracket(canvas, draw, matches, number, len(pages))
+        facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
+        _centered_text(draw, 540, 1007, facts, _fit_font(draw, facts, 900, 20, 13, display=True), MUTED)
+        cards.append(_as_png(canvas))
+    return cards
 
 
 def _as_png(image: Image.Image) -> bytes:

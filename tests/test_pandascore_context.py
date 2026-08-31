@@ -42,15 +42,15 @@ def test_tournament_radar_keeps_available_data_when_one_endpoint_fails(monkeypat
     async def fake_fetch(path, params):
         if path.endswith("/brackets"):
             raise RuntimeError("unavailable")
-        if path.endswith("/standings"):
-            return [{"team": {"id": 10, "name": "NAVI"}, "rank": 1}]
+        if path.endswith("/rosters"):
+            return [{"team": {"id": 10, "name": "NAVI"}}]
         return []
 
     monkeypatch.setattr(pandascore_context.pandascore_source, "_fetch_json", fake_fetch)
 
     radar = asyncio.run(pandascore_context.fetch_tournament_radar("3"))
 
-    assert radar.standings == ["1. NAVI"]
+    assert radar.roster_team_count == 1
     assert radar.bracket_matches == []
 
 

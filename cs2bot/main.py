@@ -34,7 +34,7 @@ from .media_cards import (
     render_result_card,
     render_results_card,
     render_schedule_cards,
-    render_tournament_radar_card,
+    render_tournament_radar_cards,
 )
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
@@ -144,7 +144,7 @@ RUSSIAN_MONTHS = (
     "ноября",
     "декабря",
 )
-CONTENT_JOBS = {"results", "schedule", "digest", "radar", "analytics"}
+CONTENT_JOBS = {"results", "schedule", "digest", "radar", "radar_discovery", "analytics"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -763,6 +763,12 @@ def _local_day_window(
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc), local_now
 
 
+def _next_local_day_window(now: datetime | None = None) -> tuple[datetime, datetime, datetime]:
+    start, _, local_now = _local_day_window(now=now)
+    next_start = start + timedelta(days=1)
+    return next_start, next_start + timedelta(days=1), local_now
+
+
 def _display_day(local_now: datetime) -> str:
     return f"{local_now.day} {RUSSIAN_MONTHS[local_now.month]}"
 
@@ -1015,14 +1021,18 @@ def format_schedule_context_messages(
 
 def format_tournament_radar(radar: TournamentRadar, tournament_name: str) -> str:
     lines = [f"🏆 <b>Турнирный радар — {html.escape(tournament_name)}</b>", ""]
-    if radar.standings:
-        lines.extend(["<b>Положение:</b>", *[html.escape(line) for line in radar.standings], ""])
+    if radar.bracket_matches:
+        lines.append("<b>Подтверждённые пары:</b>")
+        for match in radar.bracket_matches[:4]:
+            round_name = f" · {html.escape(match.round_name)}" if match.round_name else ""
+            lines.append(f"{html.escape(match.team1_name)} — {html.escape(match.team2_name)}{round_name}")
+        lines.append("")
     if radar.roster_team_count:
         lines.append(f"Участников: {radar.roster_team_count}")
     if radar.bracket_match_count:
         lines.append(f"Матчей в сетке: {radar.bracket_match_count}")
     if len(lines) == 2:
-        lines.append("Данные сетки и положения пока не опубликованы организатором.")
+        lines.append("Подтверждённые пары сетки пока не опубликованы организатором.")
     lines.extend(["", "Источник: PandaScore", "", "#CS2 #ТурнирныйРадар"])
     return "\n".join(lines)[:MAX_TELEGRAM_MESSAGE_LENGTH]
 
@@ -1436,6 +1446,8 @@ def _handle_radar_job(
     dry_run: bool,
     test_run_id: str | None = None,
     card_variant: str = "auto",
+    publication_key: str | None = None,
+    require_bracket: bool = False,
 ) -> Dict[str, Any]:
     try:
         radar = asyncio.run(fetch_tournament_radar(tournament_id))
@@ -1451,11 +1463,19 @@ def _handle_radar_job(
         )
         return _error_response(502, "match_source_unavailable")
 
-    media_card: bytes | None = None
+    if require_bracket and not radar.bracket_matches:
+        body = {"job": "radar", "tournament_id": tournament_id, "messages_sent": 0,
+                "duplicates_skipped": 0, "delivery_failures": 0,
+                "skipped_reason": "bracket_unavailable", "dry_run": dry_run}
+        if dry_run:
+            body["radar"] = radar.model_dump()
+        return {"statusCode": 200, "body": json.dumps(body, ensure_ascii=False)}
+
+    media_cards: list[bytes] = []
     media_card_error: str | None = None
     if TELEGRAM_MEDIA_CARDS:
         try:
-            media_card = render_tournament_radar_card(
+            media_cards = render_tournament_radar_cards(
                 radar, tournament_name, DISPLAY_TIMEZONE, card_variant
             )
         except Exception as exc:
@@ -1472,7 +1492,7 @@ def _handle_radar_job(
     duplicates = 0
     failures = 0
     # Keep radar deduplication aligned with the channel's displayed calendar day.
-    day_key = _local_day_window()[2].date().isoformat()
+    day_key = publication_key or _local_day_window()[2].date().isoformat()
     for channel in _iter_channels():
         if dry_run:
             sent += 1
@@ -1491,17 +1511,20 @@ def _handle_radar_job(
             if claim is None:
                 duplicates += 1
                 continue
-            if media_card:
+            if media_cards:
                 caption = f"🏆 <b>Турнирный радар</b>\n{html.escape(tournament_name)}\n\nИсточник: PandaScore"
                 if test_run_id:
                     caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
                 try:
-                    send_photo_to_telegram(
-                        channel["chat_id"],
-                        media_card,
-                        caption,
-                        filename=f"cs2-radar-{tournament_id}-{day_key}.png",
-                    )
+                    if len(media_cards) > 1:
+                        send_media_group_to_telegram(
+                            channel["chat_id"], media_cards, caption,
+                            filenames=[f"cs2-radar-{tournament_id}-{day_key}-{index}-of-{len(media_cards)}.png"
+                                       for index in range(1, len(media_cards) + 1)],
+                        )
+                    else:
+                        send_photo_to_telegram(channel["chat_id"], media_cards[0], caption,
+                                               filename=f"cs2-radar-{tournament_id}-{day_key}.png")
                 except TelegramDeliveryUncertainError:
                     raise
                 except TelegramDeliveryError as exc:
@@ -1526,7 +1549,7 @@ def _handle_radar_job(
                 "radar",
                 tournament_id=tournament_id,
                 radar_card_variant=card_variant,
-                media_card=bool(media_card),
+                media_card=bool(media_cards),
             )
             sent += 1
         except Exception as exc:
@@ -1560,12 +1583,57 @@ def _handle_radar_job(
                 "preview": text,
                 "radar": radar.model_dump(),
                 "media_card_enabled": TELEGRAM_MEDIA_CARDS,
-                "media_card_ready": bool(media_card),
+                "media_card_ready": bool(media_cards),
+                "media_card_count": len(media_cards),
                 "radar_card_variant": card_variant,
             }
         )
         if media_card_error:
             body["media_card_error"] = media_card_error
+    return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
+
+
+def _radar_discovery_candidates(matches: Sequence[UpcomingMatchNormalized]) -> list[tuple[str, str, datetime]]:
+    candidates: dict[str, tuple[str, str, datetime]] = {}
+    for match in matches:
+        tournament_id = match.source_refs.tournament_id if match.source_refs else None
+        first_at = _parse_datetime(match.scheduled_at)
+        if not tournament_id or first_at is None or not match.is_featured or match.feature_reason != "tier1_tournament":
+            continue
+        current = candidates.get(tournament_id)
+        if current is None or first_at < current[2]:
+            candidates[tournament_id] = (tournament_id, match.competition_key or match.tournament_name, first_at)
+    return sorted(candidates.values(), key=lambda value: value[2])
+
+
+def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
+    start, end, _ = _next_local_day_window()
+    try:
+        fetched = asyncio.run(fetch_upcoming_matches(start, end))
+    except Exception as exc:
+        log_event(logger, logging.ERROR, "radar_discovery_fetch_failed", error_type=type(exc).__name__)
+        return _error_response(502, "match_source_unavailable")
+    candidates = _radar_discovery_candidates(fetched)
+    sent = duplicates = failures = 0
+    radars: list[dict[str, Any]] = []
+    for tournament_id, tournament_name, first_at in candidates:
+        response = _handle_radar_job(
+            tournament_id, tournament_name, dry_run,
+            publication_key=first_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H%MZ"),
+            require_bracket=True,
+        )
+        body = json.loads(response["body"])
+        sent += body["messages_sent"]
+        duplicates += body["duplicates_skipped"]
+        failures += body["delivery_failures"]
+        radars.append({"tournament_id": tournament_id, "tournament_name": tournament_name,
+                       "first_match_at": first_at.isoformat(), "preview": body.get("preview")})
+    body = {"job": "radar_discovery", "window_start": start.isoformat(), "window_end": end.isoformat(),
+            "matches_received": len(fetched), "tournaments_selected": len(candidates),
+            "messages_sent": sent, "duplicates_skipped": duplicates, "delivery_failures": failures,
+            "dry_run": dry_run}
+    if dry_run:
+        body["radars"] = radars
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
@@ -1592,7 +1660,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         if isinstance(event, dict):
             requested_job = event.get("job", "results")
             if requested_job not in CONTENT_JOBS:
-                raise ValueError("job must be results, schedule, digest, radar, or analytics")
+                raise ValueError("job must be results, schedule, digest, radar, radar_discovery, or analytics")
             job = requested_job
             requested_test_run_id = event.get("test_run_id")
             if requested_test_run_id is not None:
@@ -1617,7 +1685,6 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 requested_card_variant = event.get("radar_card_variant", "auto")
                 if not isinstance(requested_card_variant, str) or requested_card_variant not in {
                     "auto",
-                    "standings",
                     "bracket",
                     "next_match",
                 }:
@@ -1671,7 +1738,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             pass
         elif retry_only:
             pass
-        elif job in {"schedule", "digest", "radar"} and not PANDASCORE_API_TOKEN:
+        elif job in {"schedule", "digest", "radar", "radar_discovery"} and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
         elif source == "pandascore" and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
@@ -1700,6 +1767,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             test_run_id,
             radar_card_variant,
         )
+
+    if job == "radar_discovery":
+        return _handle_radar_discovery_job(dry_run)
 
     if job == "analytics":
         return _handle_analytics_job(event if isinstance(event, dict) else {}, dry_run)

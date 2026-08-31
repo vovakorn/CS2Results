@@ -8,6 +8,7 @@ from cs2bot.match_sources.models import (
     MapResult,
     HeadToHead,
     MatchNormalized,
+    RadarBracketMatch,
     ScheduleMatchContext,
     TeamForm,
     TournamentRadar,
@@ -1432,11 +1433,11 @@ def test_schedule_context_does_not_turn_recent_results_into_a_prediction():
     assert "🏆 Турнир IEM Cologne 2026 · Bo1" in text
 
 
-def test_tournament_radar_formats_standings_without_raw_ids():
+def test_tournament_radar_formats_confirmed_pairs_without_raw_ids():
     text = main.format_tournament_radar(
         TournamentRadar(
             tournament_id="3",
-            standings=["1. NAVI", "2. FaZe"],
+            bracket_matches=[RadarBracketMatch(match_id="1", team1_name="NAVI", team2_name="FaZe")],
             roster_team_count=16,
             bracket_match_count=31,
         ),
@@ -1444,7 +1445,8 @@ def test_tournament_radar_formats_standings_without_raw_ids():
     )
 
     assert "Турнирный радар — IEM Cologne 2026" in text
-    assert "1. NAVI" in text
+    assert "NAVI — FaZe" in text
+    assert "Положение" not in text
     assert "Участников: 16" in text
     assert "tournament_id" not in text
 

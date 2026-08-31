@@ -184,7 +184,7 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 
 ## 7. Timer triggers
 
-Создайте четыре timer trigger. Расписание Yandex Cloud задаётся в UTC; Москва
+Создайте пять timer trigger. Расписание Yandex Cloud задаётся в UTC; Москва
 круглый год использует UTC+3.
 
 Получение новых результатов — каждые 15 минут:
@@ -227,6 +227,19 @@ Liquipedia shadow; claims и processed markers предотвращают пар
 {
   "job": "schedule",
   "source": "pandascore",
+  "mode": "production"
+}
+```
+
+Поиск турниров для радара — каждый день в 09:00 UTC (12:00 МСК):
+
+```text
+0 9 ? * * *
+```
+
+```json
+{
+  "job": "radar_discovery",
   "mode": "production"
 }
 ```
