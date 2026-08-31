@@ -48,6 +48,10 @@
 | `SCHEDULE_CONTEXT_MATCH_LIMIT` | Сколько главных матчей получат follow-up с формой и ожидаемыми составами после расписания; по умолчанию `3`. |
 | `INSTAGRAM_EXPECTED_USER_ID` | Обязательный ID владельца Instagram OAuth-связки для операций отзыва доступа и удаления данных. |
 | `THREADS_EXPECTED_USER_ID` | Обязательный ID владельца Threads OAuth-связки для операций отзыва доступа и удаления данных. |
+| `ENABLE_THREADS_PUBLISHING` | `1` включает независимую доставку карточек в Threads; по умолчанию `0`. |
+| `THREADS_MEDIA_BUCKET` | Публичный bucket только для Threads-карточек; не bucket состояния. |
+| `THREADS_MEDIA_PUBLIC_BASE_URL` | Публичная HTTPS-база для Threads-карточек в media bucket. |
+| `THREADS_LOCKBOX_SECRET_ID` | ID Lockbox-секрета с OAuth-данными Threads; не сам токен. |
 
 Опционально:
 
@@ -158,8 +162,10 @@ outbox/results/{channel_id}_match_v1_{fingerprint}.json
 - `job=results`: новые подтверждённые Tier-1 результаты.
 - `job=schedule`: один утренний выпуск с Tier-1 матчами и матчами популярных команд.
 - `job=digest`: один вечерний выпуск с итогами Tier-1; пустой выпуск не публикуется.
-- `job=radar`: ручной выпуск по одному турниру; показывает подтверждённые пары сетки и требует `tournament_id` и необязательное `tournament_name`.
-- `job=radar_discovery`: ежедневный поиск Tier-1 турниров на следующий календарный день; публикует радар только при наличии подтверждённых пар.
+- `job=radar`: ручной выпуск по одному турниру; показывает подтверждённые пары сетки (до четырёх на карточку) и требует `tournament_id` и необязательное `tournament_name`.
+- `job=radar_discovery`: ежедневный автоматический поиск Tier-1 турниров,
+  которые начнутся на следующий календарный день; публикует один радар только
+  при наличии подтверждённых пар сетки.
 - `job=analytics`: снимок числа подписчиков или ручной импорт метрик поста.
 
 ### Параметры события Cloud Function
@@ -416,8 +422,9 @@ ENABLE_LIQUIPEDIA_SHADOW=1
 BOT_MODE=production
 ```
 
-10. Создайте четыре timer trigger: получение результатов раз в 15 минут,
-    `retry_only` для outbox раз в 5 минут, расписание в 10:00 МСК и итоги в 23:00 МСК.
+10. Создайте пять timer trigger: получение результатов раз в 15 минут,
+    `retry_only` для outbox раз в 5 минут, расписание в 10:00 МСК и итоги в 23:00 МСК;
+    также создайте ежедневный `radar_discovery` в 12:00 МСК.
 11. Для каждого `job` сначала запустите функцию вручную с `dry_run=true`.
 12. После проверки отключите `dry_run` и проверьте, что объекты появляются в `outbox/results/`, `claims/` и `processed/`; после подтверждения outbox удаляется, а claim имеет состояние `sent` до завершения записи marker.
 
@@ -435,6 +442,7 @@ scripts/build_function_zip.sh
 
 ```bash
 YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
+YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh candidate
 YC_FUNCTION_ID=<function_id> YC_DEPLOY_APPROVED=1 scripts/deploy_yandex_function.sh deploy
 ```
 
