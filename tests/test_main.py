@@ -1579,6 +1579,38 @@ def test_schedule_dry_run_returns_preview_without_sending(monkeypatch):
     assert sent == []
 
 
+def test_schedule_dry_run_keeps_all_tier1_matches_and_excludes_other_tiers(monkeypatch):
+    tier1 = _upcoming().model_copy(
+        update={"match_id": "tier1", "tournament_tier": "a", "feature_reason": "tier1_tournament"}
+    )
+    non_tier1 = _upcoming().model_copy(
+        update={
+            "match_id": "tier-d",
+            "tournament_name": "Regional Open Qualifier",
+            "tournament_tier": "d",
+            "team1_name": "Team One",
+            "team2_name": "Team Two",
+            "is_featured": False,
+            "feature_reason": "not_featured",
+        }
+    )
+
+    async def fake_fetch(*args):
+        return [tier1, non_tier1]
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+
+    response = main.handler({"job": "schedule", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["matches_received"] == 2
+    assert body["matches_selected"] == 1
+    assert "NAVI vs FaZe" in body["preview"]
+    assert "Team One vs Team Two" not in body["preview"]
+
+
 def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monkeypatch):
     filtered = _upcoming().model_copy(
         update={
@@ -1623,12 +1655,12 @@ def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monke
 
     assert response["statusCode"] == 200
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 1
+    assert body["matches_selected"] == 0
     assert body["messages_sent"] == 0
     assert body["days_ahead"] == 3
     assert body["window_start"] == "2026-07-29T21:00:00+00:00"
     assert body["window_end"] == "2026-08-01T21:00:00+00:00"
-    assert "NAVI vs FaZe" in body["preview"]
+    assert body["preview"] is None
     assert body["diagnostics"][0]["teams"] == ["NAVI", "FaZe"]
     assert body["diagnostics"][0]["selected"] is False
     assert body["diagnostics"][0]["filter_reason"] == "excluded_tournament"
@@ -1653,8 +1685,8 @@ def test_schedule_dry_run_omits_filtered_diagnostics_by_default(monkeypatch):
     body = json.loads(response["body"])
 
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 1
-    assert body["diagnostics"][0]["selected"] is False
+    assert body["matches_selected"] == 0
+    assert body["diagnostics"] == []
 
 
 @pytest.mark.parametrize("days_ahead", [0, 8, True, "3"])
@@ -1692,7 +1724,7 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
-    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"card"])
+    monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args, **kwargs: [b"card"])
     monkeypatch.setattr(
         main,
         "send_photo_to_telegram",
@@ -1713,9 +1745,9 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     assert sent_photos[0][0][2].startswith("🧪 <b>Тестовая карточка</b>")
 
 
-def test_busy_schedule_is_sent_as_one_two_card_album(monkeypatch):
+def test_busy_schedule_is_sent_with_a_context_cover(monkeypatch):
     claimed = []
-    albums = []
+    photos = []
     marked = []
     matches = [
         _upcoming().model_copy(update={"match_id": f"match-{index}"})
@@ -1739,18 +1771,11 @@ def test_busy_schedule_is_sent_as_one_two_card_album(monkeypatch):
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
     monkeypatch.setattr(
         main,
-        "render_schedule_cards",
-        lambda *args, **kwargs: [b"page-1", b"page-2"],
+        "render_schedule_context_covers",
+        lambda *args, **kwargs: [b"cover"],
     )
     monkeypatch.setattr(
-        main,
-        "send_media_group_to_telegram",
-        lambda *args, **kwargs: albums.append((args, kwargs)),
-    )
-    monkeypatch.setattr(
-        main,
-        "send_photo_to_telegram",
-        lambda *args, **kwargs: pytest.fail("busy schedule must use an album"),
+        main, "send_photo_to_telegram", lambda *args, **kwargs: photos.append((args, kwargs))
     )
 
     response = main.handler({"job": "schedule"}, None)
@@ -1759,12 +1784,10 @@ def test_busy_schedule_is_sent_as_one_two_card_album(monkeypatch):
     assert response["statusCode"] == 200
     assert body["matches_selected"] == 16
     assert body["messages_sent"] == 1
-    assert albums[0][0][1] == [b"page-1", b"page-2"]
-    assert albums[0][0][2] == main.format_schedule_photo_caption(
+    assert photos[0][0][1] == b"cover"
+    assert photos[0][0][2] == main.format_schedule_photo_caption(
         main._local_day_window()[2], 16
     )
-    assert albums[0][1]["filenames"][0].endswith("-1-of-2.png")
-    assert albums[0][1]["filenames"][1].endswith("-2-of-2.png")
     assert marked == [(claimed[0], "schedule")]
 
 
@@ -1791,12 +1814,12 @@ def test_busy_schedule_album_failure_falls_back_to_text(monkeypatch):
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
     monkeypatch.setattr(
         main,
-        "render_schedule_cards",
-        lambda *args, **kwargs: [b"page-1", b"page-2"],
+        "render_schedule_context_covers",
+        lambda *args, **kwargs: [b"cover"],
     )
     monkeypatch.setattr(
         main,
-        "send_media_group_to_telegram",
+        "send_photo_to_telegram",
         lambda *args, **kwargs: (_ for _ in ()).throw(main.TelegramDeliveryError("failed")),
     )
     monkeypatch.setattr(
