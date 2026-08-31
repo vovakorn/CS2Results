@@ -15,14 +15,14 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 31 августа 2026, версия `d4e6oijq7utfcrs2ipkh`;
+- Последний production-деплой: 31 августа 2026, версия `d4er59e1qqi7ndft7msn`;
   таймеры вызывают актуальную версию по тегу `production`.
 - В production включён флаг `ENABLE_LIQUIPEDIA_FINAL_CARDS=1`; Liquipedia fallback
   остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
-- Последняя локальная проверка: 311 тестов и сборка function-архива. Production
-  проверен candidate `dry_run` перед переключением тега; один тестовый выпуск
-  расписания доставлен в Telegram и повтор не создал дубль.
+- Последняя локальная проверка: полный набор (311 тестов), CI в Python 3.11/3.12
+  и сборка function-архива. Production дважды проверен candidate `dry_run`;
+  тестовый выпуск контекста доставлен одним Telegram-постом с карточкой.
 - CI проверяет зависимости, безопасность, компиляцию, pytest и сборку архива.
 
 ## Расписание jobs
