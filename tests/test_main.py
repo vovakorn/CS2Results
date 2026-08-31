@@ -1341,6 +1341,38 @@ def test_schedule_context_places_each_tournament_before_its_matches():
     assert first_match_start < second_header_start < second_match_start
 
 
+def test_schedule_context_splits_long_tournament_only_between_matches():
+    matches = [
+        _upcoming().model_copy(
+            update={
+                "match_id": f"long-context-{index}",
+                "team1_name": f"Team {index} " + "A" * 160,
+                "team2_name": f"Opponent {index} " + "B" * 160,
+            }
+        )
+        for index in range(20)
+    ]
+    contexts = {
+        match.match_id: ScheduleMatchContext(
+            match_id=match.match_id,
+            team1_form=TeamForm(team_name=match.team1_name, wins=3, losses=2),
+            team2_form=TeamForm(team_name=match.team2_name, wins=2, losses=3),
+            head_to_head=HeadToHead(match_count=0),
+        )
+        for match in matches
+    }
+
+    messages = main.format_schedule_context_messages(matches, contexts)
+    combined = "\n".join(messages)
+
+    assert len(messages) > 1
+    assert all(len(message) <= main.MAX_TELEGRAM_MESSAGE_LENGTH for message in messages)
+    assert all("Источник: PandaScore" in message for message in messages)
+    assert combined.count("🏆 Турнир IEM Cologne 2026 · Bo3") == len(messages)
+    for match in matches:
+        assert combined.count(f"<b>{match.team1_name} — {match.team2_name}</b>") == 1
+
+
 def test_schedule_context_groups_tournament_stages_and_omits_match_format():
     group_a = _upcoming().model_copy(
         update={
@@ -1372,7 +1404,7 @@ def test_schedule_context_groups_tournament_stages_and_omits_match_format():
     assert text.count("🏆 Турнир BLAST Open — Porto · Bo3") == 1
     assert "<b>G2 — Natus Vincere</b> · Bo3" not in text
     assert "<b>G2 — Natus Vincere</b>" in text
-    assert text.count("<b>Очные встречи за 3 месяца:</b> команды не встречались.") == 2
+    assert text.count("<b>Очные встречи за 3 месяца:</b> не было.") == 2
 
 
 def test_schedule_context_keeps_match_when_its_context_request_fails():
