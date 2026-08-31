@@ -194,7 +194,7 @@ def test_schedule_card_is_valid_square_png():
     assert image.size == media_cards.SCHEDULE_CARD_SIZE
 
 
-@pytest.mark.parametrize("variant", ["standings", "bracket", "next_match"])
+@pytest.mark.parametrize("variant", ["bracket", "next_match"])
 def test_tournament_radar_card_variants_are_valid_square_png(variant):
     radar = TournamentRadar(
         tournament_id="3",
@@ -228,6 +228,19 @@ def test_tournament_radar_card_rejects_unknown_variant():
         media_cards.render_tournament_radar_card(
             TournamentRadar(tournament_id="3"), "IEM Cologne 2026", "Europe/Moscow", "unknown"
         )
+
+
+def test_tournament_radar_bracket_is_paginated_into_square_pngs():
+    matches = [
+        RadarBracketMatch(match_id=str(index), round_name="Opening round", team1_name=f"Team {index * 2}", team2_name=f"Team {index * 2 + 1}")
+        for index in range(9)
+    ]
+    cards = media_cards.render_tournament_radar_cards(
+        TournamentRadar(tournament_id="3", bracket_matches=matches, bracket_match_count=9),
+        "IEM Cologne 2026", "Europe/Moscow", "bracket",
+    )
+    assert len(cards) == 3
+    assert all(Image.open(io.BytesIO(card)).size == media_cards.SCHEDULE_CARD_SIZE for card in cards)
 
 
 def test_schedule_card_supports_ten_matches():

@@ -158,14 +158,15 @@ outbox/results/{channel_id}_match_v1_{fingerprint}.json
 - `job=results`: новые подтверждённые Tier-1 результаты.
 - `job=schedule`: один утренний выпуск с Tier-1 матчами и матчами популярных команд.
 - `job=digest`: один вечерний выпуск с итогами Tier-1; пустой выпуск не публикуется.
-- `job=radar`: ручной или отдельный timer-выпуск по одному турниру; требует `tournament_id` и необязательное `tournament_name`.
+- `job=radar`: ручной выпуск по одному турниру; показывает подтверждённые пары сетки и требует `tournament_id` и необязательное `tournament_name`.
+- `job=radar_discovery`: ежедневный поиск Tier-1 турниров на следующий календарный день; публикует радар только при наличии подтверждённых пар.
 - `job=analytics`: снимок числа подписчиков или ручной импорт метрик поста.
 
 ### Параметры события Cloud Function
 
 | Параметр | Где применяется | Правило |
 |---|---|---|
-| `job` | все вызовы | `results` по умолчанию; также `schedule`, `digest`, `radar`, `analytics` |
+| `job` | все вызовы | `results` по умолчанию; также `schedule`, `digest`, `radar`, `radar_discovery`, `analytics` |
 | `retry_only` | результаты | `true` обрабатывает только durable outbox без запроса PandaScore |
 | `source` | результаты | `auto`, `pandascore` или `liquipedia` |
 | `limit` | результаты | целое число от 1 до 30; значения вне диапазона ограничиваются границами |
@@ -176,7 +177,7 @@ outbox/results/{channel_id}_match_v1_{fingerprint}.json
 | `test_run_id` | schedule, radar | 1–64 символа: первый — буква или цифра, далее допустимы также `_` и `-`; создаёт отдельный ключ дедупликации и при реальной отправке помечает карточку как тестовую |
 | `tournament_id` | radar | обязательный ID турнира |
 | `tournament_name` | radar | необязательное отображаемое название, до 300 символов |
-| `radar_card_variant` | radar | `auto`, `standings`, `bracket` или `next_match` |
+| `radar_card_variant` | radar | `auto`, `bracket` или `next_match` |
 | `analytics_operation` | analytics | `snapshot` по умолчанию или `import_metrics` |
 
 `test_run_id` с `dry_run=false` выполняет реальную отдельную публикацию и поэтому
