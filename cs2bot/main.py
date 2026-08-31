@@ -884,7 +884,7 @@ def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
     if record is None:
         return None
     if record.match_count == 0:
-        return "<b>Очные встречи за 3 месяца:</b> команды не встречались."
+        return "<b>Очные встречи за 3 месяца:</b> не было."
     return (
         f"<b>Очные встречи за 3 месяца:</b> "
         f"{_russian_count(record.match_count, ('матч', 'матча', 'матчей'))}. "
@@ -908,7 +908,16 @@ def format_schedule_context(
     matches: Sequence[UpcomingMatchNormalized],
     contexts: dict[str, ScheduleMatchContext],
 ) -> str:
-    """Format optional, compact pre-match context for every scheduled fixture."""
+    """Return the first Telegram-ready context message for compatibility."""
+    messages = format_schedule_context_messages(matches, contexts)
+    return messages[0] if messages else ""
+
+
+def format_schedule_context_messages(
+    matches: Sequence[UpcomingMatchNormalized],
+    contexts: dict[str, ScheduleMatchContext],
+) -> list[str]:
+    """Format context into complete Telegram-sized tournament blocks."""
     context_matches = [
         (match, contexts.get(match.match_id))
         for match in sorted(matches, key=_context_priority)
@@ -921,20 +930,20 @@ def format_schedule_context(
         group_key = (_context_tournament_name(match), match.best_of)
         grouped_matches.setdefault(group_key, []).append((match, context))
 
-    lines = ["🔎 <b>Контекст к матчам дня</b>", ""]
+    tournament_blocks: list[list[str]] = []
     for (tournament_name, best_of), tournament_matches in grouped_matches.items():
         format_note = f"Bo{best_of}" if best_of else "формат уточняется"
-        lines.append(f"🏆 Турнир {html.escape(tournament_name)} · {format_note}")
-        lines.append("")
+        tournament_header = f"🏆 Турнир {html.escape(tournament_name)} · {format_note}"
+        match_blocks: list[str] = []
         for match, context in tournament_matches:
-            lines.append(f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>")
+            match_lines = [f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>"]
             if context is None:
-                lines.append("Контекст по командам пока недоступен.")
+                match_lines.append("Контекст по командам пока недоступен.")
             else:
                 head_to_head = _head_to_head_takeaway(context)
                 if head_to_head:
-                    lines.append(head_to_head)
-                lines.append(
+                    match_lines.append(head_to_head)
+                match_lines.append(
                     f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
                     f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
                     f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
@@ -942,17 +951,66 @@ def format_schedule_context(
                     f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
                     f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
                 )
-            lines.append("")
-    lines.extend(
+            match_blocks.append("\n".join(match_lines))
+        tournament_blocks.append([tournament_header, *match_blocks])
+
+    footer = "\n\n".join(
         [
             "ℹ️ Это последние результаты, а не рейтинг команд и не прогноз на матч.",
-            "",
             "Источник: PandaScore",
-            "",
             "#CS2 #КонтекстМатча",
         ]
     )
-    return "\n".join(lines).strip()[:MAX_TELEGRAM_MESSAGE_LENGTH]
+    first_heading = "🔎 <b>Контекст к матчам дня</b>"
+    continuation_heading = "🔎 <b>Контекст к матчам дня — продолжение</b>"
+    messages: list[str] = []
+    current_blocks: list[str] = []
+
+    def message_text(blocks: Sequence[str], *, continuation: bool) -> str:
+        heading = continuation_heading if continuation else first_heading
+        return "\n\n".join([heading, *blocks, footer])
+
+    def flush() -> None:
+        if current_blocks:
+            messages.append(message_text(current_blocks, continuation=bool(messages)))
+            current_blocks.clear()
+
+    for header, *match_blocks in tournament_blocks:
+        whole_block = "\n\n".join([header, *match_blocks])
+        candidate = [*current_blocks, whole_block]
+        if len(message_text(candidate, continuation=bool(messages))) <= MAX_TELEGRAM_MESSAGE_LENGTH:
+            current_blocks.append(whole_block)
+            continue
+        flush()
+        if len(message_text([whole_block], continuation=bool(messages))) <= MAX_TELEGRAM_MESSAGE_LENGTH:
+            current_blocks.append(whole_block)
+            continue
+
+        # A single tournament can exceed Telegram's limit; repeat its header and
+        # split only between complete match blocks.
+        tournament_segment = ""
+        for match_block in match_blocks:
+            candidate_segment = (
+                f"{tournament_segment}\n\n{match_block}"
+                if tournament_segment
+                else "\n\n".join([header, match_block])
+            )
+            candidate_blocks = (
+                [*current_blocks[:-1], candidate_segment]
+                if tournament_segment
+                else [*current_blocks, candidate_segment]
+            )
+            if len(message_text(candidate_blocks, continuation=bool(messages))) > MAX_TELEGRAM_MESSAGE_LENGTH:
+                flush()
+                candidate_segment = "\n\n".join([header, match_block])
+                current_blocks.append(candidate_segment)
+            elif tournament_segment:
+                current_blocks[-1] = candidate_segment
+            else:
+                current_blocks.append(candidate_segment)
+            tournament_segment = candidate_segment
+    flush()
+    return messages
 
 
 def format_tournament_radar(radar: TournamentRadar, tournament_name: str) -> str:
@@ -1121,6 +1179,7 @@ def _handle_content_job(
 ) -> Dict[str, Any]:
     start, end, local_now = _local_day_window(days_ahead=days_ahead)
     schedule_context_text = ""
+    schedule_context_messages: list[str] = []
     schedule_contexts: dict[str, ScheduleMatchContext] = {}
     try:
         if job == "schedule":
@@ -1141,7 +1200,8 @@ def _handle_content_job(
                             match_id=match.match_id,
                             error_type=type(result).__name__,
                         )
-                schedule_context_text = format_schedule_context(selected, schedule_contexts)
+                schedule_context_messages = format_schedule_context_messages(selected, schedule_contexts)
+                schedule_context_text = "\n\n".join(schedule_context_messages)
         else:
             fetched_results = asyncio.run(fetch_pandascore_finished_matches(100, start=start, end=end))
             selected_results, _, _ = apply_quality_filters(fetched_results)
@@ -1290,18 +1350,19 @@ def _handle_content_job(
                 send_to_telegram(channel["chat_id"], text)
             telegram_confirmed = True
             claim = asyncio.run(mark_delivery_claim_sent(claim))
-            if job == "schedule" and schedule_context_text:
-                try:
-                    send_to_telegram(channel["chat_id"], schedule_context_text)
-                except Exception as exc:
-                    log_event(
-                        logger,
-                        logging.WARNING,
-                        "schedule_context_delivery_failed",
-                        channel=channel_id,
-                        error_type=type(exc).__name__,
-                        error=_safe_error_message(exc),
-                    )
+            if job == "schedule":
+                for context_message in schedule_context_messages:
+                    try:
+                        send_to_telegram(channel["chat_id"], context_message)
+                    except Exception as exc:
+                        log_event(
+                            logger,
+                            logging.WARNING,
+                            "schedule_context_delivery_failed",
+                            channel=channel_id,
+                            error_type=type(exc).__name__,
+                            error=_safe_error_message(exc),
+                        )
             asyncio.run(mark_content_processed(content_uid, job))
             _record_post_analytics(
                 channel_id,
