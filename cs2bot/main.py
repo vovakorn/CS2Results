@@ -1311,6 +1311,7 @@ def _handle_content_job(
             content_uid = f"{content_uid}_test_{test_run_id}"
         claim = None
         telegram_confirmed = False
+        context_messages_to_send = list(schedule_context_messages)
         try:
             if asyncio.run(reconcile_content_delivery(content_uid, job)):
                 log_event(logger, logging.INFO, "delivery_state_reconciled", channel=channel_id, job=job)
@@ -1323,13 +1324,23 @@ def _handle_content_job(
                 try:
                     if job == "schedule":
                         caption = text
+                        # One tournament has one cover and one context note: keep
+                        # them together as a single Telegram photo post. Albums
+                        # and long notes retain the safe text continuation.
+                        if len(media_cards) == 1 and len(schedule_context_messages) == 1:
+                            context_caption = schedule_context_messages[0]
+                            if test_run_id:
+                                context_caption = f"🧪 <b>Тестовая карточка</b>\n\n{context_caption}"
+                            if len(context_caption) <= MAX_TELEGRAM_CAPTION_LENGTH:
+                                caption = context_caption
+                                context_messages_to_send = []
                         filename = f"cs2-schedule-{day_key}.png"
                         has_spoiler = False
                     else:
                         caption = format_digest_photo_caption(local_now, len(selected))
                         filename = f"cs2-results-{day_key}.png"
                         has_spoiler = TELEGRAM_SPOILERS
-                    if test_run_id:
+                    if test_run_id and not caption.startswith("🧪 <b>Тестовая карточка</b>"):
                         caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
                     if len(caption) > MAX_TELEGRAM_CAPTION_LENGTH:
                         caption = format_schedule_photo_caption(local_now, len(selected))
@@ -1371,7 +1382,7 @@ def _handle_content_job(
             telegram_confirmed = True
             claim = asyncio.run(mark_delivery_claim_sent(claim))
             if job == "schedule":
-                for context_message in schedule_context_messages:
+                for context_message in context_messages_to_send:
                     try:
                         send_to_telegram(channel["chat_id"], context_message)
                     except Exception as exc:
