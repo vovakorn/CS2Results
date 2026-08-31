@@ -34,6 +34,7 @@ from .media_cards import (
     render_result_card,
     render_results_card,
     render_schedule_cards,
+    render_schedule_context_covers,
     render_tournament_radar_cards,
 )
 from .match_sources.config import (
@@ -1194,7 +1195,12 @@ def _handle_content_job(
     try:
         if job == "schedule":
             fetched = asyncio.run(fetch_upcoming_matches(start, end))
-            selected = fetched
+            selected = [
+                match
+                for match in fetched
+                if tier1_autopilot_decision(match)[0]
+                or match.feature_reason == "tier1_tournament"
+            ]
             text = format_daily_schedule(selected, local_now) if selected else ""
             context_matches = sorted(selected, key=_context_priority)
             if context_matches:
@@ -1264,7 +1270,7 @@ def _handle_content_job(
     if TELEGRAM_MEDIA_CARDS and card_supported:
         try:
             if job == "schedule":
-                media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
+                media_cards = render_schedule_context_covers(selected, local_now)
                 if len(media_cards) > 10:
                     media_card_error = "too_many_tournament_cards"
                     media_cards = []
