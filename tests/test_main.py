@@ -1378,14 +1378,14 @@ def test_schedule_context_groups_tournament_stages_and_omits_match_format():
     group_a = _upcoming().model_copy(
         update={
             "tournament_name": "BLAST Open — Porto — Group A",
-            "competition_key": "BLAST Open — Porto",
+            "competition_key": "Porto",
         }
     )
     group_b = _upcoming().model_copy(
         update={
             "match_id": "group-b",
             "tournament_name": "BLAST Open — Porto — Group B",
-            "competition_key": "BLAST Open — Porto",
+            "competition_key": "Porto",
             "team1_name": "G2",
             "team2_name": "Natus Vincere",
         }
@@ -1785,9 +1785,9 @@ def test_busy_schedule_is_sent_with_a_context_cover(monkeypatch):
     assert body["matches_selected"] == 16
     assert body["messages_sent"] == 1
     assert photos[0][0][1] == b"cover"
-    assert photos[0][0][2] == main.format_schedule_photo_caption(
-        main._local_day_window()[2], 16
-    )
+    assert photos[0][0][2].startswith("📅 <b>Матчи CS2 сегодня")
+    assert "<b>NAVI vs FaZe</b>" in photos[0][0][2]
+    assert len(photos[0][0][2]) <= main.MAX_TELEGRAM_CAPTION_LENGTH
     assert marked == [(claimed[0], "schedule")]
 
 

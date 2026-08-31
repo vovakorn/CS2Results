@@ -902,13 +902,15 @@ def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
 
 
 def _context_tournament_name(match: UpcomingMatchNormalized) -> str:
-    """Use the shared competition label instead of its individual group/stage."""
-    if match.competition_key:
-        return match.competition_key
+    """Keep the full event name while stripping only an individual group/stage."""
     parts = [part.strip() for part in match.tournament_name.split(" — ") if part.strip()]
     if len(parts) > 1 and re.fullmatch(r"(?:group|группа)\s+[\w\d]+", parts[-1], re.IGNORECASE):
-        return " — ".join(parts[:-1])
-    return match.tournament_name
+        tournament_name = " — ".join(parts[:-1])
+    else:
+        tournament_name = match.tournament_name
+    if match.competition_key and match.competition_key.casefold() not in tournament_name.casefold():
+        return match.competition_key
+    return tournament_name
 
 
 def format_schedule_context(
@@ -1320,7 +1322,7 @@ def _handle_content_job(
             if media_cards:
                 try:
                     if job == "schedule":
-                        caption = format_schedule_photo_caption(local_now, len(selected))
+                        caption = text
                         filename = f"cs2-schedule-{day_key}.png"
                         has_spoiler = False
                     else:
@@ -1329,6 +1331,8 @@ def _handle_content_job(
                         has_spoiler = TELEGRAM_SPOILERS
                     if test_run_id:
                         caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
+                    if len(caption) > MAX_TELEGRAM_CAPTION_LENGTH:
+                        caption = format_schedule_photo_caption(local_now, len(selected))
                     if job == "schedule" and len(media_cards) > 1:
                         filenames = [
                             f"cs2-schedule-{day_key}-{index}-of-{len(media_cards)}.png"
