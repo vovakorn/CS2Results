@@ -25,6 +25,18 @@ from .config import (
     TELEGRAM_TOKEN,
 )
 from .analytics import record_manual_post_metrics, record_post, record_subscriber_snapshot
+from .instagram_publish import (
+    InstagramDeliveryUncertainError,
+    InstagramPublishError,
+    instagram_publishing_enabled,
+    publish_rendered_cards,
+)
+from .threads_publish import (
+    ThreadsDeliveryUncertainError,
+    ThreadsPublishError,
+    publish_rendered_cards as publish_threads_rendered_cards,
+    threads_publishing_enabled,
+)
 from .logging_utils import log_event
 from .media_cards import (
     MAX_RESULT_MATCHES,
@@ -34,7 +46,6 @@ from .media_cards import (
     render_result_card,
     render_results_card,
     render_schedule_cards,
-    render_schedule_context_covers,
     render_tournament_radar_cards,
 )
 from .match_sources.config import (
@@ -82,6 +93,8 @@ from .match_sources.storage import (
     reconcile_content_delivery,
     release_delivery_claim,
     result_outbox_key,
+    safe_storage_part,
+    StorageUnavailableError,
 )
 
 logger = logging.getLogger(__name__)
@@ -765,6 +778,7 @@ def _local_day_window(
 
 
 def _next_local_day_window(now: datetime | None = None) -> tuple[datetime, datetime, datetime]:
+    """Return the next displayed calendar day as an UTC query window."""
     start, _, local_now = _local_day_window(now=now)
     next_start = start + timedelta(days=1)
     return next_start, next_start + timedelta(days=1), local_now
@@ -891,7 +905,7 @@ def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
     if record is None:
         return None
     if record.match_count == 0:
-        return "<b>Очные встречи за 3 месяца:</b> не было."
+        return "<b>Очные встречи за 3 месяца:</b> команды не встречались."
     return (
         f"<b>Очные встречи за 3 месяца:</b> "
         f"{_russian_count(record.match_count, ('матч', 'матча', 'матчей'))}. "
@@ -902,31 +916,20 @@ def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
 
 
 def _context_tournament_name(match: UpcomingMatchNormalized) -> str:
-    """Keep the full event name while stripping only an individual group/stage."""
+    """Use the shared competition label instead of its individual group/stage."""
+    if match.competition_key:
+        return match.competition_key
     parts = [part.strip() for part in match.tournament_name.split(" — ") if part.strip()]
     if len(parts) > 1 and re.fullmatch(r"(?:group|группа)\s+[\w\d]+", parts[-1], re.IGNORECASE):
-        tournament_name = " — ".join(parts[:-1])
-    else:
-        tournament_name = match.tournament_name
-    if match.competition_key and match.competition_key.casefold() not in tournament_name.casefold():
-        return match.competition_key
-    return tournament_name
+        return " — ".join(parts[:-1])
+    return match.tournament_name
 
 
 def format_schedule_context(
     matches: Sequence[UpcomingMatchNormalized],
     contexts: dict[str, ScheduleMatchContext],
 ) -> str:
-    """Return the first Telegram-ready context message for compatibility."""
-    messages = format_schedule_context_messages(matches, contexts)
-    return messages[0] if messages else ""
-
-
-def format_schedule_context_messages(
-    matches: Sequence[UpcomingMatchNormalized],
-    contexts: dict[str, ScheduleMatchContext],
-) -> list[str]:
-    """Format context into complete Telegram-sized tournament blocks."""
+    """Format optional, compact pre-match context for every scheduled fixture."""
     context_matches = [
         (match, contexts.get(match.match_id))
         for match in sorted(matches, key=_context_priority)
@@ -934,98 +937,52 @@ def format_schedule_context_messages(
     if not context_matches:
         return ""
 
-    grouped_matches: dict[tuple[str, int | None], list[tuple[UpcomingMatchNormalized, ScheduleMatchContext | None]]] = {}
+    lines = ["🔎 <b>Контекст к матчам дня</b>", ""]
+    format_lines: list[str] = []
+    seen_formats: set[tuple[str, int | None]] = set()
+    for match, _ in context_matches:
+        tournament_name = _context_tournament_name(match)
+        format_key = (tournament_name, match.best_of)
+        if format_key in seen_formats:
+            continue
+        seen_formats.add(format_key)
+        format_note = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
+        format_lines.append(f"🏆 Турнир {html.escape(tournament_name)} · Формат: {format_note}")
+    lines.extend([*format_lines, ""])
+
     for match, context in context_matches:
-        group_key = (_context_tournament_name(match), match.best_of)
-        grouped_matches.setdefault(group_key, []).append((match, context))
-
-    tournament_blocks: list[list[str]] = []
-    for (tournament_name, best_of), tournament_matches in grouped_matches.items():
-        format_note = f"Bo{best_of}" if best_of else "формат уточняется"
-        tournament_header = f"🏆 Турнир {html.escape(tournament_name)} · {format_note}"
-        match_blocks: list[str] = []
-        for match, context in tournament_matches:
-            match_lines = [f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>"]
-            if context is None:
-                match_lines.append("Контекст по командам пока недоступен.")
-            else:
-                head_to_head = _head_to_head_takeaway(context)
-                if head_to_head:
-                    match_lines.append(head_to_head)
-                match_lines.append(
-                    f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
-                    f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
-                    f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
-                    f"{html.escape(context.team2_form.team_name)} — "
-                    f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
-                    f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
-                )
-            match_blocks.append("\n".join(match_lines))
-        tournament_blocks.append([tournament_header, *match_blocks])
-
-    footer = "\n\n".join(
+        lines.append(f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>")
+        if context is None:
+            lines.append("Контекст по командам пока недоступен.")
+        else:
+            head_to_head = _head_to_head_takeaway(context)
+            if head_to_head:
+                lines.append(head_to_head)
+            lines.append(
+                f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
+                f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
+                f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
+                f"{html.escape(context.team2_form.team_name)} — "
+                f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
+                f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
+            )
+        lines.append("")
+    lines.extend(
         [
             "ℹ️ Это последние результаты, а не рейтинг команд и не прогноз на матч.",
+            "",
             "Источник: PandaScore",
+            "",
             "#CS2 #КонтекстМатча",
         ]
     )
-    first_heading = "🔎 <b>Контекст к матчам дня</b>"
-    continuation_heading = "🔎 <b>Контекст к матчам дня — продолжение</b>"
-    messages: list[str] = []
-    current_blocks: list[str] = []
-
-    def message_text(blocks: Sequence[str], *, continuation: bool) -> str:
-        heading = continuation_heading if continuation else first_heading
-        return "\n\n".join([heading, *blocks, footer])
-
-    def flush() -> None:
-        if current_blocks:
-            messages.append(message_text(current_blocks, continuation=bool(messages)))
-            current_blocks.clear()
-
-    for header, *match_blocks in tournament_blocks:
-        whole_block = "\n\n".join([header, *match_blocks])
-        candidate = [*current_blocks, whole_block]
-        if len(message_text(candidate, continuation=bool(messages))) <= MAX_TELEGRAM_MESSAGE_LENGTH:
-            current_blocks.append(whole_block)
-            continue
-        flush()
-        if len(message_text([whole_block], continuation=bool(messages))) <= MAX_TELEGRAM_MESSAGE_LENGTH:
-            current_blocks.append(whole_block)
-            continue
-
-        # A single tournament can exceed Telegram's limit; repeat its header and
-        # split only between complete match blocks.
-        tournament_segment = ""
-        for match_block in match_blocks:
-            candidate_segment = (
-                f"{tournament_segment}\n\n{match_block}"
-                if tournament_segment
-                else "\n\n".join([header, match_block])
-            )
-            candidate_blocks = (
-                [*current_blocks[:-1], candidate_segment]
-                if tournament_segment
-                else [*current_blocks, candidate_segment]
-            )
-            if len(message_text(candidate_blocks, continuation=bool(messages))) > MAX_TELEGRAM_MESSAGE_LENGTH:
-                flush()
-                candidate_segment = "\n\n".join([header, match_block])
-                current_blocks.append(candidate_segment)
-            elif tournament_segment:
-                current_blocks[-1] = candidate_segment
-            else:
-                current_blocks.append(candidate_segment)
-            tournament_segment = candidate_segment
-    flush()
-    return messages
+    return "\n".join(lines).strip()[:MAX_TELEGRAM_MESSAGE_LENGTH]
 
 
 def format_tournament_radar(radar: TournamentRadar, tournament_name: str) -> str:
     lines = [f"🏆 <b>Турнирный радар — {html.escape(tournament_name)}</b>", ""]
     if radar.bracket_matches:
-        lines.append("<b>Подтверждённые пары:</b>")
+        lines.extend(["<b>Подтверждённые пары:</b>"])
         for match in radar.bracket_matches[:4]:
             round_name = f" · {html.escape(match.round_name)}" if match.round_name else ""
             lines.append(f"{html.escape(match.team1_name)} — {html.escape(match.team2_name)}{round_name}")
@@ -1183,6 +1140,273 @@ def _unwrap_timer_event(event: Dict[str, Any] | None) -> Dict[str, Any]:
     return decoded
 
 
+def _instagram_caption(text: str) -> str:
+    """Turn the existing Telegram template into a bounded plain-text caption."""
+    plain = html.unescape(re.sub(r"</?[^>]+>", "", text)).strip()
+    if len(plain) <= 2200:
+        return plain
+    return plain[:2199].rstrip() + "…"
+
+
+def _deliver_instagram_content(
+    *,
+    job: str,
+    day_key: str,
+    cards: Sequence[bytes],
+    caption: str,
+    context: Any,
+    test_run_id: str | None,
+) -> tuple[int, int, int]:
+    """Deliver one daily Instagram issue without coupling it to Telegram state.
+
+    A confirmed Instagram publication is written as ``sent`` before its processed
+    marker, matching Telegram's crash-safe protocol.  Network ambiguity retains
+    the claim and intentionally disables automatic retry to avoid a duplicate.
+    """
+    if not instagram_publishing_enabled():
+        return 0, 0, 0
+    if not cards:
+        log_event(logger, logging.WARNING, "instagram_card_unavailable", job=job)
+        return 0, 0, 1
+    content_uid = f"instagram_{job}_{day_key}"
+    if test_run_id:
+        content_uid = f"{content_uid}_test_{test_run_id}"
+    claim = None
+    confirmed = False
+    try:
+        if asyncio.run(reconcile_content_delivery(content_uid, job)):
+            return 0, 1, 0
+        claim = asyncio.run(claim_content_delivery(content_uid))
+        if claim is None:
+            return 0, 1, 0
+        publish_rendered_cards(content_uid, cards, _instagram_caption(caption), context)
+        confirmed = True
+        claim = asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_content_processed(content_uid, job))
+        _record_post_analytics(
+            "instagram",
+            content_uid,
+            job,
+            matches_selected=len(cards),
+            media_card=True,
+        )
+        log_event(logger, logging.INFO, "instagram_delivery_succeeded", job=job, cards=len(cards))
+        return 1, 0, 0
+    except InstagramDeliveryUncertainError as exc:
+        _notify_admin(
+            "instagram_delivery_uncertain",
+            f"Instagram не подтвердил исход доставки выпуска «{job}»; повтор отключён.",
+        )
+        log_event(
+            logger,
+            logging.ERROR,
+            "instagram_delivery_uncertain",
+            job=job,
+            error_type=type(exc).__name__,
+        )
+        return 0, 0, 1
+    except Exception as exc:
+        if claim is not None and not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except Exception:
+                pass
+        _notify_admin(
+            "instagram_content_publish_failed",
+            f"Instagram не опубликовал выпуск «{job}»; потребуется повторная проверка.",
+        )
+        log_event(
+            logger,
+            logging.ERROR,
+            "instagram_content_publish_failed",
+            job=job,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        return 0, 0, 1
+
+
+def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
+    """Deliver one durable result outbox item to Instagram exactly once."""
+    match = pending.match
+    channel_id = "instagram"
+    claim = None
+    confirmed = False
+    try:
+        if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+            asyncio.run(delete_result_delivery(pending))
+            return "reconciled"
+        claim = asyncio.run(claim_channel_delivery(match, channel_id))
+        if claim is None:
+            return "duplicate"
+        card = (
+            render_final_card(match)
+            if match.source == "liquipedia" and can_render_final_card(match)
+            else render_result_card(match)
+        )
+        publish_rendered_cards(
+            f"instagram_result_{safe_storage_part(match.match_uid)}",
+            [card],
+            _instagram_caption(format_match(match)),
+            context,
+        )
+        confirmed = True
+        asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_channel_processed(match, channel_id))
+        asyncio.run(delete_result_delivery(pending))
+        _record_post_analytics("instagram", match.match_uid, "results", media_card=True)
+        log_event(logger, logging.INFO, "instagram_delivery_succeeded", job="results", match_uid=match.match_uid)
+        return "sent"
+    except InstagramDeliveryUncertainError as exc:
+        _notify_admin(
+            "instagram_delivery_uncertain",
+            f"Instagram не подтвердил исход доставки результата {match.match_uid}; повтор отключён.",
+        )
+        log_event(logger, logging.ERROR, "instagram_delivery_uncertain", job="results", error_type=type(exc).__name__)
+        return "uncertain"
+    except Exception as exc:
+        if claim is not None and not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except Exception:
+                pass
+        try:
+            asyncio.run(record_result_delivery_attempt(pending))
+        except Exception:
+            pass
+        _notify_admin(
+            "instagram_result_publish_failed",
+            f"Instagram не опубликовал результат {match.match_uid}; очередь повторит попытку.",
+        )
+        log_event(
+            logger,
+            logging.ERROR,
+            "instagram_result_publish_failed",
+            match_uid=match.match_uid,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        return "failed"
+
+
+def _deliver_threads_content(
+    *,
+    job: str,
+    day_key: str,
+    cards: Sequence[bytes],
+    caption: str,
+    context: Any,
+    test_run_id: str | None,
+) -> tuple[int, int, int]:
+    """Deliver a daily Threads issue independently from Telegram and Instagram."""
+    if not threads_publishing_enabled():
+        return 0, 0, 0
+    if not cards:
+        log_event(logger, logging.WARNING, "threads_card_unavailable", job=job)
+        return 0, 0, 1
+    content_uid = f"threads_{job}_{day_key}"
+    if test_run_id:
+        content_uid = f"{content_uid}_test_{test_run_id}"
+    claim = None
+    confirmed = False
+    try:
+        if asyncio.run(reconcile_content_delivery(content_uid, job)):
+            return 0, 1, 0
+        claim = asyncio.run(claim_content_delivery(content_uid))
+        if claim is None:
+            return 0, 1, 0
+        publish_threads_rendered_cards(content_uid, cards, _instagram_caption(caption), context)
+        confirmed = True
+        asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_content_processed(content_uid, job))
+        _record_post_analytics(
+            "threads", content_uid, job, matches_selected=len(cards), media_card=True
+        )
+        log_event(logger, logging.INFO, "threads_delivery_succeeded", job=job, cards=len(cards))
+        return 1, 0, 0
+    except ThreadsDeliveryUncertainError as exc:
+        _notify_admin(
+            "threads_delivery_uncertain",
+            f"Threads не подтвердил исход доставки выпуска «{job}»; повтор отключён.",
+        )
+        log_event(logger, logging.ERROR, "threads_delivery_uncertain", job=job, error_type=type(exc).__name__)
+        return 0, 0, 1
+    except Exception as exc:
+        if claim is not None and not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except Exception:
+                pass
+        log_event(
+            logger,
+            logging.ERROR,
+            "threads_content_publish_failed",
+            job=job,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        return 0, 0, 1
+
+
+def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
+    """Deliver one durable result item to Threads exactly once."""
+    match = pending.match
+    channel_id = "threads"
+    claim = None
+    confirmed = False
+    try:
+        if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+            asyncio.run(delete_result_delivery(pending))
+            return "reconciled"
+        claim = asyncio.run(claim_channel_delivery(match, channel_id))
+        if claim is None:
+            return "duplicate"
+        card = (
+            render_final_card(match)
+            if match.source == "liquipedia" and can_render_final_card(match)
+            else render_result_card(match)
+        )
+        publish_threads_rendered_cards(
+            f"threads_result_{safe_storage_part(match.match_uid)}",
+            [card],
+            _instagram_caption(format_match(match)),
+            context,
+        )
+        confirmed = True
+        asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_channel_processed(match, channel_id))
+        asyncio.run(delete_result_delivery(pending))
+        _record_post_analytics("threads", match.match_uid, "results", media_card=True)
+        log_event(logger, logging.INFO, "threads_delivery_succeeded", job="results", match_uid=match.match_uid)
+        return "sent"
+    except ThreadsDeliveryUncertainError as exc:
+        _notify_admin(
+            "threads_delivery_uncertain",
+            f"Threads не подтвердил исход доставки результата {match.match_uid}; повтор отключён.",
+        )
+        log_event(logger, logging.ERROR, "threads_delivery_uncertain", job="results", error_type=type(exc).__name__)
+        return "uncertain"
+    except Exception as exc:
+        if claim is not None and not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except Exception:
+                pass
+        try:
+            asyncio.run(record_result_delivery_attempt(pending))
+        except Exception:
+            pass
+        log_event(
+            logger,
+            logging.ERROR,
+            "threads_result_publish_failed",
+            match_uid=match.match_uid,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        return "failed"
+
+
 def _handle_content_job(
     job: str,
     dry_run: bool,
@@ -1192,17 +1416,11 @@ def _handle_content_job(
 ) -> Dict[str, Any]:
     start, end, local_now = _local_day_window(days_ahead=days_ahead)
     schedule_context_text = ""
-    schedule_context_messages: list[str] = []
     schedule_contexts: dict[str, ScheduleMatchContext] = {}
     try:
         if job == "schedule":
             fetched = asyncio.run(fetch_upcoming_matches(start, end))
-            selected = [
-                match
-                for match in fetched
-                if tier1_autopilot_decision(match)[0]
-                or match.feature_reason == "tier1_tournament"
-            ]
+            selected = fetched
             text = format_daily_schedule(selected, local_now) if selected else ""
             context_matches = sorted(selected, key=_context_priority)
             if context_matches:
@@ -1218,8 +1436,7 @@ def _handle_content_job(
                             match_id=match.match_id,
                             error_type=type(result).__name__,
                         )
-                schedule_context_messages = format_schedule_context_messages(selected, schedule_contexts)
-                schedule_context_text = "\n\n".join(schedule_context_messages)
+                schedule_context_text = format_schedule_context(selected, schedule_contexts)
         else:
             fetched_results = asyncio.run(fetch_pandascore_finished_matches(100, start=start, end=end))
             selected_results, _, _ = apply_quality_filters(fetched_results)
@@ -1264,15 +1481,27 @@ def _handle_content_job(
 
     media_cards: list[bytes] = []
     media_card_error: str | None = None
+    try:
+        instagram_enabled = instagram_publishing_enabled()
+    except InstagramPublishError as exc:
+        instagram_enabled = False
+        media_card_error = type(exc).__name__
+        log_event(logger, logging.ERROR, "instagram_configuration_invalid", error=_safe_error_message(exc))
+    try:
+        threads_enabled = threads_publishing_enabled()
+    except ThreadsPublishError as exc:
+        threads_enabled = False
+        media_card_error = media_card_error or type(exc).__name__
+        log_event(logger, logging.ERROR, "threads_configuration_invalid", error=_safe_error_message(exc))
     card_supported = (
         job == "schedule" and 1 <= len(selected) <= MAX_SCHEDULE_TOTAL_MATCHES
     ) or (
         job == "digest" and 1 <= len(selected) <= MAX_RESULT_MATCHES
     )
-    if TELEGRAM_MEDIA_CARDS and card_supported:
+    if (TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled) and card_supported:
         try:
             if job == "schedule":
-                media_cards = render_schedule_context_covers(selected, local_now)
+                media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
                 if len(media_cards) > 10:
                     media_card_error = "too_many_tournament_cards"
                     media_cards = []
@@ -1311,7 +1540,6 @@ def _handle_content_job(
             content_uid = f"{content_uid}_test_{test_run_id}"
         claim = None
         telegram_confirmed = False
-        context_messages_to_send = list(schedule_context_messages)
         try:
             if asyncio.run(reconcile_content_delivery(content_uid, job)):
                 log_event(logger, logging.INFO, "delivery_state_reconciled", channel=channel_id, job=job)
@@ -1323,27 +1551,15 @@ def _handle_content_job(
             if media_cards:
                 try:
                     if job == "schedule":
-                        caption = text
-                        # One tournament has one cover and one context note: keep
-                        # them together as a single Telegram photo post. Albums
-                        # and long notes retain the safe text continuation.
-                        if len(media_cards) == 1 and len(schedule_context_messages) == 1:
-                            context_caption = schedule_context_messages[0]
-                            if test_run_id:
-                                context_caption = f"🧪 <b>Тестовая карточка</b>\n\n{context_caption}"
-                            if len(context_caption) <= MAX_TELEGRAM_CAPTION_LENGTH:
-                                caption = context_caption
-                                context_messages_to_send = []
+                        caption = format_schedule_photo_caption(local_now, len(selected))
                         filename = f"cs2-schedule-{day_key}.png"
                         has_spoiler = False
                     else:
                         caption = format_digest_photo_caption(local_now, len(selected))
                         filename = f"cs2-results-{day_key}.png"
                         has_spoiler = TELEGRAM_SPOILERS
-                    if test_run_id and not caption.startswith("🧪 <b>Тестовая карточка</b>"):
+                    if test_run_id:
                         caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
-                    if len(caption) > MAX_TELEGRAM_CAPTION_LENGTH:
-                        caption = format_schedule_photo_caption(local_now, len(selected))
                     if job == "schedule" and len(media_cards) > 1:
                         filenames = [
                             f"cs2-schedule-{day_key}-{index}-of-{len(media_cards)}.png"
@@ -1381,19 +1597,18 @@ def _handle_content_job(
                 send_to_telegram(channel["chat_id"], text)
             telegram_confirmed = True
             claim = asyncio.run(mark_delivery_claim_sent(claim))
-            if job == "schedule":
-                for context_message in context_messages_to_send:
-                    try:
-                        send_to_telegram(channel["chat_id"], context_message)
-                    except Exception as exc:
-                        log_event(
-                            logger,
-                            logging.WARNING,
-                            "schedule_context_delivery_failed",
-                            channel=channel_id,
-                            error_type=type(exc).__name__,
-                            error=_safe_error_message(exc),
-                        )
+            if job == "schedule" and schedule_context_text:
+                try:
+                    send_to_telegram(channel["chat_id"], schedule_context_text)
+                except Exception as exc:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "schedule_context_delivery_failed",
+                        channel=channel_id,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
             asyncio.run(mark_content_processed(content_uid, job))
             _record_post_analytics(
                 channel_id,
@@ -1426,6 +1641,32 @@ def _handle_content_job(
                 error=_safe_error_message(exc),
             )
 
+    instagram_sent = 0
+    instagram_duplicates = 0
+    instagram_failures = 0
+    if instagram_enabled and not dry_run:
+        instagram_sent, instagram_duplicates, instagram_failures = _deliver_instagram_content(
+            job=job,
+            day_key=day_key,
+            cards=media_cards,
+            caption=text,
+            context=None,
+            test_run_id=test_run_id,
+        )
+
+    threads_sent = 0
+    threads_duplicates = 0
+    threads_failures = 0
+    if threads_enabled and not dry_run:
+        threads_sent, threads_duplicates, threads_failures = _deliver_threads_content(
+            job=job,
+            day_key=day_key,
+            cards=media_cards,
+            caption=text,
+            context=None,
+            test_run_id=test_run_id,
+        )
+
     if failures:
         _notify_admin("delivery_failed", f"Не доставлен выпуск «{job}»: ошибок {failures}.")
     body = {
@@ -1435,6 +1676,12 @@ def _handle_content_job(
         "messages_sent": sent,
         "duplicates_skipped": duplicates,
         "delivery_failures": failures,
+        "instagram_messages_sent": instagram_sent,
+        "instagram_duplicates_skipped": instagram_duplicates,
+        "instagram_delivery_failures": instagram_failures,
+        "threads_messages_sent": threads_sent,
+        "threads_duplicates_skipped": threads_duplicates,
+        "threads_delivery_failures": threads_failures,
         "dry_run": dry_run,
     }
     if test_run_id:
@@ -1453,7 +1700,7 @@ def _handle_content_job(
             body["context_matches_ready"] = len(schedule_contexts)
         elif job == "digest":
             body["diagnostics"] = [_match_diagnostic(match) for match in selected]
-        body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS
+        body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled
         body["media_card_ready"] = bool(media_cards)
         body["media_card_count"] = len(media_cards)
         if media_card_error:
@@ -1485,9 +1732,15 @@ def _handle_radar_job(
         return _error_response(502, "match_source_unavailable")
 
     if require_bracket and not radar.bracket_matches:
-        body = {"job": "radar", "tournament_id": tournament_id, "messages_sent": 0,
-                "duplicates_skipped": 0, "delivery_failures": 0,
-                "skipped_reason": "bracket_unavailable", "dry_run": dry_run}
+        body = {
+            "job": "radar",
+            "tournament_id": tournament_id,
+            "messages_sent": 0,
+            "duplicates_skipped": 0,
+            "delivery_failures": 0,
+            "skipped_reason": "bracket_unavailable",
+            "dry_run": dry_run,
+        }
         if dry_run:
             body["radar"] = radar.model_dump()
         return {"statusCode": 200, "body": json.dumps(body, ensure_ascii=False)}
@@ -1539,13 +1792,21 @@ def _handle_radar_job(
                 try:
                     if len(media_cards) > 1:
                         send_media_group_to_telegram(
-                            channel["chat_id"], media_cards, caption,
-                            filenames=[f"cs2-radar-{tournament_id}-{day_key}-{index}-of-{len(media_cards)}.png"
-                                       for index in range(1, len(media_cards) + 1)],
+                            channel["chat_id"],
+                            media_cards,
+                            caption,
+                            filenames=[
+                                f"cs2-radar-{tournament_id}-{day_key}-{index}-of-{len(media_cards)}.png"
+                                for index in range(1, len(media_cards) + 1)
+                            ],
                         )
                     else:
-                        send_photo_to_telegram(channel["chat_id"], media_cards[0], caption,
-                                               filename=f"cs2-radar-{tournament_id}-{day_key}.png")
+                        send_photo_to_telegram(
+                            channel["chat_id"],
+                            media_cards[0],
+                            caption,
+                            filename=f"cs2-radar-{tournament_id}-{day_key}.png",
+                        )
                 except TelegramDeliveryUncertainError:
                     raise
                 except TelegramDeliveryError as exc:
@@ -1614,45 +1875,88 @@ def _handle_radar_job(
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
-def _radar_discovery_candidates(matches: Sequence[UpcomingMatchNormalized]) -> list[tuple[str, str, datetime]]:
+def _radar_discovery_candidates(
+    matches: Sequence[UpcomingMatchNormalized],
+) -> list[tuple[str, str, datetime]]:
+    """Choose one confirmed Tier-1 tournament per next-day first match.
+
+    The schedule's featured Tier-2 path deliberately does not qualify here: the
+    radar is a tournament opener and must stay high-signal.
+    """
     candidates: dict[str, tuple[str, str, datetime]] = {}
     for match in matches:
         tournament_id = match.source_refs.tournament_id if match.source_refs else None
         first_at = _parse_datetime(match.scheduled_at)
-        if not tournament_id or first_at is None or not match.is_featured or match.feature_reason != "tier1_tournament":
+        if (
+            not tournament_id
+            or first_at is None
+            or not match.is_featured
+            or match.feature_reason != "tier1_tournament"
+        ):
             continue
         current = candidates.get(tournament_id)
         if current is None or first_at < current[2]:
-            candidates[tournament_id] = (tournament_id, match.competition_key or match.tournament_name, first_at)
-    return sorted(candidates.values(), key=lambda value: value[2])
+            candidates[tournament_id] = (
+                tournament_id,
+                match.competition_key or match.tournament_name,
+                first_at,
+            )
+    return sorted(candidates.values(), key=lambda candidate: candidate[2])
 
 
 def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
+    """Publish one tournament radar before each qualifying next-day start."""
     start, end, _ = _next_local_day_window()
     try:
         fetched = asyncio.run(fetch_upcoming_matches(start, end))
     except Exception as exc:
-        log_event(logger, logging.ERROR, "radar_discovery_fetch_failed", error_type=type(exc).__name__)
+        log_event(
+            logger,
+            logging.ERROR,
+            "radar_discovery_fetch_failed",
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        _notify_admin("radar_discovery_source_unavailable", "Не удалось найти турниры для турнирного радара.")
         return _error_response(502, "match_source_unavailable")
+
     candidates = _radar_discovery_candidates(fetched)
     sent = duplicates = failures = 0
     radars: list[dict[str, Any]] = []
     for tournament_id, tournament_name, first_at in candidates:
+        publication_key = first_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
         response = _handle_radar_job(
-            tournament_id, tournament_name, dry_run,
-            publication_key=first_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H%MZ"),
+            tournament_id,
+            tournament_name,
+            dry_run,
+            publication_key=publication_key,
             require_bracket=True,
         )
         body = json.loads(response["body"])
         sent += body["messages_sent"]
         duplicates += body["duplicates_skipped"]
         failures += body["delivery_failures"]
-        radars.append({"tournament_id": tournament_id, "tournament_name": tournament_name,
-                       "first_match_at": first_at.isoformat(), "preview": body.get("preview")})
-    body = {"job": "radar_discovery", "window_start": start.isoformat(), "window_end": end.isoformat(),
-            "matches_received": len(fetched), "tournaments_selected": len(candidates),
-            "messages_sent": sent, "duplicates_skipped": duplicates, "delivery_failures": failures,
-            "dry_run": dry_run}
+        radars.append(
+            {
+                "tournament_id": tournament_id,
+                "tournament_name": tournament_name,
+                "first_match_at": first_at.isoformat(),
+                "status_code": response["statusCode"],
+                "preview": body.get("preview"),
+            }
+        )
+
+    body = {
+        "job": "radar_discovery",
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
+        "matches_received": len(fetched),
+        "tournaments_selected": len(candidates),
+        "messages_sent": sent,
+        "duplicates_skipped": duplicates,
+        "delivery_failures": failures,
+        "dry_run": dry_run,
+    }
     if dry_run:
         body["radars"] = radars
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
@@ -1882,6 +2186,22 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         channel_id = str(channel.get("id") or name)
         channel_stats.setdefault(name, 0)
         channels_by_id[channel_id] = channel
+    try:
+        instagram_results_enabled = instagram_publishing_enabled()
+    except InstagramPublishError as exc:
+        instagram_results_enabled = False
+        log_event(logger, logging.ERROR, "instagram_configuration_invalid", error=_safe_error_message(exc))
+    if instagram_results_enabled:
+        channels_by_id["instagram"] = {"id": "instagram", "name": "instagram", "platform": "instagram"}
+        channel_stats.setdefault("instagram", 0)
+    try:
+        threads_results_enabled = threads_publishing_enabled()
+    except ThreadsPublishError as exc:
+        threads_results_enabled = False
+        log_event(logger, logging.ERROR, "threads_configuration_invalid", error=_safe_error_message(exc))
+    if threads_results_enabled:
+        channels_by_id["threads"] = {"id": "threads", "name": "threads", "platform": "threads"}
+        channel_stats.setdefault("threads", 0)
 
     eligible_matches: list[MatchNormalized] = []
     for match in matches:
@@ -1900,6 +2220,12 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                     continue
                 name = str(channel.get("name", "unknown"))
                 channel_stats[name] += 1
+                sent_messages += 1
+            if instagram_results_enabled:
+                channel_stats["instagram"] += 1
+                sent_messages += 1
+            if threads_results_enabled:
+                channel_stats["threads"] += 1
                 sent_messages += 1
         pending_deliveries: list[PendingDelivery] = []
     else:
@@ -1938,6 +2264,60 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                         logging.ERROR,
                         "result_outbox_enqueue_failed",
                         channel=name,
+                        match_uid=match.match_uid,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
+
+        if instagram_results_enabled:
+            for match in eligible_matches:
+                key = result_outbox_key(match, "instagram")
+                try:
+                    if asyncio.run(is_channel_processed(match, "instagram")):
+                        skipped_duplicates += 1
+                        continue
+                    created = asyncio.run(enqueue_result_delivery(match, "instagram", "instagram"))
+                    if created:
+                        current_targets[key] = PendingDelivery(
+                            key=key,
+                            channel_id="instagram",
+                            channel_name="instagram",
+                            match=match,
+                            created_at=queued_at,
+                        )
+                except Exception as exc:
+                    failed_messages += 1
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "instagram_result_outbox_enqueue_failed",
+                        match_uid=match.match_uid,
+                        error_type=type(exc).__name__,
+                    error=_safe_error_message(exc),
+                )
+
+        if threads_results_enabled:
+            for match in eligible_matches:
+                key = result_outbox_key(match, "threads")
+                try:
+                    if asyncio.run(is_channel_processed(match, "threads")):
+                        skipped_duplicates += 1
+                        continue
+                    created = asyncio.run(enqueue_result_delivery(match, "threads", "threads"))
+                    if created:
+                        current_targets[key] = PendingDelivery(
+                            key=key,
+                            channel_id="threads",
+                            channel_name="threads",
+                            match=match,
+                            created_at=queued_at,
+                        )
+                except Exception as exc:
+                    failed_messages += 1
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "threads_result_outbox_enqueue_failed",
                         match_uid=match.match_uid,
                         error_type=type(exc).__name__,
                         error=_safe_error_message(exc),
@@ -2020,6 +2400,28 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             continue
         name = str(channel.get("name", pending.channel_name))
         channel_id = pending.channel_id
+
+        if channel.get("platform") == "instagram":
+            outcome = _deliver_instagram_result(pending, context)
+            if outcome == "sent":
+                channel_stats[name] += 1
+                sent_messages += 1
+            elif outcome in {"duplicate", "reconciled"}:
+                skipped_duplicates += 1
+            else:
+                failed_messages += 1
+            continue
+
+        if channel.get("platform") == "threads":
+            outcome = _deliver_threads_result(pending, context)
+            if outcome == "sent":
+                channel_stats[name] += 1
+                sent_messages += 1
+            elif outcome in {"duplicate", "reconciled"}:
+                skipped_duplicates += 1
+            else:
+                failed_messages += 1
+            continue
 
         try:
             if asyncio.run(reconcile_channel_delivery(match, channel_id)):
@@ -2210,7 +2612,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 outbox_attempt=pending.attempt_count + 1,
                 media_card=delivery_format == "photo",
             )
-        except Exception as exc:
+        except (TelegramDeliveryError, StorageUnavailableError) as exc:
             failed_messages += 1
             delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
             if delivery_uncertain:
@@ -2221,7 +2623,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             if not telegram_confirmed and not delivery_uncertain:
                 try:
                     asyncio.run(release_delivery_claim(claim))
-                except Exception as release_exc:
+                except StorageUnavailableError as release_exc:
                     log_event(
                         logger,
                         logging.ERROR,
@@ -2232,7 +2634,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                     )
             try:
                 asyncio.run(record_result_delivery_attempt(pending))
-            except Exception as outbox_exc:
+            except StorageUnavailableError as outbox_exc:
                 log_event(
                     logger,
                     logging.ERROR,
@@ -2271,7 +2673,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 media_card=delivery_format == "photo",
                 delivery_format=delivery_format,
             )
-        except Exception as exc:
+        except StorageUnavailableError as exc:
             failed_messages += 1
             log_event(
                 logger,

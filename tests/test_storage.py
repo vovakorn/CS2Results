@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
+import pytest
 
 from cs2bot.match_sources.models import MatchNormalized
 from cs2bot.match_sources.storage import (
@@ -174,6 +175,23 @@ class FakeAlwaysConflictS3(FakeS3):
                 "PutObject",
             )
         return super().put_object(*args, IfMatch=IfMatch, **kwargs)
+
+
+class FakeMissingAfterConflictS3(FakeS3):
+    """Emulate an unstable endpoint that conflicts, then cannot read the key."""
+
+    def __init__(self):
+        super().__init__()
+        self.put_attempts = 0
+
+    def put_object(self, *args, IfNoneMatch=None, **kwargs):
+        if IfNoneMatch == "*":
+            self.put_attempts += 1
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}},
+                "PutObject",
+            )
+        return super().put_object(*args, IfNoneMatch=IfNoneMatch, **kwargs)
 
 
 def _match():
@@ -558,6 +576,15 @@ def test_expired_delivery_claim_conflict_is_reported_as_storage_error():
         assert "expired claim cannot be reclaimed" in str(exc)
     else:
         raise AssertionError("expired claim conflict must not be reported as a duplicate")
+
+
+def test_claim_conflict_with_repeated_missing_head_is_bounded():
+    s3 = FakeMissingAfterConflictS3()
+
+    with pytest.raises(StorageUnavailableError, match="did not stabilize"):
+        asyncio.run(claim_channel_delivery(_match(), "global", client=s3, bucket="bucket"))
+
+    assert s3.put_attempts == 3
 
 
 def test_admin_alert_is_claimed_only_once_per_cooldown_window():

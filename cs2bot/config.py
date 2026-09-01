@@ -74,7 +74,7 @@ def _load_channels_from_env() -> list[dict[str, Any]] | None:
             isinstance(chat_id, bool)
             or not isinstance(chat_id, (str, int))
             or str(chat_id).strip() == ""
-            or len(str(chat_id)) > 200
+            or len(str(chat_id).strip()) > 200
         ):
             raise ValueError(f"Channel {name!r} must have a chat_id")
         if teams is not None and (
@@ -93,7 +93,7 @@ def _load_channels_from_env() -> list[dict[str, Any]] | None:
             {
                 "id": storage_id.strip(),
                 "name": name.strip(),
-                "chat_id": chat_id,
+                "chat_id": chat_id.strip() if isinstance(chat_id, str) else chat_id,
                 "teams": [team.strip() for team in teams] if teams else None,
             }
         )

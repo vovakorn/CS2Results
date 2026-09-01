@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from cs2bot.match_sources.models import SourceUnavailableError
-from cs2bot.match_sources.sources.hltv_results_source import parse_results_page
+from cs2bot.match_sources.legacy.hltv_results_source import parse_results_page
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "hltv_results_sample.html"

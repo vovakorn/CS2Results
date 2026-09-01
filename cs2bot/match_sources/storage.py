@@ -51,6 +51,7 @@ class PendingDelivery:
 
 RESULT_OUTBOX_PREFIX = "outbox/results/"
 TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
+CLAIM_CREATE_MAX_ATTEMPTS = 3
 
 
 def _client():
@@ -709,45 +710,38 @@ async def claim_channel_delivery(
             kwargs["IfMatch"] = etag
         return s3.put_object(**kwargs)
 
-    try:
-        response = await asyncio.to_thread(_put, True, None)
-        return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
-    except ClientError as exc:
-        if not _is_precondition_failed(exc):
-            logger.error('storage_error="claim put failed" key="%s" error_type="%s"', key, type(exc).__name__)
-            raise StorageUnavailableError(f"claim put failed for {key}") from exc
-
     def _head() -> dict[str, Any]:
         return s3.head_object(Bucket=bucket_name, Key=key)
 
-    try:
-        existing = await asyncio.to_thread(_head)
-    except ClientError as exc:
-        if _is_not_found(exc):
-            return await claim_channel_delivery(
-                match,
-                channel_id,
-                legacy_channel_name=legacy_channel_name,
-                client=s3,
-                bucket=bucket_name,
-                now=reference,
-            )
-        raise StorageUnavailableError(f"claim head failed for {key}") from exc
+    for _ in range(CLAIM_CREATE_MAX_ATTEMPTS):
+        try:
+            response = await asyncio.to_thread(_put, True, None)
+            return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
+        except ClientError as exc:
+            if not _is_precondition_failed(exc):
+                logger.error('storage_error="claim put failed" key="%s" error_type="%s"', key, type(exc).__name__)
+                raise StorageUnavailableError(f"claim put failed for {key}") from exc
+        try:
+            existing = await asyncio.to_thread(_head)
+        except ClientError as exc:
+            if _is_not_found(exc):
+                continue
+            raise StorageUnavailableError(f"claim head failed for {key}") from exc
 
-    if _object_metadata(existing).get("delivery-state") == "sent":
-        return None
-
-    return await _reclaim_expired_claim(
-        s3=s3,
-        bucket_name=bucket_name,
-        key=key,
-        uid=uid,
-        claim_id=claim_id,
-        existing=existing,
-        reference=reference,
-        put=_put,
-        event_name="delivery_claim_reclaim_state",
-    )
+        if _object_metadata(existing).get("delivery-state") == "sent":
+            return None
+        return await _reclaim_expired_claim(
+            s3=s3,
+            bucket_name=bucket_name,
+            key=key,
+            uid=uid,
+            claim_id=claim_id,
+            existing=existing,
+            reference=reference,
+            put=_put,
+            event_name="delivery_claim_reclaim_state",
+        )
+    raise StorageUnavailableError(f"claim state did not stabilize for {key}")
 
 
 async def claim_content_delivery(
@@ -796,43 +790,34 @@ async def claim_content_delivery(
             kwargs["IfMatch"] = etag
         return s3.put_object(**kwargs)
 
-    try:
-        response = await asyncio.to_thread(_put, True, None)
-        return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
-    except ClientError as exc:
-        if not _is_precondition_failed(exc):
-            raise StorageUnavailableError(f"content claim put failed for {key}") from exc
+    for _ in range(CLAIM_CREATE_MAX_ATTEMPTS):
+        try:
+            response = await asyncio.to_thread(_put, True, None)
+            return DeliveryClaim(uid, key, claim_id, response.get("ETag"))
+        except ClientError as exc:
+            if not _is_precondition_failed(exc):
+                raise StorageUnavailableError(f"content claim put failed for {key}") from exc
+        try:
+            existing = await asyncio.to_thread(s3.head_object, Bucket=bucket_name, Key=key)
+        except ClientError as exc:
+            if _is_not_found(exc):
+                continue
+            raise StorageUnavailableError(f"content claim head failed for {key}") from exc
 
-    try:
-        existing = await asyncio.to_thread(
-            s3.head_object,
-            Bucket=bucket_name,
-            Key=key,
+        if _object_metadata(existing).get("delivery-state") == "sent":
+            return None
+        return await _reclaim_expired_claim(
+            s3=s3,
+            bucket_name=bucket_name,
+            key=key,
+            uid=uid,
+            claim_id=claim_id,
+            existing=existing,
+            reference=reference,
+            put=_put,
+            event_name="content_claim_reclaim_state",
         )
-    except ClientError as exc:
-        if _is_not_found(exc):
-            return await claim_content_delivery(
-                content_uid,
-                client=s3,
-                bucket=bucket_name,
-                now=reference,
-            )
-        raise StorageUnavailableError(f"content claim head failed for {key}") from exc
-
-    if _object_metadata(existing).get("delivery-state") == "sent":
-        return None
-
-    return await _reclaim_expired_claim(
-        s3=s3,
-        bucket_name=bucket_name,
-        key=key,
-        uid=uid,
-        claim_id=claim_id,
-        existing=existing,
-        reference=reference,
-        put=_put,
-        event_name="content_claim_reclaim_state",
-    )
+    raise StorageUnavailableError(f"content claim state did not stabilize for {key}")
 
 
 async def release_delivery_claim(
