@@ -43,7 +43,7 @@ def test_channel_config_is_normalized_and_validated(monkeypatch):
                 {
                     "id": "stable-global",
                     "name": " Global ",
-                    "chat_id": "@channel",
+                    "chat_id": " @channel ",
                     "teams": [" NAVI "],
                 }
             ]

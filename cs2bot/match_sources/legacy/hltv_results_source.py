@@ -15,7 +15,7 @@ from ..config import (
     REQUEST_TIMEOUT_SECONDS,
 )
 from ..models import MatchDetails, MatchNormalized, SourceUnavailableError
-from .http_utils import read_limited_response
+from ..sources.http_utils import read_limited_response
 
 logger = logging.getLogger(__name__)
 

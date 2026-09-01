@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from ..config import DEFAULT_USER_AGENT, MAX_SOURCE_RESPONSE_BYTES, REQUEST_TIMEOUT_SECONDS
 from ..models import MapResult, MatchNormalized, SourceUnavailableError
-from .http_utils import read_limited_response
+from ..sources.http_utils import read_limited_response
 
 logger = logging.getLogger(__name__)
 

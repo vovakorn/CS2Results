@@ -35,8 +35,16 @@ Before enabling a timer:
 4. Run a dry-run with production filters.
 5. Send exactly one qualifying real result.
 6. Run the same invocation again and verify `duplicates_skipped=1`.
-7. Enable the timer only after steps 1-6 succeed.
+7. Run the conditional-write probe against the production bucket: start at least
+   ten concurrent `If-None-Match: *` claim attempts for one fresh key, then
+   verify exactly one succeeds; repeat with a stale claim and `If-Match` ETag
+   replacement. Use
+   `python scripts/probe_object_storage_conditionals.py` with the release
+   credentials. Record the probe key and result in the release log.
+8. Enable the timer only after steps 1-7 succeed.
 
 The timer must remain disabled when there is no qualifying real result available
 for the controlled send. A fake or low-quality match must not be published to
-complete the checklist.
+complete the checklist. The conditional-write probe must use the actual Yandex
+Object Storage endpoint and bucket; an in-memory or generic S3 emulator is not
+acceptable evidence for this gate.

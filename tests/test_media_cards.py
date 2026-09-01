@@ -194,7 +194,7 @@ def test_schedule_card_is_valid_square_png():
     assert image.size == media_cards.SCHEDULE_CARD_SIZE
 
 
-@pytest.mark.parametrize("variant", ["standings", "bracket", "next_match"])
+@pytest.mark.parametrize("variant", ["bracket", "next_match"])
 def test_tournament_radar_card_variants_are_valid_square_png(variant):
     radar = TournamentRadar(
         tournament_id="3",
@@ -228,6 +228,26 @@ def test_tournament_radar_card_rejects_unknown_variant():
         media_cards.render_tournament_radar_card(
             TournamentRadar(tournament_id="3"), "IEM Cologne 2026", "Europe/Moscow", "unknown"
         )
+
+
+def test_tournament_radar_bracket_is_paginated_into_square_pngs():
+    matches = [
+        RadarBracketMatch(
+            match_id=f"match-{index}",
+            round_name="Opening round",
+            team1_name=f"Team {index * 2 + 1}",
+            team2_name=f"Team {index * 2 + 2}",
+        )
+        for index in range(9)
+    ]
+    radar = TournamentRadar(tournament_id="3", bracket_matches=matches, bracket_match_count=9)
+
+    cards = media_cards.render_tournament_radar_cards(
+        radar, "IEM Cologne 2026", "Europe/Moscow", "bracket"
+    )
+
+    assert len(cards) == 3
+    assert all(Image.open(io.BytesIO(card)).size == media_cards.SCHEDULE_CARD_SIZE for card in cards)
 
 
 def test_schedule_card_supports_ten_matches():
@@ -558,7 +578,7 @@ def test_logo_download_prefers_official_thumbnail(monkeypatch):
     ]
 
 
-def test_schedule_uses_full_tournament_name_not_competition_key(monkeypatch):
+def test_schedule_uses_competition_name_for_tournament_header(monkeypatch):
     drawn = []
     original = media_cards._centered_text
 
@@ -574,9 +594,15 @@ def test_schedule_uses_full_tournament_name_not_competition_key(monkeypatch):
         "Europe/Moscow",
     )
 
-    assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" in drawn
-    assert "BLAST BOUNTY 2026" not in drawn
+    assert "BLAST BOUNTY 2026" in drawn
+    assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" not in drawn
     assert all("ВРЕМЯ МСК" not in text for text in drawn)
+
+
+def test_schedule_match_event_label_falls_back_to_tournament_name():
+    match = _upcoming().model_copy(update={"competition_key": None})
+
+    assert media_cards._schedule_match_event_label(match) == match.tournament_name
 
 
 def test_schedule_header_is_centered_on_canvas(monkeypatch):
@@ -597,7 +623,7 @@ def test_schedule_header_is_centered_on_canvas(monkeypatch):
 
     canvas_center = media_cards.SCHEDULE_CARD_SIZE[0] // 2
     assert (canvas_center, "МАТЧИ CS2 СЕГОДНЯ") in drawn
-    assert (canvas_center, "BLAST BOUNTY — 2026 SEASON 2 FINALS") in drawn
+    assert (canvas_center, "BLAST BOUNTY 2026") in drawn
     assert (canvas_center, "31 ИЮЛЯ") in drawn
 
 
@@ -617,7 +643,38 @@ def test_schedule_shows_shared_tournament_header_for_every_layout(monkeypatch, m
         "Europe/Moscow",
     )
 
-    assert (540, 254, "BLAST BOUNTY — 2026 SEASON 2 FINALS") in drawn
+    assert (540, 254, "BLAST BOUNTY 2026") in drawn
+
+
+def test_schedule_album_groups_stages_under_one_tournament_card():
+    group_a = _upcoming("group-a").model_copy(
+        update={
+            "competition_key": "BLAST Open — Porto",
+            "tournament_name": "BLAST Open — Porto — Group A",
+            "scheduled_at": "2026-07-31T12:00:00Z",
+        }
+    )
+    group_b = _upcoming("group-b").model_copy(
+        update={
+            "competition_key": "BLAST Open — Porto",
+            "tournament_name": "BLAST Open — Porto — Group B",
+            "scheduled_at": "2026-07-31T14:00:00Z",
+        }
+    )
+    other = _upcoming("other").model_copy(
+        update={
+            "competition_key": "IEM Cologne",
+            "tournament_name": "IEM Cologne — Playoffs",
+            "scheduled_at": "2026-07-31T16:00:00Z",
+        }
+    )
+
+    pages = media_cards.paginate_schedule_matches([other, group_b, group_a])
+
+    assert [[match.match_id for match in page] for page in pages] == [
+        ["group-a", "group-b"],
+        ["other"],
+    ]
 
 
 def test_schedule_uses_mixed_tournament_header_without_a_logo(monkeypatch):

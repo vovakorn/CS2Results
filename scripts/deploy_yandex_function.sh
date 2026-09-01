@@ -25,6 +25,18 @@ TELEGRAM_PROXY_SECRET_KEY="${YC_TELEGRAM_PROXY_SECRET_KEY:-TELEGRAM_PROXY_URL}"
 TELEGRAM_TOKEN_SECRET_ID="${YC_TELEGRAM_TOKEN_SECRET_ID:-}"
 TELEGRAM_TOKEN_SECRET_VERSION_ID="${YC_TELEGRAM_TOKEN_SECRET_VERSION_ID:-}"
 TELEGRAM_TOKEN_SECRET_KEY="${YC_TELEGRAM_TOKEN_SECRET_KEY:-TELEGRAM_TOKEN}"
+INSTAGRAM_PUBLISHING_OVERRIDE="${YC_ENABLE_INSTAGRAM_PUBLISHING:-}"
+INSTAGRAM_MEDIA_BUCKET_OVERRIDE="${YC_INSTAGRAM_MEDIA_BUCKET:-}"
+INSTAGRAM_MEDIA_PUBLIC_BASE_URL_OVERRIDE="${YC_INSTAGRAM_MEDIA_PUBLIC_BASE_URL:-}"
+INSTAGRAM_LOCKBOX_SECRET_ID_OVERRIDE="${YC_INSTAGRAM_LOCKBOX_SECRET_ID:-}"
+THREADS_PUBLISHING_OVERRIDE="${YC_ENABLE_THREADS_PUBLISHING:-}"
+THREADS_MEDIA_BUCKET_OVERRIDE="${YC_THREADS_MEDIA_BUCKET:-}"
+THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE="${YC_THREADS_MEDIA_PUBLIC_BASE_URL:-}"
+THREADS_LOCKBOX_SECRET_ID_OVERRIDE="${YC_THREADS_LOCKBOX_SECRET_ID:-}"
+XRAY_SECRET_ID="${YC_XRAY_SECRET_ID:-}"
+XRAY_SECRET_VERSION_ID="${YC_XRAY_SECRET_VERSION_ID:-}"
+XRAY_SECRET_KEY="${YC_XRAY_SECRET_KEY:-XRAY_CONFIG_JSON}"
+FUNCTION_PACKAGE_BUCKET="${YC_FUNCTION_PACKAGE_BUCKET:-}"
 TARGET_EXECUTION_TIMEOUT="${YC_EXECUTION_TIMEOUT:-120s}"
 
 readonly -a REQUIRED_ENVIRONMENT=(
@@ -56,10 +68,12 @@ usage() {
   cat <<'EOF'
 Usage:
   YC_FUNCTION_ID=<id> scripts/deploy_yandex_function.sh check
+  YC_FUNCTION_ID=<id> scripts/deploy_yandex_function.sh candidate
   YC_FUNCTION_ID=<id> YC_DEPLOY_APPROVED=1 scripts/deploy_yandex_function.sh deploy
 
 Commands:
   check   Read-only validation of the production version and trigger tags.
+  candidate  Build, create a candidate and run a dry-run. Production is unchanged.
   deploy  Build, create a candidate, run a dry-run, then atomically move the
           production tag. Requires YC_DEPLOY_APPROVED=1.
 
@@ -76,6 +90,15 @@ YC_TELEGRAM_PROXY_SECRET_* reference fields. The proxy URL is never read.
 
 To rotate the bot token, pass all three YC_TELEGRAM_TOKEN_SECRET_* reference
 fields. The token value is never read.
+
+Instagram publishing requires YC_ENABLE_INSTAGRAM_PUBLISHING=1,
+YC_INSTAGRAM_MEDIA_BUCKET, YC_INSTAGRAM_MEDIA_PUBLIC_BASE_URL,
+YC_INSTAGRAM_LOCKBOX_SECRET_ID, and YC_XRAY_SECRET_{ID,VERSION_ID}.
+
+Threads publishing accepts YC_ENABLE_THREADS_PUBLISHING,
+YC_THREADS_MEDIA_BUCKET, YC_THREADS_MEDIA_PUBLIC_BASE_URL and
+YC_THREADS_LOCKBOX_SECRET_ID. These are ordinary environment variables; the
+Threads OAuth payload is never passed to this script.
 EOF
 }
 
@@ -200,6 +223,37 @@ validate_telegram_token_override() {
   fi
 }
 
+validate_instagram_override() {
+  if [[ -z "${INSTAGRAM_PUBLISHING_OVERRIDE}" ]]; then
+    return 0
+  fi
+  case "${INSTAGRAM_PUBLISHING_OVERRIDE}" in
+    1|true|TRUE|yes|YES) INSTAGRAM_PUBLISHING_OVERRIDE="1" ;;
+    0|false|FALSE|no|NO) INSTAGRAM_PUBLISHING_OVERRIDE="0" ;;
+    *) die "YC_ENABLE_INSTAGRAM_PUBLISHING must be a boolean" ;;
+  esac
+  if [[ "${INSTAGRAM_PUBLISHING_OVERRIDE}" == "1" ]]; then
+    [[ -n "${INSTAGRAM_MEDIA_BUCKET_OVERRIDE}" && -n "${INSTAGRAM_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" && -n "${INSTAGRAM_LOCKBOX_SECRET_ID_OVERRIDE}" ]] \
+      || die "Enabling Instagram requires its media bucket, public URL, and Lockbox secret ID"
+    [[ -n "${XRAY_SECRET_ID}" && -n "${XRAY_SECRET_VERSION_ID}" && -n "${XRAY_SECRET_KEY}" ]] \
+      || die "Enabling Instagram requires all YC_XRAY_SECRET_* reference fields"
+  fi
+}
+
+validate_threads_override() {
+  if [[ -n "${THREADS_PUBLISHING_OVERRIDE}" ]]; then
+    case "${THREADS_PUBLISHING_OVERRIDE}" in
+      1|true|TRUE|yes|YES) THREADS_PUBLISHING_OVERRIDE="1" ;;
+      0|false|FALSE|no|NO) THREADS_PUBLISHING_OVERRIDE="0" ;;
+      *) die "YC_ENABLE_THREADS_PUBLISHING must be a boolean" ;;
+    esac
+  fi
+  if [[ -n "${THREADS_PUBLISHING_OVERRIDE}${THREADS_MEDIA_BUCKET_OVERRIDE}${THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE}${THREADS_LOCKBOX_SECRET_ID_OVERRIDE}" ]]; then
+    [[ -n "${THREADS_PUBLISHING_OVERRIDE}" && -n "${THREADS_MEDIA_BUCKET_OVERRIDE}" && -n "${THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" && -n "${THREADS_LOCKBOX_SECRET_ID_OVERRIDE}" ]] \
+      || die "Set all YC_THREADS_* publishing settings together"
+  fi
+}
+
 validate_trigger_tags() {
   local triggers_json="$1"
   local bad_triggers
@@ -237,11 +291,22 @@ build_create_arguments() {
     --runtime "$(jq_from "${version_json}" '.runtime')"
     --entrypoint "$(jq_from "${version_json}" '.entrypoint')"
     --execution-timeout "${TARGET_EXECUTION_TIMEOUT}"
-    --source-path "${zip_path}"
     --tags "${CANDIDATE_TAG}"
     --description "Safe deploy from production version $(jq_from "${version_json}" '.id')"
     --format json
   )
+
+  if [[ -n "${FUNCTION_PACKAGE_BUCKET}" ]]; then
+    [[ -n "${FUNCTION_PACKAGE_OBJECT}" && -n "${FUNCTION_PACKAGE_SHA256}" ]] \
+      || die "Function package object metadata is unavailable"
+    CREATE_ARGS+=(
+      --package-bucket-name "${FUNCTION_PACKAGE_BUCKET}"
+      --package-object-name "${FUNCTION_PACKAGE_OBJECT}"
+      --package-sha256 "${FUNCTION_PACKAGE_SHA256}"
+    )
+  else
+    CREATE_ARGS+=(--source-path "${zip_path}")
+  fi
 
   memory_bytes="$(jq_from "${version_json}" '.resources.memory')"
   [[ "${memory_bytes}" =~ ^[0-9]+$ ]] || die "Production memory value is invalid"
@@ -254,10 +319,18 @@ build_create_arguments() {
   value="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r '.concurrency // empty')"
   [[ -z "${value}" ]] || CREATE_ARGS+=(--concurrency "${value}")
 
-  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" --arg final_cards "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" '
+  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" --arg final_cards "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" --arg instagram_enabled "${INSTAGRAM_PUBLISHING_OVERRIDE}" --arg instagram_bucket "${INSTAGRAM_MEDIA_BUCKET_OVERRIDE}" --arg instagram_public_base "${INSTAGRAM_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg instagram_lockbox "${INSTAGRAM_LOCKBOX_SECRET_ID_OVERRIDE}" --arg threads_enabled "${THREADS_PUBLISHING_OVERRIDE}" --arg threads_bucket "${THREADS_MEDIA_BUCKET_OVERRIDE}" --arg threads_public_base "${THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg threads_lockbox "${THREADS_LOCKBOX_SECRET_ID_OVERRIDE}" '
     (.environment // {})
     | if $shadow == "" then . else . + {"ENABLE_LIQUIPEDIA_SHADOW": $shadow} end
     | if $final_cards == "" then . else . + {"ENABLE_LIQUIPEDIA_FINAL_CARDS": $final_cards} end
+    | if $instagram_enabled == "" then . else . + {"ENABLE_INSTAGRAM_PUBLISHING": $instagram_enabled} end
+    | if $instagram_bucket == "" then . else . + {"INSTAGRAM_MEDIA_BUCKET": $instagram_bucket} end
+    | if $instagram_public_base == "" then . else . + {"INSTAGRAM_MEDIA_PUBLIC_BASE_URL": $instagram_public_base} end
+    | if $instagram_lockbox == "" then . else . + {"INSTAGRAM_LOCKBOX_SECRET_ID": $instagram_lockbox} end
+    | if $threads_enabled == "" then . else . + {"ENABLE_THREADS_PUBLISHING": $threads_enabled} end
+    | if $threads_bucket == "" then . else . + {"THREADS_MEDIA_BUCKET": $threads_bucket} end
+    | if $threads_public_base == "" then . else . + {"THREADS_MEDIA_PUBLIC_BASE_URL": $threads_public_base} end
+    | if $threads_lockbox == "" then . else . + {"THREADS_LOCKBOX_SECRET_ID": $threads_lockbox} end
     | to_entries
     | sort_by(.key)
     | map([(.key + "=" + (.value | tostring))] | @csv)
@@ -267,11 +340,12 @@ build_create_arguments() {
 
   while IFS= read -r value; do
     [[ -z "${value}" ]] || CREATE_ARGS+=(--secret "${value}")
-  done < <(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg liquipedia_override_id "${LIQUIPEDIA_SECRET_ID}" --arg proxy_override_id "${TELEGRAM_PROXY_SECRET_ID}" --arg token_override_id "${TELEGRAM_TOKEN_SECRET_ID}" '
+  done < <(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg liquipedia_override_id "${LIQUIPEDIA_SECRET_ID}" --arg proxy_override_id "${TELEGRAM_PROXY_SECRET_ID}" --arg token_override_id "${TELEGRAM_TOKEN_SECRET_ID}" --arg xray_override_id "${XRAY_SECRET_ID}" '
     (.secrets // [])[]
     | select($liquipedia_override_id == "" or .environment_variable != "LIQUIPEDIA_API_KEY")
     | select($proxy_override_id == "" or .environment_variable != "TELEGRAM_PROXY_URL")
     | select($token_override_id == "" or .environment_variable != "TELEGRAM_TOKEN")
+    | select($xray_override_id == "" or .environment_variable != "XRAY_CONFIG_JSON")
     | "id=\(.id),version-id=\(.version_id),key=\(.key),environment-variable=\(.environment_variable)"
   ')
 
@@ -293,6 +367,13 @@ build_create_arguments() {
     CREATE_ARGS+=(
       --secret
       "id=${TELEGRAM_TOKEN_SECRET_ID},version-id=${TELEGRAM_TOKEN_SECRET_VERSION_ID},key=${TELEGRAM_TOKEN_SECRET_KEY},environment-variable=TELEGRAM_TOKEN"
+    )
+  fi
+
+  if [[ -n "${XRAY_SECRET_ID}" ]]; then
+    CREATE_ARGS+=(
+      --secret
+      "id=${XRAY_SECRET_ID},version-id=${XRAY_SECRET_VERSION_ID},key=${XRAY_SECRET_KEY},environment-variable=XRAY_CONFIG_JSON"
     )
   fi
 
@@ -357,6 +438,8 @@ preflight() {
   validate_liquipedia_override
   validate_telegram_proxy_override
   validate_telegram_token_override
+  validate_instagram_override
+  validate_threads_override
 
   triggers_json="$("${YC_BIN}" serverless trigger list \
     --folder-id "${EXPECTED_FOLDER_ID}" \
@@ -373,6 +456,7 @@ run_check() {
 }
 
 run_deploy() {
+  local promote="${1:-0}"
   local zip_path
   local create_output
   local candidate_id
@@ -380,13 +464,27 @@ run_deploy() {
   local response_body
   local promoted_json
   local promoted_id
+  local package_key
 
-  [[ "${YC_DEPLOY_APPROVED:-}" == "1" ]] \
-    || die "Set YC_DEPLOY_APPROVED=1 only after explicit production approval"
+  if [[ "${promote}" == "1" ]]; then
+    [[ "${YC_DEPLOY_APPROVED:-}" == "1" ]] \
+      || die "Set YC_DEPLOY_APPROVED=1 only after explicit production approval"
+  fi
 
   preflight
-  zip_path="$("${BUILD_SCRIPT}")"
+  zip_path="$(XRAY_ENABLED=1 "${BUILD_SCRIPT}")"
   [[ -f "${zip_path}" ]] || die "Build did not produce archive: ${zip_path}"
+
+  if [[ -n "${FUNCTION_PACKAGE_BUCKET}" ]]; then
+    package_key="function-packages/cs2results-main-$(date -u +%Y%m%dT%H%M%SZ)-$$.zip"
+    FUNCTION_PACKAGE_OBJECT="${package_key}"
+    FUNCTION_PACKAGE_SHA256="$(shasum -a 256 "${zip_path}" | awk '{print $1}')"
+    "${YC_BIN}" storage s3api put-object \
+      --bucket "${FUNCTION_PACKAGE_BUCKET}" \
+      --key "${FUNCTION_PACKAGE_OBJECT}" \
+      --body "${zip_path}" \
+      --content-type application/zip >/dev/null
+  fi
 
   build_create_arguments "${PRODUCTION_JSON}" "${zip_path}"
   create_output="$("${YC_BIN}" "${CREATE_ARGS[@]}")"
@@ -406,6 +504,11 @@ run_deploy() {
   ')" || die "Candidate dry-run returned an invalid body"
   [[ "$(jq_from "${response_body}" '.dry_run')" == "true" ]] \
     || die "Candidate response does not confirm dry_run=true"
+
+  if [[ "${promote}" != "1" ]]; then
+    printf 'Candidate validated: %s; production tag is unchanged; dry-run: passed.\n' "${candidate_id}"
+    return 0
+  fi
 
   "${YC_BIN}" serverless function version set-tag \
     --id "${candidate_id}" \
@@ -429,9 +532,13 @@ main() {
       [[ "$#" -eq 1 ]] || die "check does not accept extra arguments"
       run_check
       ;;
+    candidate)
+      [[ "$#" -eq 1 ]] || die "candidate does not accept extra arguments"
+      run_deploy 0
+      ;;
     deploy)
       [[ "$#" -eq 1 ]] || die "deploy does not accept extra arguments"
-      run_deploy
+      run_deploy 1
       ;;
     -h|--help|help)
       usage

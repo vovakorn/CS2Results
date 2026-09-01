@@ -42,15 +42,15 @@ def test_tournament_radar_keeps_available_data_when_one_endpoint_fails(monkeypat
     async def fake_fetch(path, params):
         if path.endswith("/brackets"):
             raise RuntimeError("unavailable")
-        if path.endswith("/standings"):
-            return [{"team": {"id": 10, "name": "NAVI"}, "rank": 1}]
+        if path.endswith("/rosters"):
+            return [{"team": {"id": 10, "name": "NAVI"}}]
         return []
 
     monkeypatch.setattr(pandascore_context.pandascore_source, "_fetch_json", fake_fetch)
 
     radar = asyncio.run(pandascore_context.fetch_tournament_radar("3"))
 
-    assert radar.standings == ["1. NAVI"]
+    assert radar.roster_team_count == 1
     assert radar.bracket_matches == []
 
 
@@ -88,3 +88,20 @@ def test_schedule_context_excludes_head_to_head_older_than_three_months():
 
     assert record is not None
     assert (record.match_count, record.team1_wins, record.team2_wins) == (2, 1, 1)
+
+
+def test_schedule_context_keeps_all_recent_head_to_head_matches():
+    now = datetime(2026, 8, 20, tzinfo=timezone.utc)
+    matches = [
+        MatchNormalized(
+            source="pandascore", match_id=str(index), tournament_name="IEM", team1_name="NAVI",
+            team2_name="FaZe", score1=2, score2=1,
+            end_date=(now - timedelta(days=index)).isoformat(),
+            source_refs=SourceReferences(team1_id="10", team2_id="20"),
+        )
+        for index in range(5)
+    ]
+
+    record = pandascore_context._head_to_head("10", "20", matches, now=now)
+
+    assert (record.match_count, record.team1_wins, record.team2_wins) == (5, 5, 0)

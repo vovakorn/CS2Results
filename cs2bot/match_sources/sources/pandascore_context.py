@@ -102,9 +102,8 @@ def _head_to_head(
     team1_id: str,
     team2_id: str,
     matches: list[MatchNormalized],
-    limit: int = 3,
     now: datetime | None = None,
-) -> HeadToHead | None:
+) -> HeadToHead:
     """Build a H2H record from the last 90 days."""
     reference = now or datetime.now(timezone.utc)
     if reference.tzinfo is None:
@@ -139,10 +138,6 @@ def _head_to_head(
         else:
             team2_wins += 1
         counted += 1
-        if counted >= limit:
-            break
-    if counted < 2:
-        return None
     return HeadToHead(match_count=counted, team1_wins=team1_wins, team2_wins=team2_wins)
 
 
@@ -221,7 +216,7 @@ def _bracket_match_count(data: Any) -> int:
     return len(match_ids)
 
 
-def _bracket_matches(data: Any, limit: int = 4) -> list[RadarBracketMatch]:
+def _bracket_matches(data: Any, limit: int = 24) -> list[RadarBracketMatch]:
     """Extract only explicit pairs; never infer a playoff matchup from standings."""
     matches: list[RadarBracketMatch] = []
     seen: set[str] = set()
@@ -270,7 +265,6 @@ def _roster_team_count(data: Any) -> int:
 async def fetch_tournament_radar(tournament_id: str) -> TournamentRadar:
     responses = await asyncio.gather(
         pandascore_source._fetch_json(f"/tournaments/{tournament_id}/brackets", {}),
-        pandascore_source._fetch_json(f"/tournaments/{tournament_id}/standings", {}),
         pandascore_source._fetch_json(f"/tournaments/{tournament_id}/rosters", {}),
         pandascore_source._fetch_json(
             f"/tournaments/{tournament_id}/matches",
@@ -278,14 +272,11 @@ async def fetch_tournament_radar(tournament_id: str) -> TournamentRadar:
         ),
         return_exceptions=True,
     )
-    bracket, standings, rosters, matches = [value if not isinstance(value, Exception) else [] for value in responses]
+    bracket, rosters, matches = [value if not isinstance(value, Exception) else [] for value in responses]
     if all(isinstance(value, Exception) for value in responses):
         raise SourceUnavailableError("PandaScore tournament radar endpoints are unavailable")
-    standing_teams = _standing_teams(standings)
     return TournamentRadar(
         tournament_id=tournament_id,
-        standings=[f"{team.rank}. {team.name}" for team in standing_teams],
-        standing_teams=standing_teams,
         bracket_matches=_bracket_matches(bracket),
         next_matches=pandascore_source._normalize_raw_upcoming(matches)[:4],
         roster_team_count=_roster_team_count(rosters),

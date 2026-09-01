@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from cs2bot.match_sources.models import MatchNormalized
-from cs2bot.match_sources.sources import cs2api_source
+from cs2bot.match_sources.legacy import bo3gg_source as cs2api_source
 
 
 def _match(match_id="1"):

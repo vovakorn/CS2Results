@@ -182,9 +182,9 @@ class HeadToHead(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    match_count: int = Field(ge=2, le=10)
-    team1_wins: int = Field(default=0, ge=0, le=10)
-    team2_wins: int = Field(default=0, ge=0, le=10)
+    match_count: int = Field(ge=0, le=100)
+    team1_wins: int = Field(default=0, ge=0, le=100)
+    team2_wins: int = Field(default=0, ge=0, le=100)
 
 
 class ScheduleMatchContext(BaseModel):
@@ -209,7 +209,7 @@ class TournamentRadar(BaseModel):
     tournament_id: str = Field(min_length=1, max_length=200)
     standings: list[str] = Field(default_factory=list, max_length=12)
     standing_teams: list["RadarStandingTeam"] = Field(default_factory=list, max_length=12)
-    bracket_matches: list["RadarBracketMatch"] = Field(default_factory=list, max_length=4)
+    bracket_matches: list["RadarBracketMatch"] = Field(default_factory=list, max_length=24)
     next_matches: list[UpcomingMatchNormalized] = Field(default_factory=list, max_length=4)
     roster_team_count: int = Field(default=0, ge=0, le=128)
     bracket_match_count: int = Field(default=0, ge=0, le=1000)

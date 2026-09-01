@@ -8,12 +8,18 @@ from cs2bot.match_sources.models import (
     MapResult,
     HeadToHead,
     MatchNormalized,
+    RadarBracketMatch,
     ScheduleMatchContext,
+    SourceReferences,
     TeamForm,
     TournamentRadar,
     UpcomingMatchNormalized,
 )
 from cs2bot.match_sources.storage import DeliveryClaim, PendingDelivery
+
+
+async def _async(value):
+    return value
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +103,75 @@ def test_format_match_uses_normalized_fields():
     assert "⚔️" not in text
     assert "📊" not in text
     assert "✅" not in text
+
+
+def test_instagram_content_delivery_has_separate_content_uid(monkeypatch):
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "reconcile_content_delivery", lambda *args, **kwargs: _async(False))
+    monkeypatch.setattr(main, "claim_content_delivery", lambda uid: _async(_claim(_match(), uid)))
+    monkeypatch.setattr(main, "mark_delivery_claim_sent", lambda claim: _async(claim))
+    marked = []
+    monkeypatch.setattr(main, "mark_content_processed", lambda uid, kind: _async(marked.append((uid, kind))))
+    monkeypatch.setattr(main, "publish_rendered_cards", lambda *args: "media-id")
+
+    sent, duplicates, failures = main._deliver_instagram_content(
+        job="schedule",
+        day_key="2026-08-30",
+        cards=[b"card"],
+        caption="<b>Schedule</b>",
+        context=None,
+        test_run_id=None,
+    )
+
+    assert (sent, duplicates, failures) == (1, 0, 0)
+    assert marked == [("instagram_schedule_2026-08-30", "schedule")]
+
+
+def test_instagram_content_delivery_alerts_on_safe_failure(monkeypatch):
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "reconcile_content_delivery", lambda *args, **kwargs: _async(False))
+    monkeypatch.setattr(main, "claim_content_delivery", lambda uid: _async(_claim(_match(), uid)))
+    monkeypatch.setattr(
+        main,
+        "publish_rendered_cards",
+        lambda *args: (_ for _ in ()).throw(main.InstagramPublishError("HTTP 400")),
+    )
+    alerts = []
+    monkeypatch.setattr(main, "_notify_admin", lambda code, message: alerts.append((code, message)))
+
+    sent, duplicates, failures = main._deliver_instagram_content(
+        job="digest",
+        day_key="2026-08-30",
+        cards=[b"card"],
+        caption="digest",
+        context=None,
+        test_run_id=None,
+    )
+
+    assert (sent, duplicates, failures) == (0, 0, 1)
+    assert alerts == [("instagram_content_publish_failed", "Instagram не опубликовал выпуск «digest»; потребуется повторная проверка.")]
+
+
+def test_threads_content_delivery_has_separate_content_uid(monkeypatch):
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "reconcile_content_delivery", lambda *args, **kwargs: _async(False))
+    monkeypatch.setattr(main, "claim_content_delivery", lambda uid: _async(_claim(_match(), uid)))
+    monkeypatch.setattr(main, "mark_delivery_claim_sent", lambda claim: _async(claim))
+    marked = []
+    monkeypatch.setattr(main, "mark_content_processed", lambda uid, kind: _async(marked.append((uid, kind))))
+    monkeypatch.setattr(main, "publish_threads_rendered_cards", lambda *args: "post-id")
+
+    sent, duplicates, failures = main._deliver_threads_content(
+        job="schedule",
+        day_key="2026-08-30",
+        cards=[b"card"],
+        caption="caption",
+        context=None,
+        test_run_id=None,
+    )
+
+    assert (sent, duplicates, failures) == (1, 0, 0)
+    assert marked == [("threads_schedule_2026-08-30", "schedule")]
 
 
 def test_format_match_omits_match_time():
@@ -656,7 +731,7 @@ def test_handler_does_not_mark_when_send_fails(monkeypatch):
         return [_match()]
 
     def fake_send(chat_id, text, timeout=7, max_attempts=3):
-        raise RuntimeError("telegram failed")
+        raise main.TelegramDeliveryError("telegram failed")
 
     async def fake_claim(match, channel_id, legacy_channel_name=None):
         return _claim(match, channel_id)
@@ -751,7 +826,7 @@ def test_handler_marks_successful_channel_before_later_channel_fails(monkeypatch
     def fake_send(chat_id, text, timeout=7, max_attempts=3):
         sent.append(chat_id)
         if chat_id == "chat-b":
-            raise RuntimeError("telegram failed")
+            raise main.TelegramDeliveryError("telegram failed")
         return {"ok": True}
 
     async def fake_claim(match, channel_id, legacy_channel_name=None):
@@ -1276,12 +1351,12 @@ def test_schedule_context_explains_form_and_series_format():
     text = main.format_schedule_context([match], {match.match_id: context})
 
     assert "Контекст к матчам дня" in text
-    assert "Последние 5 матчей: NAVI — 4 победы и 1 поражение; FaZe — 2 победы и 3 поражения." in text
+    assert "<b>Последние 5 матчей каждой команды:</b> NAVI — 4 победы и 1 поражение; FaZe — 2 победы и 3 поражения." in text
     assert "не рейтинг команд и не прогноз" in text
-    assert "Очные встречи за последние 3 месяца: 2–1 в пользу NAVI (3 матча)." in text
-    assert "Формат IEM Cologne 2026 · Bo3: для победы нужно выиграть большинство карт." in text
-    assert text.index("Формат IEM Cologne 2026") < text.index("NAVI — FaZe")
-    assert text.index("не рейтинг команд и не прогноз") > text.index("Последние 5 матчей")
+    assert "<b>Очные встречи за 3 месяца:</b> 3 матча. <b>NAVI</b>  2 : 1  <b>FAZE</b>." in text
+    assert "🏆 Турнир IEM Cologne 2026 · Формат: Bo3" in text
+    assert text.index("🏆 Турнир IEM Cologne 2026") < text.index("NAVI — FaZe")
+    assert text.index("не рейтинг команд и не прогноз") > text.index("<b>Последние 5 матчей каждой команды:</b>")
 
 
 def test_schedule_context_shows_shared_format_once_before_matches():
@@ -1307,9 +1382,52 @@ def test_schedule_context_shows_shared_format_once_before_matches():
         {first_match.match_id: first_context, second_match.match_id: second_context},
     )
 
-    assert text.count("🎮 Формат IEM Cologne 2026 · Bo3") == 1
-    assert text.index("🎮 Формат") < text.index("<b>NAVI — FaZe</b>")
-    assert text.index("🎮 Формат") < text.index("<b>Spirit — Vitality</b>")
+    assert text.count("🏆 Турнир IEM Cologne 2026 · Формат: Bo3") == 1
+    assert text.index("Турнир") < text.index("<b>NAVI — FaZe</b>")
+    assert text.index("Турнир") < text.index("<b>Spirit — Vitality</b>")
+
+
+def test_schedule_context_groups_tournament_stages_and_omits_match_format():
+    group_a = _upcoming().model_copy(
+        update={
+            "tournament_name": "BLAST Open — Porto — Group A",
+            "competition_key": "BLAST Open — Porto",
+        }
+    )
+    group_b = _upcoming().model_copy(
+        update={
+            "match_id": "group-b",
+            "tournament_name": "BLAST Open — Porto — Group B",
+            "competition_key": "BLAST Open — Porto",
+            "team1_name": "G2",
+            "team2_name": "Natus Vincere",
+        }
+    )
+    contexts = {
+        match.match_id: ScheduleMatchContext(
+            match_id=match.match_id,
+            team1_form=TeamForm(team_name=match.team1_name, wins=3, losses=2),
+            team2_form=TeamForm(team_name=match.team2_name, wins=2, losses=3),
+            head_to_head=HeadToHead(match_count=0),
+        )
+        for match in (group_a, group_b)
+    }
+
+    text = main.format_schedule_context([group_a, group_b], contexts)
+
+    assert text.count("🏆 Турнир BLAST Open — Porto · Формат: Bo3") == 1
+    assert "<b>G2 — Natus Vincere</b> · Bo3" not in text
+    assert "<b>G2 — Natus Vincere</b>" in text
+    assert text.count("<b>Очные встречи за 3 месяца:</b> команды не встречались.") == 2
+
+
+def test_schedule_context_keeps_match_when_its_context_request_fails():
+    match = _upcoming()
+
+    text = main.format_schedule_context([match], {})
+
+    assert "<b>NAVI — FaZe</b>" in text
+    assert "Контекст по командам пока недоступен." in text
 
 
 def test_schedule_context_does_not_turn_recent_results_into_a_prediction():
@@ -1325,14 +1443,16 @@ def test_schedule_context_does_not_turn_recent_results_into_a_prediction():
 
     assert "явного фаворита" not in text
     assert "не рейтинг команд и не прогноз" in text
-    assert "Bo1: одна карта решает исход матча." in text
+    assert "🏆 Турнир IEM Cologne 2026 · Формат: Bo1" in text
 
 
-def test_tournament_radar_formats_standings_without_raw_ids():
+def test_tournament_radar_formats_confirmed_pairs_without_raw_ids():
     text = main.format_tournament_radar(
         TournamentRadar(
             tournament_id="3",
-            standings=["1. NAVI", "2. FaZe"],
+            bracket_matches=[
+                RadarBracketMatch(match_id="1", team1_name="NAVI", team2_name="FaZe", round_name="Semifinal")
+            ],
             roster_team_count=16,
             bracket_match_count=31,
         ),
@@ -1340,7 +1460,8 @@ def test_tournament_radar_formats_standings_without_raw_ids():
     )
 
     assert "Турнирный радар — IEM Cologne 2026" in text
-    assert "1. NAVI" in text
+    assert "NAVI — FaZe" in text
+    assert "Положение" not in text
     assert "Участников: 16" in text
     assert "tournament_id" not in text
 
@@ -1366,7 +1487,7 @@ def test_schedule_dry_run_includes_optional_context(monkeypatch):
 
     assert response["statusCode"] == 200
     assert body["context_matches_ready"] == 1
-    assert "Последние 5 матчей: NAVI — 3 победы и 2 поражения; FaZe — 4 победы и 1 поражение." in body["context_preview"]
+    assert "<b>Последние 5 матчей каждой команды:</b> NAVI — 3 победы и 2 поражения; FaZe — 4 победы и 1 поражение." in body["context_preview"]
 
 
 def test_radar_dry_run_returns_preview_without_sending(monkeypatch):
@@ -1374,7 +1495,7 @@ def test_radar_dry_run_returns_preview_without_sending(monkeypatch):
         assert tournament_id == "3"
         return TournamentRadar(
             tournament_id=tournament_id,
-            standings=["1. NAVI"],
+            bracket_matches=[RadarBracketMatch(match_id="1", team1_name="NAVI", team2_name="FaZe")],
             roster_team_count=8,
             bracket_match_count=15,
         )
@@ -1395,8 +1516,93 @@ def test_radar_dry_run_returns_preview_without_sending(monkeypatch):
 
     assert response["statusCode"] == 200
     assert body["messages_sent"] == 1
-    assert body["radar"]["standings"] == ["1. NAVI"]
+    assert body["radar"]["bracket_matches"][0]["team1_name"] == "NAVI"
     assert "IEM Cologne 2026" in body["preview"]
+
+
+def test_radar_discovery_selects_each_tier1_tournament_once():
+    first = _upcoming().model_copy(
+        update={
+            "match_id": "first",
+            "scheduled_at": "2026-08-31T09:00:00Z",
+            "competition_key": "IEM Cologne 2026",
+            "source_refs": SourceReferences(tournament_id="100"),
+        }
+    )
+    later = first.model_copy(
+        update={"match_id": "later", "scheduled_at": "2026-08-31T15:00:00Z"}
+    )
+    tier2 = first.model_copy(
+        update={
+            "match_id": "tier2",
+            "source_refs": SourceReferences(tournament_id="200"),
+            "feature_reason": "popular_team",
+        }
+    )
+
+    candidates = main._radar_discovery_candidates([later, tier2, first])
+
+    assert candidates == [("100", "IEM Cologne 2026", main.datetime.fromisoformat("2026-08-31T09:00:00+00:00"))]
+
+
+def test_radar_discovery_dry_run_previews_next_day_tournaments(monkeypatch):
+    match = _upcoming().model_copy(
+        update={
+            "scheduled_at": "2026-08-31T09:00:00Z",
+            "competition_key": "IEM Cologne 2026",
+            "source_refs": SourceReferences(tournament_id="100"),
+        }
+    )
+
+    async def fake_fetch(start, end):
+        assert start < end
+        return [match]
+
+    async def fake_radar(tournament_id):
+        assert tournament_id == "100"
+        return TournamentRadar(
+            tournament_id=tournament_id,
+            roster_team_count=16,
+            bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
+        )
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "fetch_tournament_radar", fake_radar)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+
+    response = main.handler({"job": "radar_discovery", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["tournaments_selected"] == 1
+    assert body["messages_sent"] == 1
+    assert body["radars"][0]["tournament_id"] == "100"
+    assert "IEM Cologne 2026" in body["radars"][0]["preview"]
+
+
+def test_radar_discovery_skips_tournament_without_confirmed_pairs(monkeypatch):
+    match = _upcoming().model_copy(
+        update={
+            "scheduled_at": "2026-08-31T09:00:00Z",
+            "competition_key": "IEM Cologne 2026",
+            "source_refs": SourceReferences(tournament_id="100"),
+        }
+    )
+
+    async def fake_fetch(*args):
+        return [match]
+
+    async def fake_radar(tournament_id):
+        return TournamentRadar(tournament_id=tournament_id, roster_team_count=16)
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "fetch_tournament_radar", fake_radar)
+    response = main.handler({"job": "radar_discovery", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["messages_sent"] == 0
+    assert body["radars"][0]["preview"] is None
 
 
 def test_schedule_photo_caption_omits_timezone_label():
@@ -1496,8 +1702,17 @@ def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monke
         assert end.isoformat() == "2026-08-01T21:00:00+00:00"
         return [filtered]
 
+    async def no_context(matches):
+        return []
+
     monkeypatch.setattr(main, "_local_day_window", fake_window)
     monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", no_context)
+    monkeypatch.setattr(
+        main,
+        "_iter_channels",
+        lambda: iter(({"id": "global", "name": "global", "chat_id": "@test", "teams": None},)),
+    )
 
     response = main.handler(
         {
@@ -1512,12 +1727,12 @@ def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monke
 
     assert response["statusCode"] == 200
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 0
-    assert body["messages_sent"] == 0
+    assert body["matches_selected"] == 1
+    assert body["messages_sent"] == 1
     assert body["days_ahead"] == 3
     assert body["window_start"] == "2026-07-29T21:00:00+00:00"
     assert body["window_end"] == "2026-08-01T21:00:00+00:00"
-    assert body["preview"] is None
+    assert "NAVI vs FaZe" in body["preview"]
     assert body["diagnostics"][0]["teams"] == ["NAVI", "FaZe"]
     assert body["diagnostics"][0]["selected"] is False
     assert body["diagnostics"][0]["filter_reason"] == "excluded_tournament"
@@ -1531,14 +1746,18 @@ def test_schedule_dry_run_omits_filtered_diagnostics_by_default(monkeypatch):
     async def fake_fetch(start, end):
         return [filtered]
 
+    async def no_context(matches):
+        return []
+
     monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", no_context)
 
     response = main.handler({"job": "schedule", "dry_run": True}, None)
     body = json.loads(response["body"])
 
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 0
-    assert body["diagnostics"] == []
+    assert body["matches_selected"] == 1
+    assert body["diagnostics"][0]["selected"] is False
 
 
 @pytest.mark.parametrize("days_ahead", [0, 8, True, "3"])

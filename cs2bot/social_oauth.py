@@ -21,6 +21,8 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
+from cs2bot.xray_proxy import XrayProxyError, xray_http_proxy
+
 logger = logging.getLogger(__name__)
 
 INSTAGRAM_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize"
@@ -32,10 +34,16 @@ THREADS_AUTHORIZE_URL = os.getenv(
 )
 THREADS_GRAPH_URL = "https://graph.threads.net"
 LOCKBOX_API_URL = "https://lockbox.api.cloud.yandex.net"
+IAM_METADATA_URL = (
+    "http://169.254.169.254/computeMetadata/v1/instance/"
+    "service-accounts/default/token"
+)
 
 SUPPORTED_PLATFORMS = {"instagram", "threads"}
 STATE_TTL_SECONDS = 10 * 60
 HTTP_TIMEOUT_SECONDS = 15
+META_HTTP_HEADERS = {"User-Agent": "curl/8.7.1"}
+_ACTIVE_META_PROXY: dict[str, str] | None = None
 
 
 class OAuthConfigurationError(RuntimeError):
@@ -92,6 +100,10 @@ def _social_proxy() -> dict[str, str] | None:
             "SOCIAL_PROXY_URL must not contain a path, query, or fragment"
         )
     return {"http": value, "https": value}
+
+
+def _meta_proxy() -> dict[str, str] | None:
+    return _ACTIVE_META_PROXY if _ACTIVE_META_PROXY is not None else _social_proxy()
 
 
 def _b64encode(raw: bytes) -> str:
@@ -209,38 +221,69 @@ def _request_json(
     method: str,
     url: str,
     *,
+    operation: str = "remote OAuth endpoint",
     params: dict[str, str] | None = None,
     data: dict[str, str] | None = None,
     headers: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    request_headers = dict(META_HTTP_HEADERS)
+    if headers:
+        request_headers.update(headers)
     try:
         response = requests.request(
             method,
             url,
             params=params,
             data=data,
-            headers=headers,
-            proxies=_social_proxy(),
+            headers=request_headers,
+            proxies=_meta_proxy(),
             timeout=HTTP_TIMEOUT_SECONDS,
             allow_redirects=False,
         )
     except requests.RequestException as exc:
-        raise OAuthFlowError("remote OAuth request failed") from exc
+        raise OAuthFlowError(f"{operation} request failed") from exc
     if response.status_code >= 300:
-        raise OAuthFlowError(f"remote OAuth endpoint returned HTTP {response.status_code}")
+        raise OAuthFlowError(
+            f"{operation} returned HTTP {response.status_code}{_meta_error_code(response)}"
+        )
     try:
         payload = response.json()
     except requests.JSONDecodeError as exc:
-        raise OAuthFlowError("remote OAuth endpoint returned invalid JSON") from exc
+        raise OAuthFlowError(f"{operation} returned invalid JSON") from exc
     if not isinstance(payload, dict):
-        raise OAuthFlowError("remote OAuth endpoint returned invalid data")
+        raise OAuthFlowError(f"{operation} returned invalid data")
     return payload
+
+
+def _meta_error_code(response: requests.Response) -> str:
+    """Return only non-sensitive Meta error identifiers for user-facing diagnostics."""
+    try:
+        payload = response.json()
+    except requests.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    error = payload.get("error")
+    details = error if isinstance(error, dict) else payload
+    values: list[str] = []
+    error_type = details.get("type") or payload.get("error_type")
+    if isinstance(error_type, str) and error_type:
+        values.append(error_type)
+    for key in ("code", "error_subcode"):
+        value = details.get(key)
+        if isinstance(value, int):
+            values.append(f"{key}={value}")
+    trace_id = details.get("fbtrace_id")
+    if isinstance(trace_id, str) and trace_id and len(trace_id) <= 128:
+        values.append(f"fbtrace_id={trace_id}")
+    return f" ({', '.join(values)})" if values else ""
 
 
 def _instagram_tokens(code: str, config: dict[str, str]) -> dict[str, Any]:
     short_payload = _request_json(
         "POST",
         INSTAGRAM_TOKEN_URL,
+        operation="Instagram authorization-code exchange",
         data={
             "client_id": config["app_id"],
             "client_secret": config["app_secret"],
@@ -257,15 +300,22 @@ def _instagram_tokens(code: str, config: dict[str, str]) -> dict[str, Any]:
     if not isinstance(short_token, str) or not short_token:
         raise OAuthFlowError("Instagram did not return an access token")
 
-    long_payload = _request_json(
-        "GET",
-        f"{INSTAGRAM_GRAPH_URL}/access_token",
-        params={
-            "grant_type": "ig_exchange_token",
-            "client_secret": config["app_secret"],
-            "access_token": short_token,
-        },
-    )
+    try:
+        long_payload = _request_json(
+            "GET",
+            f"{INSTAGRAM_GRAPH_URL}/access_token",
+            operation="Instagram long-lived-token exchange",
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_secret": config["app_secret"],
+                "access_token": short_token,
+            },
+        )
+    except OAuthFlowError as exc:
+        scopes = candidate.get("permissions")
+        if isinstance(scopes, str) and scopes and len(scopes) <= 512:
+            raise OAuthFlowError(f"{exc}; short-token scopes={scopes}") from exc
+        raise
     return {
         "access_token": long_payload.get("access_token"),
         "expires_in": long_payload.get("expires_in"),
@@ -278,6 +328,7 @@ def _threads_tokens(code: str, config: dict[str, str]) -> dict[str, Any]:
     short_payload = _request_json(
         "POST",
         f"{THREADS_GRAPH_URL}/oauth/access_token",
+        operation="Threads authorization-code exchange",
         params={
             "client_id": config["app_id"],
             "client_secret": config["app_secret"],
@@ -292,6 +343,7 @@ def _threads_tokens(code: str, config: dict[str, str]) -> dict[str, Any]:
     long_payload = _request_json(
         "GET",
         f"{THREADS_GRAPH_URL}/access_token",
+        operation="Threads long-lived-token exchange",
         params={
             "grant_type": "th_exchange_token",
             "client_secret": config["app_secret"],
@@ -311,9 +363,35 @@ def _profile(platform: str, access_token: str) -> dict[str, Any]:
     return _request_json(
         "GET",
         f"{base_url}/me",
+        operation=f"{platform.title()} profile lookup",
         params={"fields": "id,username"},
         headers={"Authorization": f"Bearer {access_token}"},
     )
+
+
+def _check_threads_app_credentials() -> None:
+    """Validate app credentials without exposing or persisting an app token."""
+    config = _platform_config("threads")
+    global _ACTIVE_META_PROXY
+    try:
+        with xray_http_proxy() as xray_proxy:
+            _ACTIVE_META_PROXY = xray_proxy
+            payload = _request_json(
+                "GET",
+                f"{THREADS_GRAPH_URL}/oauth/access_token",
+                operation="Threads app-credentials check",
+                params={
+                    "grant_type": "client_credentials",
+                    "client_id": config["app_id"],
+                    "client_secret": config["app_secret"],
+                },
+            )
+    except XrayProxyError as exc:
+        raise OAuthConfigurationError("Xray client is unavailable") from exc
+    finally:
+        _ACTIVE_META_PROXY = None
+    if not isinstance(payload.get("access_token"), str) or not payload["access_token"]:
+        raise OAuthFlowError("Threads app credentials were not accepted")
 
 
 def _iam_token(context: Any) -> str:
@@ -321,9 +399,29 @@ def _iam_token(context: Any) -> str:
         token = context.get("token")
     else:
         token = getattr(context, "token", None)
-    if not isinstance(token, str) or not token:
+    if isinstance(token, str) and token:
+        return token
+    if isinstance(token, dict):
+        access_token = token.get("access_token")
+        if isinstance(access_token, str) and access_token:
+            return access_token
+    try:
+        response = requests.get(
+            IAM_METADATA_URL,
+            headers={"Metadata-Flavor": "Google"},
+            timeout=2,
+            allow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as exc:
+        raise OAuthConfigurationError("function service account IAM token is unavailable") from exc
+    except requests.JSONDecodeError as exc:
+        raise OAuthConfigurationError("function service account IAM token is unavailable") from exc
+    access_token = payload.get("access_token") if isinstance(payload, dict) else None
+    if not isinstance(access_token, str) or not access_token:
         raise OAuthConfigurationError("function service account IAM token is unavailable")
-    return token
+    return access_token
 
 
 def _store_credentials(
@@ -351,6 +449,7 @@ def _store_credentials(
         expires_in = 0
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
     payload_entries = [
+        {"key": "APP_SECRET", "textValue": config["app_secret"]},
         {"key": "ACCESS_TOKEN", "textValue": access_token},
         {"key": "USER_ID", "textValue": str(user_id)},
         {"key": "USERNAME", "textValue": username.lstrip("@")},
@@ -384,6 +483,7 @@ def _remove_credentials(platform: str, config: dict[str, str], context: Any) -> 
         json={
             "description": f"{platform} authorization removed",
             "payloadEntries": [
+                {"key": "APP_SECRET", "textValue": config["app_secret"]},
                 {"key": "ACCESS_TOKEN"},
                 {"key": "USER_ID"},
                 {"key": "USERNAME"},
@@ -474,15 +574,24 @@ def _callback(platform: str, query: dict[str, str], context: Any) -> dict[str, A
         raise OAuthFlowError("authorization code or state is missing")
     config = _platform_config(platform)
     _verify_state(state, platform, config["app_secret"])
-    token_data = (
-        _instagram_tokens(code, config)
-        if platform == "instagram"
-        else _threads_tokens(code, config)
-    )
-    access_token = token_data.get("access_token")
-    if not isinstance(access_token, str) or not access_token:
-        raise OAuthFlowError("long-lived access token is missing")
-    profile = _profile(platform, access_token)
+    global _ACTIVE_META_PROXY
+    try:
+        with xray_http_proxy() as xray_proxy:
+            _ACTIVE_META_PROXY = xray_proxy
+            token_data = (
+                _instagram_tokens(code, config)
+                if platform == "instagram"
+                else _threads_tokens(code, config)
+            )
+            access_token = token_data.get("access_token")
+            if not isinstance(access_token, str) or not access_token:
+                raise OAuthFlowError("long-lived access token is missing")
+            profile = _profile(platform, access_token)
+    except XrayProxyError as exc:
+        logger.error("event=xray_start_failed reason=%s", str(exc))
+        raise OAuthConfigurationError(f"Xray client is unavailable: {exc}") from exc
+    finally:
+        _ACTIVE_META_PROXY = None
     _store_credentials(platform, config, token_data, profile, context)
     return _html_response(
         200,
@@ -539,6 +648,16 @@ def _data_deletion(event: dict[str, Any], platform: str, context: Any) -> dict[s
 def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
     """Handle API Gateway OAuth routes without exposing credentials."""
     event = event if isinstance(event, dict) else {}
+    if event.get("internal_job") == "threads_credentials_check":
+        try:
+            _check_threads_app_credentials()
+        except OAuthConfigurationError as exc:
+            logger.error("event=threads_credentials_check_configuration_error error=%s", str(exc))
+            return {"statusCode": 503, "body": json.dumps({"ok": False, "error": "configuration"})}
+        except OAuthFlowError as exc:
+            logger.warning("event=threads_credentials_check_failed reason=%s", str(exc))
+            return {"statusCode": 400, "body": json.dumps({"ok": False, "error": "not_accepted"})}
+        return {"statusCode": 200, "body": json.dumps({"ok": True})}
     path = _path(event)
     if path == "/health":
         return {
