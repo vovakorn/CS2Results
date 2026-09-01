@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 31 августа 2026 года.
+Обновлено: 1 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,7 +15,7 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 31 августа 2026, версия `d4e1jqnhgsjh8lru13v2`;
+- Последний production-деплой: 1 сентября 2026, версия `d4e0i9keru3eb5f7d5v8`;
   таймеры вызывают актуальную версию по тегу `production`.
 - В production включён флаг `ENABLE_LIQUIPEDIA_FINAL_CARDS=1`; Liquipedia fallback
   остаётся выключен.
@@ -66,6 +66,9 @@ production и сверки фактического состояния. Теку
   S3-реализациями, возвращающими значение без кавычек.
 - Пользовательские metadata Object Storage читаются регистронезависимо, поскольку
   Yandex может возвращать `Delivery-State` и `Expires-At` с изменённым регистром.
+- Перед релизом 1 сентября реальный bucket подтвердил conditional-write
+  семантику: из десяти параллельных `If-None-Match: *` claim успешен ровно один,
+  а повторная запись со старым ETag отклоняется.
 - Cross-provider fingerprint защищает от дублей при переключении источников.
 - Критические ошибки отправляются администратору с cooldown; приватный chat ID не
   документируется.
