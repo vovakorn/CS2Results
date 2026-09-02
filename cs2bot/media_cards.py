@@ -20,6 +20,7 @@ from .match_sources.storage import read_cached_logo, write_cached_logo
 
 RESULT_CARD_SIZE = (1080, 1080)
 SCHEDULE_CARD_SIZE = (1080, 1080)
+SCHEDULE_CONTEXT_COVER_SIZE = (1080, 1080)
 MAX_RESULT_MATCHES = 10
 MAX_SCHEDULE_MATCHES = 10
 MAX_SCHEDULE_TOTAL_MATCHES = 20
@@ -71,6 +72,7 @@ MONTH_NAMES = (
 ASSET_DIR = Path(__file__).resolve().parent / "assets"
 FONT_DIR = ASSET_DIR / "fonts"
 CHANNEL_LOGO = ASSET_DIR / "channel-logo.png"
+SCHEDULE_CONTEXT_BACKGROUND = ASSET_DIR / "schedule-context-bg.png"
 DISPLAY_FONT = FONT_DIR / "RussoOne-Regular.ttf"
 LATIN_BOLD_FONT = FONT_DIR / "Rajdhani-Bold.ttf"
 LATIN_MEDIUM_FONT = FONT_DIR / "Rajdhani-Medium.ttf"
@@ -529,9 +531,17 @@ def _schedule_tournament_header(
     """Return the shared competition label and its official logo for one card."""
     labels: dict[str, tuple[str, str | None]] = {}
     for match in matches:
-        # PandaScore's tournament name includes a bracket stage (e.g. Group A),
-        # while competition_key identifies the event that owns its official mark.
-        label = match.competition_key or match.tournament_name
+        # competition_key can be only a city or season label (for example,
+        # "Porto"), so keep the full event name and strip only its group.
+        parts = [part.strip() for part in match.tournament_name.split(" — ") if part.strip()]
+        label = (
+            " — ".join(parts[:-1])
+            if len(parts) > 1
+            and re.fullmatch(r"(?:group|группа)\s+[\w\d]+", parts[-1], re.IGNORECASE)
+            else match.tournament_name
+        )
+        if match.competition_key and match.competition_key.casefold() not in label.casefold():
+            label = match.competition_key
         labels.setdefault(label.casefold(), (label, match.tournament_logo_url))
     if len(labels) == 1:
         return next(iter(labels.values()))
@@ -1446,3 +1456,80 @@ def render_schedule_cards(
         )
         for index, page in enumerate(pages, start=1)
     ]
+
+
+def _context_cover_match_count(count: int) -> str:
+    if 11 <= count % 100 <= 14:
+        noun = "МАТЧЕЙ"
+    elif count % 10 == 1:
+        noun = "МАТЧ"
+    elif 2 <= count % 10 <= 4:
+        noun = "МАТЧА"
+    else:
+        noun = "МАТЧЕЙ"
+    return f"{count} {noun}"
+
+
+def _render_schedule_context_cover(
+    matches: Sequence[UpcomingMatchNormalized],
+    local_now: datetime,
+) -> bytes:
+    if not matches:
+        raise MediaCardError("Schedule context cover requires at least one match")
+    try:
+        with Image.open(SCHEDULE_CONTEXT_BACKGROUND) as source:
+            canvas = ImageOps.fit(
+                source.convert("RGBA"),
+                SCHEDULE_CONTEXT_COVER_SIZE,
+                method=Image.Resampling.LANCZOS,
+            )
+    except (OSError, UnidentifiedImageError) as exc:
+        raise MediaCardError("Bundled schedule context background is unavailable") from exc
+
+    overlay = Image.new("RGBA", canvas.size, (0, 6, 16, 76))
+    canvas.alpha_composite(overlay)
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    width, _ = canvas.size
+    tournament_name, tournament_logo_url = _schedule_tournament_header(matches)
+    formats = {match.best_of for match in matches}
+    format_label = (
+        f"BO{next(iter(formats))}"
+        if len(formats) == 1 and next(iter(formats))
+        else "СМЕШАННЫЙ ФОРМАТ"
+    )
+    date_label = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
+
+    _centered_text(draw, width // 2, 486, date_label, _font(34, display=True), CYAN)
+    if not _draw_tournament_logo(canvas, draw, (width // 2, 350), 164, tournament_logo_url):
+        _draw_logo_plate(draw, (width // 2, 350), 164, CYAN, LOGO_PLATE_DARK)
+        fallback_mark = tournament_name.split()[0].upper()
+        fallback_font = _fit_font(draw, fallback_mark, 112, 34, 18, display=True)
+        _centered_text(draw, width // 2, 334, fallback_mark, fallback_font, WHITE)
+        _centered_text(draw, width // 2, 376, "CS2", _font(18, display=True), CYAN)
+    _centered_text(draw, width // 2, 596, "КОНТЕКСТ К МАТЧАМ", _font(58, display=True), WHITE)
+    tournament_text = tournament_name.upper()
+    tournament_font = _fit_font(draw, tournament_text, 880, 48, 24, display=True)
+    _centered_text(draw, width // 2, 690, tournament_text, tournament_font, WHITE)
+    _centered_text(
+        draw,
+        width // 2,
+        782,
+        f"{_context_cover_match_count(len(matches))} · {format_label}",
+        _font(42, display=True),
+        AMBER,
+    )
+    return _as_png(canvas)
+
+
+def render_schedule_context_covers(
+    matches: Sequence[UpcomingMatchNormalized],
+    local_now: datetime,
+) -> list[bytes]:
+    """Render one context cover per Tier-1 tournament and series format."""
+    if not matches:
+        raise MediaCardError("Schedule context cover requires at least one match")
+    groups: dict[tuple[str, int | None], list[UpcomingMatchNormalized]] = {}
+    for match in sorted(matches, key=lambda item: item.scheduled_at):
+        key = (_schedule_tournament_key(match), match.best_of)
+        groups.setdefault(key, []).append(match)
+    return [_render_schedule_context_cover(group, local_now) for group in groups.values()]
