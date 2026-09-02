@@ -15,13 +15,15 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 1 сентября 2026, версия `d4e0i9keru3eb5f7d5v8`;
+- Последний production-деплой: 2 сентября 2026, версия `d4ek2vdt5mu4bd2h1qib`;
   таймеры вызывают актуальную версию по тегу `production`.
 - В production включён флаг `ENABLE_LIQUIPEDIA_FINAL_CARDS=1`; Liquipedia fallback
   остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
 - Последняя локальная проверка: 351 тест и сборка архива основной функции;
-  candidate `dry_run` выполняется deploy-скриптом перед переключением тега.
+  candidate `dry_run` прошёл перед переключением тега. Отдельный production
+  schedule dry-run получил 34 матча и корректно не выбрал ни одного: qualifiers,
+  academy и низшие tiers остались за пределами публикации.
 - CI проверяет зависимости, безопасность, компиляцию, pytest и сборку архива.
 
 ## Расписание jobs
