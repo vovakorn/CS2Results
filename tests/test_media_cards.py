@@ -56,6 +56,40 @@ def test_result_card_is_valid_square_png_without_logos():
     assert image.size == media_cards.RESULT_CARD_SIZE
 
 
+def test_schedule_context_cover_is_valid_square_png_and_groups_stages():
+    group_a = _upcoming("group-a").model_copy(
+        update={"tournament_name": "BLAST Open — Porto — Group A", "competition_key": "BLAST Open — Porto"}
+    )
+    group_b = _upcoming("group-b").model_copy(
+        update={
+            "tournament_name": "BLAST Open — Porto — Group B",
+            "competition_key": "BLAST Open — Porto",
+            "scheduled_at": "2026-07-31T17:00:00Z",
+        }
+    )
+
+    covers = media_cards.render_schedule_context_covers(
+        [group_a, group_b],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+    )
+
+    image = Image.open(io.BytesIO(covers[0]))
+    assert len(covers) == 1
+    assert image.format == "PNG"
+    assert image.size == media_cards.SCHEDULE_CONTEXT_COVER_SIZE
+
+
+def test_schedule_context_cover_keeps_full_tournament_name_when_key_is_only_a_city():
+    match = _upcoming().model_copy(
+        update={
+            "tournament_name": "BLAST Open — Porto — Group B",
+            "competition_key": "Porto",
+        }
+    )
+
+    assert media_cards._schedule_tournament_header([match]) == ("BLAST Open — Porto", None)
+
+
 def test_final_card_requires_confirmed_final_data_and_is_square_png():
     match = _result().model_copy(update={
         "is_final": True,

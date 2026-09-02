@@ -46,6 +46,7 @@ from .media_cards import (
     render_result_card,
     render_results_card,
     render_schedule_cards,
+    render_schedule_context_covers,
     render_tournament_radar_cards,
 )
 from .match_sources.config import (
@@ -916,67 +917,127 @@ def _head_to_head_takeaway(context: ScheduleMatchContext) -> str | None:
 
 
 def _context_tournament_name(match: UpcomingMatchNormalized) -> str:
-    """Use the shared competition label instead of its individual group/stage."""
-    if match.competition_key:
-        return match.competition_key
+    """Keep the full event name while stripping only an individual group/stage."""
     parts = [part.strip() for part in match.tournament_name.split(" — ") if part.strip()]
     if len(parts) > 1 and re.fullmatch(r"(?:group|группа)\s+[\w\d]+", parts[-1], re.IGNORECASE):
-        return " — ".join(parts[:-1])
-    return match.tournament_name
+        tournament_name = " — ".join(parts[:-1])
+    else:
+        tournament_name = match.tournament_name
+    if match.competition_key and match.competition_key.casefold() not in tournament_name.casefold():
+        return match.competition_key
+    return tournament_name
 
 
 def format_schedule_context(
     matches: Sequence[UpcomingMatchNormalized],
     contexts: dict[str, ScheduleMatchContext],
 ) -> str:
-    """Format optional, compact pre-match context for every scheduled fixture."""
+    """Return the first Telegram-ready context message for compatibility."""
+    messages = format_schedule_context_messages(matches, contexts)
+    return messages[0] if messages else ""
+
+
+def format_schedule_context_messages(
+    matches: Sequence[UpcomingMatchNormalized],
+    contexts: dict[str, ScheduleMatchContext],
+) -> list[str]:
+    """Format complete tournament groups into Telegram-sized messages."""
     context_matches = [
         (match, contexts.get(match.match_id))
         for match in sorted(matches, key=_context_priority)
     ]
     if not context_matches:
-        return ""
+        return []
 
-    lines = ["🔎 <b>Контекст к матчам дня</b>", ""]
-    format_lines: list[str] = []
-    seen_formats: set[tuple[str, int | None]] = set()
-    for match, _ in context_matches:
-        tournament_name = _context_tournament_name(match)
-        format_key = (tournament_name, match.best_of)
-        if format_key in seen_formats:
-            continue
-        seen_formats.add(format_key)
-        format_note = f"Bo{match.best_of}" if match.best_of else "формат уточняется"
-        format_lines.append(f"🏆 Турнир {html.escape(tournament_name)} · Формат: {format_note}")
-    lines.extend([*format_lines, ""])
-
+    grouped_matches: dict[
+        tuple[str, int | None],
+        list[tuple[UpcomingMatchNormalized, ScheduleMatchContext | None]],
+    ] = {}
     for match, context in context_matches:
-        lines.append(f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>")
-        if context is None:
-            lines.append("Контекст по командам пока недоступен.")
-        else:
-            head_to_head = _head_to_head_takeaway(context)
-            if head_to_head:
-                lines.append(head_to_head)
-            lines.append(
-                f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
-                f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
-                f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
-                f"{html.escape(context.team2_form.team_name)} — "
-                f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
-                f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
-            )
-        lines.append("")
-    lines.extend(
+        group_key = (_context_tournament_name(match), match.best_of)
+        grouped_matches.setdefault(group_key, []).append((match, context))
+
+    tournament_blocks: list[list[str]] = []
+    for (tournament_name, best_of), tournament_matches in grouped_matches.items():
+        format_note = f"Bo{best_of}" if best_of else "формат уточняется"
+        tournament_header = f"🏆 Турнир {html.escape(tournament_name)} · Формат: {format_note}"
+        match_blocks: list[str] = []
+        for match, context in tournament_matches:
+            match_lines = [f"<b>{html.escape(match.team1_name)} — {html.escape(match.team2_name)}</b>"]
+            if context is None:
+                match_lines.append("Контекст по командам пока недоступен.")
+            else:
+                head_to_head = _head_to_head_takeaway(context)
+                if head_to_head:
+                    match_lines.append(head_to_head)
+                match_lines.append(
+                    f"<b>Последние 5 матчей каждой команды:</b> {html.escape(context.team1_form.team_name)} — "
+                    f"{_russian_count(context.team1_form.wins, ('победа', 'победы', 'побед'))} и "
+                    f"{_russian_count(context.team1_form.losses, ('поражение', 'поражения', 'поражений'))}; "
+                    f"{html.escape(context.team2_form.team_name)} — "
+                    f"{_russian_count(context.team2_form.wins, ('победа', 'победы', 'побед'))} и "
+                    f"{_russian_count(context.team2_form.losses, ('поражение', 'поражения', 'поражений'))}."
+                )
+            match_blocks.append("\n".join(match_lines))
+        tournament_blocks.append([tournament_header, *match_blocks])
+
+    footer = "\n\n".join(
         [
             "ℹ️ Это последние результаты, а не рейтинг команд и не прогноз на матч.",
-            "",
             "Источник: PandaScore",
-            "",
             "#CS2 #КонтекстМатча",
         ]
     )
-    return "\n".join(lines).strip()[:MAX_TELEGRAM_MESSAGE_LENGTH]
+    first_heading = "🔎 <b>Контекст к матчам дня</b>"
+    continuation_heading = "🔎 <b>Контекст к матчам дня — продолжение</b>"
+    messages: list[str] = []
+    current_blocks: list[str] = []
+
+    def message_text(blocks: Sequence[str], *, continuation: bool) -> str:
+        heading = continuation_heading if continuation else first_heading
+        return "\n\n".join([heading, *blocks, footer])
+
+    def flush() -> None:
+        if current_blocks:
+            messages.append(message_text(current_blocks, continuation=bool(messages)))
+            current_blocks.clear()
+
+    for header, *match_blocks in tournament_blocks:
+        whole_block = "\n\n".join([header, *match_blocks])
+        candidate = [*current_blocks, whole_block]
+        if len(message_text(candidate, continuation=bool(messages))) <= MAX_TELEGRAM_MESSAGE_LENGTH:
+            current_blocks.append(whole_block)
+            continue
+        flush()
+        if len(message_text([whole_block], continuation=bool(messages))) <= MAX_TELEGRAM_MESSAGE_LENGTH:
+            current_blocks.append(whole_block)
+            continue
+
+        # If one tournament exceeds Telegram's limit, repeat its header and
+        # split only between complete match blocks.
+        tournament_segment = ""
+        for match_block in match_blocks:
+            candidate_segment = (
+                f"{tournament_segment}\n\n{match_block}"
+                if tournament_segment
+                else "\n\n".join([header, match_block])
+            )
+            candidate_blocks = (
+                [*current_blocks[:-1], candidate_segment]
+                if tournament_segment
+                else [*current_blocks, candidate_segment]
+            )
+            if len(message_text(candidate_blocks, continuation=bool(messages))) > MAX_TELEGRAM_MESSAGE_LENGTH:
+                flush()
+                candidate_segment = "\n\n".join([header, match_block])
+                current_blocks.append(candidate_segment)
+            elif tournament_segment:
+                current_blocks[-1] = candidate_segment
+            else:
+                current_blocks.append(candidate_segment)
+            tournament_segment = candidate_segment
+    flush()
+    return messages
 
 
 def format_tournament_radar(radar: TournamentRadar, tournament_name: str) -> str:
@@ -1416,11 +1477,17 @@ def _handle_content_job(
 ) -> Dict[str, Any]:
     start, end, local_now = _local_day_window(days_ahead=days_ahead)
     schedule_context_text = ""
+    schedule_context_messages: list[str] = []
     schedule_contexts: dict[str, ScheduleMatchContext] = {}
     try:
         if job == "schedule":
             fetched = asyncio.run(fetch_upcoming_matches(start, end))
-            selected = fetched
+            selected = [
+                match
+                for match in fetched
+                if tier1_autopilot_decision(match)[0]
+                or match.feature_reason == "tier1_tournament"
+            ]
             text = format_daily_schedule(selected, local_now) if selected else ""
             context_matches = sorted(selected, key=_context_priority)
             if context_matches:
@@ -1436,7 +1503,8 @@ def _handle_content_job(
                             match_id=match.match_id,
                             error_type=type(result).__name__,
                         )
-                schedule_context_text = format_schedule_context(selected, schedule_contexts)
+                schedule_context_messages = format_schedule_context_messages(selected, schedule_contexts)
+                schedule_context_text = "\n\n".join(schedule_context_messages)
         else:
             fetched_results = asyncio.run(fetch_pandascore_finished_matches(100, start=start, end=end))
             selected_results, _, _ = apply_quality_filters(fetched_results)
@@ -1479,7 +1547,8 @@ def _handle_content_job(
             )
         return {"statusCode": 200, "body": json.dumps(body, ensure_ascii=False)}
 
-    media_cards: list[bytes] = []
+    social_media_cards: list[bytes] = []
+    telegram_media_cards: list[bytes] = []
     media_card_error: str | None = None
     try:
         instagram_enabled = instagram_publishing_enabled()
@@ -1498,22 +1567,49 @@ def _handle_content_job(
     ) or (
         job == "digest" and 1 <= len(selected) <= MAX_RESULT_MATCHES
     )
-    if (TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled) and card_supported:
+    if card_supported and job == "schedule" and (instagram_enabled or threads_enabled):
         try:
-            if job == "schedule":
-                media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
-                if len(media_cards) > 10:
-                    media_card_error = "too_many_tournament_cards"
-                    media_cards = []
-                    log_event(
-                        logger,
-                        logging.WARNING,
-                        "media_card_fallback",
-                        job=job,
-                        reason="too_many_tournament_cards",
-                    )
-            else:
-                media_cards = [render_results_card(selected, local_now)]
+            social_media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
+        except Exception as exc:
+            media_card_error = type(exc).__name__
+            log_event(
+                logger,
+                logging.WARNING,
+                "media_card_fallback",
+                job=job,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+    if card_supported and TELEGRAM_MEDIA_CARDS and job == "schedule":
+        try:
+            telegram_media_cards = render_schedule_context_covers(selected, local_now)
+            if len(telegram_media_cards) > 10:
+                media_card_error = "too_many_tournament_cards"
+                telegram_media_cards = []
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "media_card_fallback",
+                    job=job,
+                    reason="too_many_tournament_cards",
+                )
+        except Exception as exc:
+            media_card_error = type(exc).__name__
+            log_event(
+                logger,
+                logging.WARNING,
+                "media_card_fallback",
+                job=job,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+    if card_supported and job == "digest" and (
+        TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled
+    ):
+        try:
+            social_media_cards = [render_results_card(selected, local_now)]
+            if TELEGRAM_MEDIA_CARDS:
+                telegram_media_cards = social_media_cards
         except Exception as exc:
             media_card_error = type(exc).__name__
             log_event(
@@ -1540,6 +1636,7 @@ def _handle_content_job(
             content_uid = f"{content_uid}_test_{test_run_id}"
         claim = None
         telegram_confirmed = False
+        context_messages_to_send = list(schedule_context_messages)
         try:
             if asyncio.run(reconcile_content_delivery(content_uid, job)):
                 log_event(logger, logging.INFO, "delivery_state_reconciled", channel=channel_id, job=job)
@@ -1548,33 +1645,42 @@ def _handle_content_job(
             if claim is None:
                 duplicates += 1
                 continue
-            if media_cards:
+            if telegram_media_cards:
                 try:
                     if job == "schedule":
-                        caption = format_schedule_photo_caption(local_now, len(selected))
+                        caption = text
+                        if len(telegram_media_cards) == 1 and len(schedule_context_messages) == 1:
+                            context_caption = schedule_context_messages[0]
+                            if test_run_id:
+                                context_caption = f"🧪 <b>Тестовая карточка</b>\n\n{context_caption}"
+                            if len(context_caption) <= MAX_TELEGRAM_CAPTION_LENGTH:
+                                caption = context_caption
+                                context_messages_to_send = []
                         filename = f"cs2-schedule-{day_key}.png"
                         has_spoiler = False
                     else:
                         caption = format_digest_photo_caption(local_now, len(selected))
                         filename = f"cs2-results-{day_key}.png"
                         has_spoiler = TELEGRAM_SPOILERS
-                    if test_run_id:
+                    if test_run_id and not caption.startswith("🧪 <b>Тестовая карточка</b>"):
                         caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
-                    if job == "schedule" and len(media_cards) > 1:
+                    if len(caption) > MAX_TELEGRAM_CAPTION_LENGTH:
+                        caption = format_schedule_photo_caption(local_now, len(selected))
+                    if job == "schedule" and len(telegram_media_cards) > 1:
                         filenames = [
-                            f"cs2-schedule-{day_key}-{index}-of-{len(media_cards)}.png"
-                            for index in range(1, len(media_cards) + 1)
+                            f"cs2-schedule-{day_key}-{index}-of-{len(telegram_media_cards)}.png"
+                            for index in range(1, len(telegram_media_cards) + 1)
                         ]
                         send_media_group_to_telegram(
                             channel["chat_id"],
-                            media_cards,
+                            telegram_media_cards,
                             caption,
                             filenames=filenames,
                         )
                     else:
                         send_photo_to_telegram(
                             channel["chat_id"],
-                            media_cards[0],
+                            telegram_media_cards[0],
                             caption,
                             has_spoiler=has_spoiler,
                             filename=filename,
@@ -1597,25 +1703,26 @@ def _handle_content_job(
                 send_to_telegram(channel["chat_id"], text)
             telegram_confirmed = True
             claim = asyncio.run(mark_delivery_claim_sent(claim))
-            if job == "schedule" and schedule_context_text:
-                try:
-                    send_to_telegram(channel["chat_id"], schedule_context_text)
-                except Exception as exc:
-                    log_event(
-                        logger,
-                        logging.WARNING,
-                        "schedule_context_delivery_failed",
-                        channel=channel_id,
-                        error_type=type(exc).__name__,
-                        error=_safe_error_message(exc),
-                    )
+            if job == "schedule":
+                for context_message in context_messages_to_send:
+                    try:
+                        send_to_telegram(channel["chat_id"], context_message)
+                    except Exception as exc:
+                        log_event(
+                            logger,
+                            logging.WARNING,
+                            "schedule_context_delivery_failed",
+                            channel=channel_id,
+                            error_type=type(exc).__name__,
+                            error=_safe_error_message(exc),
+                        )
             asyncio.run(mark_content_processed(content_uid, job))
             _record_post_analytics(
                 channel_id,
                 content_uid,
                 job,
                 matches_selected=len(selected),
-                media_card=bool(media_cards),
+                media_card=bool(telegram_media_cards),
             )
             sent += 1
         except Exception as exc:
@@ -1648,7 +1755,7 @@ def _handle_content_job(
         instagram_sent, instagram_duplicates, instagram_failures = _deliver_instagram_content(
             job=job,
             day_key=day_key,
-            cards=media_cards,
+            cards=social_media_cards,
             caption=text,
             context=None,
             test_run_id=test_run_id,
@@ -1661,7 +1768,7 @@ def _handle_content_job(
         threads_sent, threads_duplicates, threads_failures = _deliver_threads_content(
             job=job,
             day_key=day_key,
-            cards=media_cards,
+            cards=social_media_cards,
             caption=text,
             context=None,
             test_run_id=test_run_id,
@@ -1701,8 +1808,10 @@ def _handle_content_job(
         elif job == "digest":
             body["diagnostics"] = [_match_diagnostic(match) for match in selected]
         body["media_card_enabled"] = TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled
-        body["media_card_ready"] = bool(media_cards)
-        body["media_card_count"] = len(media_cards)
+        body["media_card_ready"] = bool(telegram_media_cards or social_media_cards)
+        body["media_card_count"] = len(telegram_media_cards or social_media_cards)
+        body["telegram_media_card_count"] = len(telegram_media_cards)
+        body["social_media_card_count"] = len(social_media_cards)
         if media_card_error:
             body["media_card_error"] = media_card_error
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}

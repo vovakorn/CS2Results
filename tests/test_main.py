@@ -1387,6 +1387,66 @@ def test_schedule_context_shows_shared_format_once_before_matches():
     assert text.index("Турнир") < text.index("<b>Spirit — Vitality</b>")
 
 
+def test_schedule_context_places_each_tournament_before_its_matches():
+    first_match = _upcoming()
+    second_match = _upcoming().model_copy(
+        update={
+            "match_id": "second-tournament-match",
+            "tournament_name": "ESL Pro League",
+            "competition_key": "ESL Pro League",
+            "team1_name": "Spirit",
+            "team2_name": "Vitality",
+        }
+    )
+    contexts = {
+        match.match_id: ScheduleMatchContext(
+            match_id=match.match_id,
+            team1_form=TeamForm(team_name=match.team1_name, wins=3, losses=2),
+            team2_form=TeamForm(team_name=match.team2_name, wins=2, losses=3),
+        )
+        for match in (first_match, second_match)
+    }
+
+    text = main.format_schedule_context([first_match, second_match], contexts)
+
+    first_match_start = text.index("<b>NAVI — FaZe</b>")
+    second_header_start = text.index("🏆 Турнир ESL Pro League · Формат: Bo3")
+    second_match_start = text.index("<b>Spirit — Vitality</b>")
+    assert first_match_start < second_header_start < second_match_start
+
+
+def test_schedule_context_splits_long_tournament_only_between_matches():
+    matches = [
+        _upcoming().model_copy(
+            update={
+                "match_id": f"long-context-{index}",
+                "team1_name": f"Team {index} " + "A" * 160,
+                "team2_name": f"Opponent {index} " + "B" * 160,
+            }
+        )
+        for index in range(20)
+    ]
+    contexts = {
+        match.match_id: ScheduleMatchContext(
+            match_id=match.match_id,
+            team1_form=TeamForm(team_name=match.team1_name, wins=3, losses=2),
+            team2_form=TeamForm(team_name=match.team2_name, wins=2, losses=3),
+            head_to_head=HeadToHead(match_count=0),
+        )
+        for match in matches
+    }
+
+    messages = main.format_schedule_context_messages(matches, contexts)
+    combined = "\n".join(messages)
+
+    assert len(messages) > 1
+    assert all(len(message) <= main.MAX_TELEGRAM_MESSAGE_LENGTH for message in messages)
+    assert all("Источник: PandaScore" in message for message in messages)
+    assert combined.count("🏆 Турнир IEM Cologne 2026 · Формат: Bo3") == len(messages)
+    for match in matches:
+        assert combined.count(f"<b>{match.team1_name} — {match.team2_name}</b>") == 1
+
+
 def test_schedule_context_groups_tournament_stages_and_omits_match_format():
     group_a = _upcoming().model_copy(
         update={
@@ -1679,6 +1739,50 @@ def test_schedule_dry_run_returns_preview_without_sending(monkeypatch):
     assert sent == []
 
 
+def test_schedule_dry_run_keeps_tier1_and_excludes_qualifiers_and_lower_tiers(monkeypatch):
+    tier1 = _upcoming().model_copy(
+        update={"match_id": "tier1", "tournament_tier": "a"}
+    )
+    qualifier = _upcoming().model_copy(
+        update={
+            "match_id": "qualifier",
+            "tournament_name": "IEM Beijing: Global Qualifier",
+            "tournament_tier": "a",
+            "team1_name": "3DMAX",
+            "team2_name": "Heroic",
+            "is_featured": False,
+            "feature_reason": "excluded_tournament",
+        }
+    )
+    lower_tier = _upcoming().model_copy(
+        update={
+            "match_id": "lower-tier",
+            "tournament_name": "Regional League",
+            "tournament_tier": "d",
+            "team1_name": "Team One",
+            "team2_name": "Team Two",
+            "is_featured": False,
+            "feature_reason": "not_featured",
+        }
+    )
+
+    async def fake_fetch(*args):
+        return [tier1, qualifier, lower_tier]
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+
+    response = main.handler({"job": "schedule", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["matches_received"] == 3
+    assert body["matches_selected"] == 1
+    assert "NAVI vs FaZe" in body["preview"]
+    assert "3DMAX vs Heroic" not in body["preview"]
+    assert "Team One vs Team Two" not in body["preview"]
+
+
 def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monkeypatch):
     filtered = _upcoming().model_copy(
         update={
@@ -1727,12 +1831,12 @@ def test_schedule_dry_run_reports_filtered_matches_across_requested_window(monke
 
     assert response["statusCode"] == 200
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 1
-    assert body["messages_sent"] == 1
+    assert body["matches_selected"] == 0
+    assert body["messages_sent"] == 0
     assert body["days_ahead"] == 3
     assert body["window_start"] == "2026-07-29T21:00:00+00:00"
     assert body["window_end"] == "2026-08-01T21:00:00+00:00"
-    assert "NAVI vs FaZe" in body["preview"]
+    assert body["preview"] is None
     assert body["diagnostics"][0]["teams"] == ["NAVI", "FaZe"]
     assert body["diagnostics"][0]["selected"] is False
     assert body["diagnostics"][0]["filter_reason"] == "excluded_tournament"
@@ -1756,8 +1860,8 @@ def test_schedule_dry_run_omits_filtered_diagnostics_by_default(monkeypatch):
     body = json.loads(response["body"])
 
     assert body["matches_received"] == 1
-    assert body["matches_selected"] == 1
-    assert body["diagnostics"][0]["selected"] is False
+    assert body["matches_selected"] == 0
+    assert body["diagnostics"] == []
 
 
 @pytest.mark.parametrize("days_ahead", [0, 8, True, "3"])
@@ -1795,7 +1899,7 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
-    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"card"])
+    monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args, **kwargs: [b"card"])
     monkeypatch.setattr(
         main,
         "send_photo_to_telegram",
@@ -1816,9 +1920,85 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     assert sent_photos[0][0][2].startswith("🧪 <b>Тестовая карточка</b>")
 
 
-def test_busy_schedule_is_sent_as_one_two_card_album(monkeypatch):
+def test_schedule_attaches_single_context_note_to_its_cover(monkeypatch):
+    photos = []
+    sent_text = []
+
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+
+    async def fake_claim(content_uid):
+        return "claim"
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    context_note = "🔎 <b>Контекст к матчам дня</b>\n\n<b>Очные встречи за 3 месяца:</b> команды не встречались."
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args, **kwargs: [b"card"])
+    monkeypatch.setattr(main, "format_schedule_context_messages", lambda *args, **kwargs: [context_note])
+    monkeypatch.setattr(main, "send_photo_to_telegram", lambda *args, **kwargs: photos.append((args, kwargs)))
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent_text.append((args, kwargs)))
+
+    response = main.handler({"job": "schedule"}, None)
+
+    assert response["statusCode"] == 200
+    assert photos[0][0][2] == context_note
+    assert sent_text == []
+
+
+def test_schedule_keeps_telegram_and_social_card_policies_independent(monkeypatch):
+    telegram_text = []
+    instagram_cards = []
+
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+
+    async def fake_claim(content_uid):
+        return "claim"
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    def fake_instagram_delivery(**kwargs):
+        instagram_cards.extend(kwargs["cards"])
+        return 1, 0, 0
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", False)
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"social-card"])
+    monkeypatch.setattr(
+        main,
+        "render_schedule_context_covers",
+        lambda *args, **kwargs: pytest.fail("Telegram covers must stay disabled"),
+    )
+    monkeypatch.setattr(main, "send_to_telegram", lambda chat_id, text: telegram_text.append(text))
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: pytest.fail("Telegram must remain text-only"),
+    )
+    monkeypatch.setattr(main, "_deliver_instagram_content", fake_instagram_delivery)
+
+    response = main.handler({"job": "schedule"}, None)
+
+    assert response["statusCode"] == 200
+    assert telegram_text
+    assert instagram_cards == [b"social-card"]
+
+
+def test_busy_schedule_is_sent_with_a_context_cover(monkeypatch):
     claimed = []
-    albums = []
+    photos = []
     marked = []
     matches = [
         _upcoming().model_copy(update={"match_id": f"match-{index}"})
@@ -1842,18 +2022,13 @@ def test_busy_schedule_is_sent_as_one_two_card_album(monkeypatch):
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
     monkeypatch.setattr(
         main,
-        "render_schedule_cards",
-        lambda *args, **kwargs: [b"page-1", b"page-2"],
-    )
-    monkeypatch.setattr(
-        main,
-        "send_media_group_to_telegram",
-        lambda *args, **kwargs: albums.append((args, kwargs)),
+        "render_schedule_context_covers",
+        lambda *args, **kwargs: [b"cover"],
     )
     monkeypatch.setattr(
         main,
         "send_photo_to_telegram",
-        lambda *args, **kwargs: pytest.fail("busy schedule must use an album"),
+        lambda *args, **kwargs: photos.append((args, kwargs)),
     )
 
     response = main.handler({"job": "schedule"}, None)
@@ -1862,16 +2037,11 @@ def test_busy_schedule_is_sent_as_one_two_card_album(monkeypatch):
     assert response["statusCode"] == 200
     assert body["matches_selected"] == 16
     assert body["messages_sent"] == 1
-    assert albums[0][0][1] == [b"page-1", b"page-2"]
-    assert albums[0][0][2] == main.format_schedule_photo_caption(
-        main._local_day_window()[2], 16
-    )
-    assert albums[0][1]["filenames"][0].endswith("-1-of-2.png")
-    assert albums[0][1]["filenames"][1].endswith("-2-of-2.png")
+    assert photos[0][0][1] == b"cover"
     assert marked == [(claimed[0], "schedule")]
 
 
-def test_busy_schedule_album_failure_falls_back_to_text(monkeypatch):
+def test_busy_schedule_cover_failure_falls_back_to_text(monkeypatch):
     sent_text = []
     matches = [
         _upcoming().model_copy(update={"match_id": f"match-{index}"})
@@ -1894,12 +2064,12 @@ def test_busy_schedule_album_failure_falls_back_to_text(monkeypatch):
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
     monkeypatch.setattr(
         main,
-        "render_schedule_cards",
-        lambda *args, **kwargs: [b"page-1", b"page-2"],
+        "render_schedule_context_covers",
+        lambda *args, **kwargs: [b"cover"],
     )
     monkeypatch.setattr(
         main,
-        "send_media_group_to_telegram",
+        "send_photo_to_telegram",
         lambda *args, **kwargs: (_ for _ in ()).throw(main.TelegramDeliveryError("failed")),
     )
     monkeypatch.setattr(
