@@ -239,12 +239,13 @@ async def list_pending_result_deliveries(
     bucket_name = bucket or _bucket()
     pending: list[PendingDelivery] = []
     continuation_token: str | None = None
+    result_limit = max(1, limit)
 
-    while len(pending) < max(1, limit):
+    while True:
         kwargs: dict[str, Any] = {
             "Bucket": bucket_name,
             "Prefix": RESULT_OUTBOX_PREFIX,
-            "MaxKeys": min(1000, max(1, limit)),
+            "MaxKeys": 1000,
         }
         if continuation_token:
             kwargs["ContinuationToken"] = continuation_token
@@ -285,9 +286,6 @@ async def list_pending_result_deliveries(
                     key,
                     type(exc).__name__,
                 )
-            if len(pending) >= limit:
-                break
-
         continuation_token = page.get("NextContinuationToken")
         if not page.get("IsTruncated") or not continuation_token:
             break
@@ -300,7 +298,7 @@ async def list_pending_result_deliveries(
             item.key,
         )
     )
-    return pending
+    return pending[:result_limit]
 
 
 async def record_result_delivery_attempt(
@@ -480,6 +478,7 @@ CLAIM_RECLAIM_RETRY_DELAY_SECONDS = 0.05
 DELIVERY_SENT_TTL_SECONDS = 24 * 60 * 60
 DELIVERY_SENT_WRITE_MAX_ATTEMPTS = 3
 DELIVERY_SENT_WRITE_RETRY_DELAY_SECONDS = 0.1
+DELIVERY_NON_RECLAIMABLE_STATES = frozenset({"attempting", "uncertain", "sent"})
 
 
 async def _reclaim_expired_claim(
@@ -664,7 +663,7 @@ async def claim_channel_delivery(
     bucket: str | None = None,
     now: datetime | None = None,
 ) -> DeliveryClaim | None:
-    """Atomically reserve a channel delivery, reclaiming abandoned leases after TTL."""
+    """Reserve a channel delivery, reclaiming only expired pre-request leases."""
     s3 = client or _client()
     bucket_name = bucket or _bucket()
     if await is_channel_processed(
@@ -728,7 +727,7 @@ async def claim_channel_delivery(
                 continue
             raise StorageUnavailableError(f"claim head failed for {key}") from exc
 
-        if _object_metadata(existing).get("delivery-state") == "sent":
+        if _object_metadata(existing).get("delivery-state") in DELIVERY_NON_RECLAIMABLE_STATES:
             return None
         return await _reclaim_expired_claim(
             s3=s3,
@@ -804,7 +803,7 @@ async def claim_content_delivery(
                 continue
             raise StorageUnavailableError(f"content claim head failed for {key}") from exc
 
-        if _object_metadata(existing).get("delivery-state") == "sent":
+        if _object_metadata(existing).get("delivery-state") in DELIVERY_NON_RECLAIMABLE_STATES:
             return None
         return await _reclaim_expired_claim(
             s3=s3,
@@ -863,22 +862,35 @@ async def release_delivery_claim(
     raise StorageUnavailableError(f"claim release lost ownership for {claim.key}")
 
 
-async def mark_delivery_claim_sent(
+async def _mark_delivery_claim_state(
     claim: DeliveryClaim,
+    state: str,
+    *,
     client: Any | None = None,
     bucket: str | None = None,
 ) -> DeliveryClaim:
-    """Persist a confirmed Telegram delivery before writing its processed marker."""
+    """Conditionally move an owned claim to a fail-closed delivery state."""
     s3 = client or _client()
     bucket_name = bucket or _bucket()
     recorded_at = datetime.now(timezone.utc)
-    expires_at = recorded_at + timedelta(seconds=DELIVERY_SENT_TTL_SECONDS)
+    timestamp_field = {
+        "attempting": "attempting_at",
+        "uncertain": "uncertain_at",
+        "sent": "sent_at",
+    }.get(state)
+    if timestamp_field is None:
+        raise ValueError(f"unsupported delivery state: {state}")
     payload = {
         "match_uid": claim.match_uid,
         "claim_id": claim.claim_id,
-        "status": "sent",
-        "sent_at": recorded_at.isoformat().replace("+00:00", "Z"),
+        "status": state,
+        timestamp_field: recorded_at.isoformat().replace("+00:00", "Z"),
     }
+    expires_at = (
+        recorded_at + timedelta(seconds=DELIVERY_SENT_TTL_SECONDS)
+        if state == "sent"
+        else None
+    )
 
     def _put(etag: str) -> dict[str, Any]:
         return s3.put_object(
@@ -887,23 +899,30 @@ async def mark_delivery_claim_sent(
             Body=json.dumps(payload).encode("utf-8"),
             ContentType="application/json",
             Metadata={
-                "expires-at": str(int(expires_at.timestamp())),
+                "expires-at": str(int(expires_at.timestamp())) if expires_at else "0",
                 "claim-id": claim.claim_id,
-                "delivery-state": "sent",
+                "delivery-state": state,
             },
             IfMatch=etag,
         )
 
     etags = _etag_candidates(claim.etag)
     if not etags:
-        raise StorageUnavailableError(f"claim sent-state is missing an ETag for {claim.key}")
+        raise StorageUnavailableError(
+            f"claim {state}-state is missing an ETag for {claim.key}"
+        )
 
     for attempt in range(1, DELIVERY_SENT_WRITE_MAX_ATTEMPTS + 1):
         retryable_error: BotoCoreError | ClientError | None = None
         for etag in etags:
             try:
                 response = await asyncio.to_thread(_put, etag)
-                return DeliveryClaim(claim.match_uid, claim.key, claim.claim_id, response.get("ETag"))
+                return DeliveryClaim(
+                    claim.match_uid,
+                    claim.key,
+                    claim.claim_id,
+                    response.get("ETag"),
+                )
             except (BotoCoreError, ClientError) as exc:
                 if isinstance(exc, ClientError) and _is_precondition_failed(exc):
                     continue
@@ -912,9 +931,53 @@ async def mark_delivery_claim_sent(
         if retryable_error is None:
             break
         if attempt == DELIVERY_SENT_WRITE_MAX_ATTEMPTS:
-            raise StorageUnavailableError(f"claim sent-state write failed for {claim.key}") from retryable_error
+            raise StorageUnavailableError(
+                f"claim {state}-state write failed for {claim.key}"
+            ) from retryable_error
         await asyncio.sleep(DELIVERY_SENT_WRITE_RETRY_DELAY_SECONDS)
-    raise StorageUnavailableError(f"claim sent-state lost ownership for {claim.key}")
+    raise StorageUnavailableError(f"claim {state}-state lost ownership for {claim.key}")
+
+
+async def mark_delivery_claim_attempting(
+    claim: DeliveryClaim,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> DeliveryClaim:
+    """Make a claim non-reclaimable immediately before an external publish request."""
+    return await _mark_delivery_claim_state(
+        claim,
+        "attempting",
+        client=client,
+        bucket=bucket,
+    )
+
+
+async def mark_delivery_claim_uncertain(
+    claim: DeliveryClaim,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> DeliveryClaim:
+    """Record an ambiguous external outcome without reopening automatic retries."""
+    return await _mark_delivery_claim_state(
+        claim,
+        "uncertain",
+        client=client,
+        bucket=bucket,
+    )
+
+
+async def mark_delivery_claim_sent(
+    claim: DeliveryClaim,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> DeliveryClaim:
+    """Persist a confirmed external delivery before writing its processed marker."""
+    return await _mark_delivery_claim_state(
+        claim,
+        "sent",
+        client=client,
+        bucket=bucket,
+    )
 
 
 async def reconcile_channel_delivery(

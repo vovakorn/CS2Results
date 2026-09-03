@@ -75,6 +75,7 @@ from .match_sources.sources.pandascore_source import (
     fetch_upcoming_matches,
 )
 from .match_sources.storage import (
+    DeliveryClaim,
     PendingDelivery,
     claim_admin_alert,
     claim_channel_delivery,
@@ -87,7 +88,9 @@ from .match_sources.storage import (
     list_pending_result_deliveries,
     mark_channel_processed,
     mark_content_processed,
+    mark_delivery_claim_attempting,
     mark_delivery_claim_sent,
+    mark_delivery_claim_uncertain,
     mark_telegram_media_degraded,
     record_result_delivery_attempt,
     reconcile_channel_delivery,
@@ -1209,6 +1212,22 @@ def _instagram_caption(text: str) -> str:
     return plain[:2199].rstrip() + "…"
 
 
+def _retain_uncertain_delivery_claim(claim: DeliveryClaim | None) -> None:
+    """Best-effort diagnostic transition; ``attempting`` is already fail-closed."""
+    if claim is None:
+        return
+    try:
+        asyncio.run(mark_delivery_claim_uncertain(claim))
+    except Exception as exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "delivery_claim_uncertain_state_failed",
+            claim_key=getattr(claim, "key", "unknown"),
+            error_type=type(exc).__name__,
+        )
+
+
 def _deliver_instagram_content(
     *,
     job: str,
@@ -1240,6 +1259,7 @@ def _deliver_instagram_content(
         claim = asyncio.run(claim_content_delivery(content_uid))
         if claim is None:
             return 0, 1, 0
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
         publish_rendered_cards(content_uid, cards, _instagram_caption(caption), context)
         confirmed = True
         claim = asyncio.run(mark_delivery_claim_sent(claim))
@@ -1254,6 +1274,7 @@ def _deliver_instagram_content(
         log_event(logger, logging.INFO, "instagram_delivery_succeeded", job=job, cards=len(cards))
         return 1, 0, 0
     except InstagramDeliveryUncertainError as exc:
+        _retain_uncertain_delivery_claim(claim)
         _notify_admin(
             "instagram_delivery_uncertain",
             f"Instagram не подтвердил исход доставки выпуска «{job}»; повтор отключён.",
@@ -1288,7 +1309,7 @@ def _deliver_instagram_content(
 
 
 def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
-    """Deliver one durable result outbox item to Instagram exactly once."""
+    """Deliver one durable result to Instagram at most once automatically."""
     match = pending.match
     channel_id = "instagram"
     claim = None
@@ -1299,12 +1320,15 @@ def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
             return "reconciled"
         claim = asyncio.run(claim_channel_delivery(match, channel_id))
         if claim is None:
+            if asyncio.run(is_channel_processed(match, channel_id)):
+                asyncio.run(delete_result_delivery(pending))
             return "duplicate"
         card = (
             render_final_card(match)
             if match.source == "liquipedia" and can_render_final_card(match)
             else render_result_card(match)
         )
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
         publish_rendered_cards(
             f"instagram_result_{safe_storage_part(match.match_uid)}",
             [card],
@@ -1319,6 +1343,11 @@ def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
         log_event(logger, logging.INFO, "instagram_delivery_succeeded", job="results", match_uid=match.match_uid)
         return "sent"
     except InstagramDeliveryUncertainError as exc:
+        _retain_uncertain_delivery_claim(claim)
+        try:
+            asyncio.run(delete_result_delivery(pending))
+        except Exception:
+            pass
         _notify_admin(
             "instagram_delivery_uncertain",
             f"Instagram не подтвердил исход доставки результата {match.match_uid}; повтор отключён.",
@@ -1376,6 +1405,7 @@ def _deliver_threads_content(
         claim = asyncio.run(claim_content_delivery(content_uid))
         if claim is None:
             return 0, 1, 0
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
         publish_threads_rendered_cards(content_uid, cards, _instagram_caption(caption), context)
         confirmed = True
         asyncio.run(mark_delivery_claim_sent(claim))
@@ -1386,6 +1416,7 @@ def _deliver_threads_content(
         log_event(logger, logging.INFO, "threads_delivery_succeeded", job=job, cards=len(cards))
         return 1, 0, 0
     except ThreadsDeliveryUncertainError as exc:
+        _retain_uncertain_delivery_claim(claim)
         _notify_admin(
             "threads_delivery_uncertain",
             f"Threads не подтвердил исход доставки выпуска «{job}»; повтор отключён.",
@@ -1410,7 +1441,7 @@ def _deliver_threads_content(
 
 
 def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
-    """Deliver one durable result item to Threads exactly once."""
+    """Deliver one durable result to Threads at most once automatically."""
     match = pending.match
     channel_id = "threads"
     claim = None
@@ -1421,12 +1452,15 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
             return "reconciled"
         claim = asyncio.run(claim_channel_delivery(match, channel_id))
         if claim is None:
+            if asyncio.run(is_channel_processed(match, channel_id)):
+                asyncio.run(delete_result_delivery(pending))
             return "duplicate"
         card = (
             render_final_card(match)
             if match.source == "liquipedia" and can_render_final_card(match)
             else render_result_card(match)
         )
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
         publish_threads_rendered_cards(
             f"threads_result_{safe_storage_part(match.match_uid)}",
             [card],
@@ -1441,6 +1475,11 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
         log_event(logger, logging.INFO, "threads_delivery_succeeded", job="results", match_uid=match.match_uid)
         return "sent"
     except ThreadsDeliveryUncertainError as exc:
+        _retain_uncertain_delivery_claim(claim)
+        try:
+            asyncio.run(delete_result_delivery(pending))
+        except Exception:
+            pass
         _notify_admin(
             "threads_delivery_uncertain",
             f"Threads не подтвердил исход доставки результата {match.match_uid}; повтор отключён.",
@@ -1645,6 +1684,7 @@ def _handle_content_job(
             if claim is None:
                 duplicates += 1
                 continue
+            claim = asyncio.run(mark_delivery_claim_attempting(claim))
             if telegram_media_cards:
                 try:
                     if job == "schedule":
@@ -1729,6 +1769,7 @@ def _handle_content_job(
             failures += 1
             delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
             if delivery_uncertain:
+                _retain_uncertain_delivery_claim(claim)
                 _notify_admin(
                     "telegram_delivery_uncertain",
                     f"Telegram не подтвердил исход доставки выпуска «{job}» в канал {channel_id}; повтор отключён.",
@@ -1894,6 +1935,7 @@ def _handle_radar_job(
             if claim is None:
                 duplicates += 1
                 continue
+            claim = asyncio.run(mark_delivery_claim_attempting(claim))
             if media_cards:
                 caption = f"🏆 <b>Турнирный радар</b>\n{html.escape(tournament_name)}\n\nИсточник: PandaScore"
                 if test_run_id:
@@ -1945,7 +1987,14 @@ def _handle_radar_job(
             sent += 1
         except Exception as exc:
             failures += 1
-            if claim is not None and not telegram_confirmed:
+            delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
+            if delivery_uncertain:
+                _retain_uncertain_delivery_claim(claim)
+                _notify_admin(
+                    "telegram_delivery_uncertain",
+                    f"Telegram не подтвердил исход доставки радара {tournament_id} в канал {channel_id}; повтор отключён.",
+                )
+            if claim is not None and not telegram_confirmed and not delivery_uncertain:
                 try:
                     asyncio.run(release_delivery_claim(claim))
                 except Exception:
@@ -2640,6 +2689,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         try:
             text = format_match(match)
             response: dict[str, Any] | None = None
+            claim = asyncio.run(mark_delivery_claim_attempting(claim))
             if result_card is not None:
                 try:
                     response = send_photo_to_telegram(
@@ -2725,6 +2775,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             failed_messages += 1
             delivery_uncertain = isinstance(exc, TelegramDeliveryUncertainError)
             if delivery_uncertain:
+                _retain_uncertain_delivery_claim(claim)
                 _notify_admin(
                     "telegram_delivery_uncertain",
                     f"Telegram не подтвердил исход доставки результата {match.match_uid} в канал {name}; повтор отключён.",
@@ -2752,6 +2803,18 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                     match_uid=match.match_uid,
                     error_type=type(outbox_exc).__name__,
                 )
+            if delivery_uncertain:
+                try:
+                    asyncio.run(delete_result_delivery(pending))
+                except StorageUnavailableError as outbox_exc:
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "result_outbox_cleanup_failed",
+                        channel=name,
+                        match_uid=match.match_uid,
+                        error_type=type(outbox_exc).__name__,
+                    )
             log_event(
                 logger,
                 logging.ERROR,

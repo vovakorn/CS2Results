@@ -228,6 +228,26 @@ def test_schedule_card_is_valid_square_png():
     assert image.size == media_cards.SCHEDULE_CARD_SIZE
 
 
+def test_schedule_card_footer_names_schedule(monkeypatch):
+    texts = []
+    original = media_cards._centered_text
+
+    def capture_text(draw, center_x, y, text, font, fill):
+        texts.append((y, text))
+        return original(draw, center_x, y, text, font, fill)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
+
+    media_cards.render_schedule_card(
+        [_upcoming()],
+        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+    assert (1012, "CS2 TIER-1 · РАСПИСАНИЕ МАТЧЕЙ") in texts
+    assert (1012, "CS2 TIER-1 · РЕЗУЛЬТАТЫ МАТЧЕЙ") not in texts
+
+
 @pytest.mark.parametrize("variant", ["bracket", "next_match"])
 def test_tournament_radar_card_variants_are_valid_square_png(variant):
     radar = TournamentRadar(

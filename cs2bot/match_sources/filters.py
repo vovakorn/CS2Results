@@ -185,7 +185,7 @@ def is_featured_upcoming(match: UpcomingMatchNormalized) -> tuple[bool, str | No
 def tier1_autopilot_decision(
     match: MatchNormalized | UpcomingMatchNormalized,
 ) -> tuple[bool, str]:
-    """Return the tier-only shadow decision without changing publication rules."""
+    """Return the tier decision used by schedule selection and result diagnostics."""
     if _contains_pattern(match.tournament_name, TOURNAMENT_EXCLUSION_PATTERNS):
         return False, "excluded_tournament"
     if _contains_pattern(

@@ -163,14 +163,16 @@ def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> 
         )
     except requests.RequestException as exc:
         raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown") from exc
+    if response.status_code >= 500:
+        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown")
     if response.status_code >= 300:
         raise InstagramPublishError(f"Instagram publish endpoint returned HTTP {response.status_code}")
     try:
         payload = response.json()
     except requests.JSONDecodeError as exc:
-        raise InstagramPublishError("Instagram publish endpoint returned invalid JSON") from exc
+        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown") from exc
     if not isinstance(payload, dict):
-        raise InstagramPublishError("Instagram publish endpoint returned invalid data")
+        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown")
     return payload
 
 
@@ -178,6 +180,14 @@ def _container_id(payload: dict[str, Any]) -> str:
     identifier = payload.get("id")
     if not isinstance(identifier, str) or not identifier:
         raise InstagramPublishError("Instagram did not create a media container")
+    return identifier
+
+
+def _published_media_id(payload: dict[str, Any]) -> str:
+    """A malformed publish acknowledgement cannot prove that no post was made."""
+    identifier = payload.get("id")
+    if not isinstance(identifier, str) or not identifier:
+        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown")
     return identifier
 
 
@@ -239,7 +249,7 @@ def publish_cards(image_urls: Sequence[str], caption: str, context: Any) -> str:
             {"creation_id": creation_id, "access_token": access_token},
             proxy,
         )
-    return _container_id(published)
+    return _published_media_id(published)
 
 
 def publish_rendered_cards(

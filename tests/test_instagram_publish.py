@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import requests
 
 from cs2bot import instagram_publish
 
@@ -71,6 +72,53 @@ def test_publish_cards_keeps_ambiguous_network_outcome_distinct(monkeypatch):
 
     with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
         instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+
+
+@pytest.mark.parametrize("status_code", [500, 503])
+def test_meta_server_error_is_uncertain(monkeypatch, status_code):
+    class Response:
+        def __init__(self):
+            self.status_code = status_code
+
+        def json(self):
+            return {"id": "unused"}
+
+    monkeypatch.setattr(instagram_publish.requests, "post", lambda *args, **kwargs: Response())
+
+    with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
+        instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+
+
+@pytest.mark.parametrize("payload", [[], "invalid"])
+def test_meta_malformed_success_data_is_uncertain(monkeypatch, payload):
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return payload
+
+    monkeypatch.setattr(instagram_publish.requests, "post", lambda *args, **kwargs: Response())
+
+    with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
+        instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+
+
+def test_meta_invalid_success_json_is_uncertain(monkeypatch):
+    class Response:
+        status_code = 200
+
+        def json(self):
+            raise requests.JSONDecodeError("invalid", "x", 0)
+
+    monkeypatch.setattr(instagram_publish.requests, "post", lambda *args, **kwargs: Response())
+
+    with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
+        instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+
+
+def test_missing_publish_acknowledgement_is_uncertain():
+    with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
+        instagram_publish._published_media_id({})
 
 
 def test_publication_key_rejects_path_traversal(monkeypatch):

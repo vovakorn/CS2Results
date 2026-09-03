@@ -24,7 +24,9 @@ from cs2bot.match_sources.storage import (
     logo_cache_key,
     mark_channel_processed,
     mark_content_processed,
+    mark_delivery_claim_attempting,
     mark_delivery_claim_sent,
+    mark_delivery_claim_uncertain,
     mark_telegram_media_degraded,
     mark_processed,
     processed_key,
@@ -94,6 +96,21 @@ class FakeS3:
         return {}
 
 
+class PaginatedFakeS3(FakeS3):
+    """Return small pages even when the caller requests a larger S3 page."""
+
+    def list_objects_v2(self, Bucket, Prefix, MaxKeys, ContinuationToken=None):
+        keys = sorted(key for key in self.objects if key.startswith(Prefix))
+        start = int(ContinuationToken or 0)
+        page = keys[start : start + 2]
+        next_start = start + len(page)
+        return {
+            "Contents": [{"Key": key} for key in page],
+            "IsTruncated": next_start < len(keys),
+            "NextContinuationToken": str(next_start) if next_start < len(keys) else None,
+        }
+
+
 class TitleCaseMetadataS3(FakeS3):
     """Mirror Yandex Object Storage metadata spelling observed in production."""
 
@@ -115,6 +132,17 @@ class FlakySentStateS3(FakeS3):
         metadata = kwargs.get("Metadata")
         if metadata and metadata.get("delivery-state") == "sent" and not self.sent_state_failures:
             self.sent_state_failures += 1
+            raise ClientError(
+                {"Error": {"Code": "ServiceUnavailable"}, "ResponseMetadata": {"HTTPStatusCode": 503}},
+                "PutObject",
+            )
+        return super().put_object(*args, **kwargs)
+
+
+class FailedSentStateS3(FakeS3):
+    def put_object(self, *args, **kwargs):
+        metadata = kwargs.get("Metadata")
+        if metadata and metadata.get("delivery-state") == "sent":
             raise ClientError(
                 {"Error": {"Code": "ServiceUnavailable"}, "ResponseMetadata": {"HTTPStatusCode": 503}},
                 "PutObject",
@@ -312,6 +340,58 @@ def test_result_outbox_prioritizes_never_attempted_and_least_recent_items():
     assert reordered[1].attempt_count == 1
 
 
+def test_result_outbox_scans_all_pages_before_applying_limit():
+    s3 = PaginatedFakeS3()
+    created = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
+    matches = [
+        _match().model_copy(
+            update={
+                "match_id": f"page-{index}",
+                "match_url": f"https://example.com/page-{index}",
+                "team2_name": f"Team {index}",
+            }
+        )
+        for index in range(3)
+    ]
+    for index, match in enumerate(matches):
+        asyncio.run(
+            enqueue_result_delivery(
+                match,
+                "global",
+                "Global",
+                client=s3,
+                bucket="bucket",
+                now=created + timedelta(seconds=index),
+            )
+        )
+    queued = asyncio.run(
+        list_pending_result_deliveries(client=s3, bucket="bucket", limit=10)
+    )
+    asyncio.run(
+        record_result_delivery_attempt(
+            queued[0],
+            client=s3,
+            bucket="bucket",
+            now=created + timedelta(minutes=2),
+        )
+    )
+    asyncio.run(
+        record_result_delivery_attempt(
+            queued[1],
+            client=s3,
+            bucket="bucket",
+            now=created + timedelta(minutes=1),
+        )
+    )
+
+    selected = asyncio.run(
+        list_pending_result_deliveries(client=s3, bucket="bucket", limit=2)
+    )
+
+    assert selected[0].key == queued[2].key
+    assert selected[1].key == queued[1].key
+
+
 def test_telegram_media_degraded_window_expires_and_can_be_cleared():
     s3 = FakeS3()
     now = datetime(2026, 8, 28, 8, 0, tzinfo=timezone.utc)
@@ -420,6 +500,71 @@ def test_confirmed_delivery_is_reconciled_without_a_second_claim():
     ) is None
     assert asyncio.run(reconcile_channel_delivery(match, "global", client=s3, bucket="bucket"))
     assert asyncio.run(is_channel_processed(match, "global", client=s3, bucket="bucket"))
+
+
+@pytest.mark.parametrize(
+    ("transition", "state"),
+    [
+        (mark_delivery_claim_attempting, "attempting"),
+        (mark_delivery_claim_uncertain, "uncertain"),
+    ],
+)
+def test_fail_closed_delivery_state_is_never_reclaimed_after_lease_expiry(
+    transition,
+    state,
+):
+    s3 = FakeS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+    claim = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+
+    assert claim is not None
+    if state == "uncertain":
+        claim = asyncio.run(
+            mark_delivery_claim_attempting(claim, client=s3, bucket="bucket")
+        )
+    updated = asyncio.run(transition(claim, client=s3, bucket="bucket"))
+    reclaimed = asyncio.run(
+        claim_channel_delivery(
+            match,
+            "global",
+            client=s3,
+            bucket="bucket",
+            now=now + timedelta(days=1),
+        )
+    )
+
+    assert s3.objects[updated.key]["Metadata"]["delivery-state"] == state
+    assert reclaimed is None
+
+
+def test_failed_sent_write_leaves_attempting_claim_fail_closed():
+    s3 = FailedSentStateS3()
+    match = _match()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+    claim = asyncio.run(
+        claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now)
+    )
+
+    assert claim is not None
+    attempting = asyncio.run(
+        mark_delivery_claim_attempting(claim, client=s3, bucket="bucket")
+    )
+    with pytest.raises(StorageUnavailableError, match="sent-state write failed"):
+        asyncio.run(mark_delivery_claim_sent(attempting, client=s3, bucket="bucket"))
+
+    assert s3.objects[attempting.key]["Metadata"]["delivery-state"] == "attempting"
+    assert asyncio.run(
+        claim_channel_delivery(
+            match,
+            "global",
+            client=s3,
+            bucket="bucket",
+            now=now + timedelta(days=1),
+        )
+    ) is None
 
 
 def test_confirmed_delivery_retries_transient_sent_state_write():

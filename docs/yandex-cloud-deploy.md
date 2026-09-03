@@ -10,7 +10,9 @@
 cs2-results-state
 ```
 
-Включите lifecycle policy для prefix `processed/` и `claims/`. Рекомендации описаны в `docs/object-storage-lifecycle.md`.
+Включите lifecycle policy для `processed/`. Не удаляйте весь prefix `claims/`
+безусловно: `attempting` и `uncertain` должны сохраняться до ручного разрешения.
+Рекомендации описаны в `docs/object-storage-lifecycle.md`.
 
 ## 2. Сервисный аккаунт
 
@@ -117,11 +119,13 @@ TELEGRAM_MEDIA_CARDS=0
 результаты и вечерний итог начнут приходить квадратными карточками. Изображения
 с результатами отправляются с Telegram-спойлером. При определённом отклонении
 карточки Telegram API функция автоматически отправит прежний текстовый формат.
-При `ConnectTimeout` до установления TCP-соединения claim освобождается, результат
-остаётся в durable outbox, а после неудачной отправки PNG на один час включается
-text-only режим. При остальных сетевых ошибках, HTTP 5xx или невалидном ответе
-Telegram fallback не делается: исход доставки неизвестен, и повтор мог бы создать
-дубль.
+Для результата Telegram PNG делает до двух безопасных попыток при
+`ConnectTimeout`, затем текст отправляется один раз в том же invocation и на час
+включается text-only режим. Если TCP-соединение не установилось и для текста,
+claim освобождается, а результат остаётся в durable outbox. При остальных
+сетевых ошибках, HTTP 5xx или невалидном ответе claim остаётся
+неперехватываемым, fallback не делается и result outbox удаляется: повтор
+возможен только вручную после проверки платформы.
 
 Храните API-токены в Lockbox и подключайте их к версии функции как секреты. Если Lockbox пока не используется, ограничьте доступ к чтению и редактированию версии функции и не передавайте секреты в event payload.
 
@@ -177,7 +181,7 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 Затем запустите без `dry_run` и проверьте:
 
 - сообщение появилось в Telegram;
-- в bucket созданы канонические ключи `claims/{channel_id}_match_v1_...` и `processed/{channel_id}_match_v1_...`; у подтверждённой отправки claim имеет `delivery-state=sent` до записи marker;
+- в bucket созданы канонические ключи `claims/{channel_id}_match_v1_...` и `processed/{channel_id}_match_v1_...`; перед внешним запросом claim имеет `delivery-state=attempting`, а у подтверждённой отправки — `delivery-state=sent` до записи marker;
 - повторный запуск не отправляет дубль в тот же канал.
 
 Если оба источника stale/invalid, ожидается `502` с `match_source_unavailable` и ноль публикаций. Это fail-closed поведение.
