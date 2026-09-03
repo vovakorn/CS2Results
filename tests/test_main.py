@@ -48,7 +48,9 @@ def configured_runtime(monkeypatch):
 
     monkeypatch.setattr(main, "reconcile_channel_delivery", no_reconciliation)
     monkeypatch.setattr(main, "reconcile_content_delivery", no_reconciliation)
+    monkeypatch.setattr(main, "mark_delivery_claim_attempting", mark_sent)
     monkeypatch.setattr(main, "mark_delivery_claim_sent", mark_sent)
+    monkeypatch.setattr(main, "mark_delivery_claim_uncertain", mark_sent)
     monkeypatch.setattr(main, "enqueue_result_delivery", enqueue_result)
     monkeypatch.setattr(main, "list_pending_result_deliveries", no_pending)
     monkeypatch.setattr(main, "record_result_delivery_attempt", no_op)
@@ -172,6 +174,72 @@ def test_threads_content_delivery_has_separate_content_uid(monkeypatch):
 
     assert (sent, duplicates, failures) == (1, 0, 0)
     assert marked == [("threads_schedule_2026-08-30", "schedule")]
+
+
+@pytest.mark.parametrize(
+    "delivery",
+    [main._deliver_instagram_result, main._deliver_threads_result],
+)
+def test_social_duplicate_cleans_processed_outbox_item(monkeypatch, delivery):
+    match = _match()
+    pending = PendingDelivery(
+        key=f"outbox/results/social_{match.match_uid}.json",
+        channel_id="instagram" if delivery is main._deliver_instagram_result else "threads",
+        channel_name="social",
+        match=match,
+        created_at="2026-08-30T10:00:00Z",
+    )
+    deleted = []
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(None))
+    monkeypatch.setattr(main, "is_channel_processed", lambda *args, **kwargs: _async(True))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+
+    assert delivery(pending, None) == "duplicate"
+    assert deleted == [pending.key]
+
+
+@pytest.mark.parametrize(
+    ("delivery", "publisher_name", "error"),
+    [
+        (
+            main._deliver_instagram_result,
+            "publish_rendered_cards",
+            main.InstagramDeliveryUncertainError("unknown"),
+        ),
+        (
+            main._deliver_threads_result,
+            "publish_threads_rendered_cards",
+            main.ThreadsDeliveryUncertainError("unknown"),
+        ),
+    ],
+)
+def test_social_uncertain_result_is_removed_from_automatic_outbox(
+    monkeypatch,
+    delivery,
+    publisher_name,
+    error,
+):
+    match = _match()
+    pending = PendingDelivery(
+        key=f"outbox/results/social_{match.match_uid}.json",
+        channel_id="social",
+        channel_name="social",
+        match=match,
+        created_at="2026-08-30T10:00:00Z",
+    )
+    deleted = []
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
+    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(
+        main,
+        publisher_name,
+        lambda *args: (_ for _ in ()).throw(error),
+    )
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: None)
+
+    assert delivery(pending, None) == "uncertain"
+    assert deleted == [pending.key]
 
 
 def test_format_match_omits_match_time():
@@ -660,12 +728,14 @@ def test_handler_production_response_omits_match_diagnostics(monkeypatch):
 def test_handler_marks_processed_after_successful_send(monkeypatch):
     sent = []
     marked = []
+    delivery_events = []
 
     async def fake_get_new_finished_matches(**kwargs):
         assert kwargs["dry_run"] is False
         return [_match()]
 
     def fake_send(chat_id, text, timeout=7, max_attempts=3):
+        delivery_events.append("external_request")
         sent.append((chat_id, text))
         return {"ok": True}
 
@@ -673,12 +743,23 @@ def test_handler_marks_processed_after_successful_send(monkeypatch):
         return _claim(match, channel_id)
 
     async def fake_mark(match, channel_name):
+        delivery_events.append("processed")
         marked.append((match.match_uid, channel_name))
+
+    async def fake_attempting(claim):
+        delivery_events.append("attempting")
+        return claim
+
+    async def fake_sent(claim):
+        delivery_events.append("sent")
+        return claim
 
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
     monkeypatch.setattr(main, "send_to_telegram", fake_send)
     monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_delivery_claim_attempting", fake_attempting)
+    monkeypatch.setattr(main, "mark_delivery_claim_sent", fake_sent)
     monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
 
     response = main.handler({"limit": 1}, None)
@@ -688,6 +769,7 @@ def test_handler_marks_processed_after_successful_send(monkeypatch):
     assert body["messages_sent"] == 1
     assert len(sent) == 1
     assert marked == [(_match().match_uid, "global")]
+    assert delivery_events == ["attempting", "external_request", "sent", "processed"]
 
 
 def test_handler_skips_channel_duplicate(monkeypatch):
@@ -759,6 +841,8 @@ def test_handler_does_not_mark_when_send_fails(monkeypatch):
 def test_handler_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
     released = []
     alerts = []
+    uncertain = []
+    deleted = []
 
     async def fake_get_new_finished_matches(**kwargs):
         return [_match()]
@@ -772,23 +856,35 @@ def test_handler_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
     async def fake_release(claim):
         released.append(claim.match_uid)
 
+    async def fake_uncertain(claim):
+        uncertain.append(claim.match_uid)
+        return claim
+
+    async def fake_delete(pending):
+        deleted.append(pending.key)
+
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
     monkeypatch.setattr(main, "send_to_telegram", fake_send)
     monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
     monkeypatch.setattr(main, "release_delivery_claim", fake_release)
+    monkeypatch.setattr(main, "mark_delivery_claim_uncertain", fake_uncertain)
+    monkeypatch.setattr(main, "delete_result_delivery", fake_delete)
     monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
 
     response = main.handler({"limit": 1}, None)
 
     assert response["statusCode"] == 502
     assert released == []
+    assert uncertain == [f"global_{_match().match_uid}"]
+    assert len(deleted) == 1
     assert alerts[0][0] == "telegram_delivery_uncertain"
 
 
 def test_schedule_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
     released = []
     alerts = []
+    uncertain = []
 
     async def fake_fetch(start, end):
         return [_upcoming()]
@@ -799,6 +895,10 @@ def test_schedule_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
     async def fake_release(claim):
         released.append(claim.match_uid)
 
+    async def fake_uncertain(claim):
+        uncertain.append(claim.match_uid)
+        return claim
+
     def fake_send(*args, **kwargs):
         raise main.TelegramDeliveryUncertainError("outcome is unknown")
 
@@ -806,6 +906,7 @@ def test_schedule_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
     monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "release_delivery_claim", fake_release)
+    monkeypatch.setattr(main, "mark_delivery_claim_uncertain", fake_uncertain)
     monkeypatch.setattr(main, "send_to_telegram", fake_send)
     monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
 
@@ -813,6 +914,7 @@ def test_schedule_keeps_claim_when_telegram_delivery_is_uncertain(monkeypatch):
 
     assert response["statusCode"] == 502
     assert released == []
+    assert len(uncertain) == 1
     assert alerts[0][0] == "telegram_delivery_uncertain"
 
 

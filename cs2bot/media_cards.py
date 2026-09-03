@@ -1410,7 +1410,7 @@ def render_schedule_card(
         draw,
         width // 2,
         1012,
-        "CS2 TIER-1 · РЕЗУЛЬТАТЫ МАТЧЕЙ",
+        "CS2 TIER-1 · РАСПИСАНИЕ МАТЧЕЙ",
         _font(20, display=True),
         MUTED,
     )

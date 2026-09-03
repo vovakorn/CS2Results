@@ -55,8 +55,11 @@ not add an API Gateway route for this function.
 - Schedule and digest use independent content claims named `threads_<job>_...`.
   Final results use the durable outbox channel `threads`, retried independently
   by the existing five-minute `retry_only` trigger.
+- Immediately before the first Meta request, the claim becomes `attempting` and
+  is no longer reclaimable after the normal lease expires.
 - The scheduler records `sent` before the processed marker. A crash in between
   is reconciled without another Threads post.
 - Network errors, HTTP 5xx and malformed successful responses are treated as
-  uncertain: the claim is retained and an administrator alert is raised. Only
-  definite pre-publication errors release the claim for a later retry.
+  `uncertain`: the claim is retained and an administrator alert is raised. A
+  final-result outbox item is removed, so a retry is manual only after checking
+  Threads. Definite pre-publication errors release the claim for a later retry.

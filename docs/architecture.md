@@ -16,7 +16,10 @@ flowchart LR
     F --> S[(Object Storage)]
     F --> C[Генерация текста и PNG]
     C --> G[Telegram API]
+    C --> SP[Instagram / Threads publishers]
+    SP --> Q[Meta API через Xray]
     G --> S
+    SP --> S
     H --> A[Analytics journal]
     A --> S
     X[Yandex Lockbox] --> H
@@ -31,7 +34,7 @@ flowchart LR
 | `cs2bot/match_sources/models.py` | Нормализованные модели матчей, контекста и радара | Содержать transport-логику |
 | `cs2bot/match_sources/filters.py` | Валидация, Tier-1 и upcoming-отбор | Хранить состояние доставки |
 | `cs2bot/match_sources/match_fetcher.py` | Выбор источника, freshness gate, shadow-сравнение | Смешивать источники в одной выдаче |
-| `cs2bot/match_sources/storage.py` | Claims, processed keys, cooldown и Object Storage | Решать, какой контент публиковать |
+| `cs2bot/match_sources/storage.py` | Delivery state machine, outbox, processed keys, cooldown и Object Storage | Решать, какой контент публиковать |
 | `cs2bot/media_cards.py` | Детерминированный рендер PNG и безопасная загрузка логотипов | Выполнять Telegram-доставку |
 | `cs2bot/analytics.py` | Запись событий постов, подписчиков и кампаний | Блокировать основную публикацию при своей ошибке |
 | `cs2bot/social_oauth.py` | Отдельный OAuth handler для соцсетей и запись токенов в Lockbox | Участвовать в основном Telegram handler |
@@ -39,7 +42,7 @@ flowchart LR
 
 ## Основной поток результатов
 
-1. Trigger вызывает `cs2bot.main.handler` с `job=results` или `job=digest`.
+1. Trigger вызывает `cs2bot.main.handler` с `job=results`.
 2. Handler запрашивает нормализованные матчи через data-layer.
 3. `match_fetcher` получает PandaScore, проверяет валидность и свежесть. Если
    включено, Liquipedia отдельно сравнивается в shadow-режиме.
@@ -48,26 +51,34 @@ flowchart LR
    claim в Object Storage.
 6. Handler выбирает наименее недавно обрабатывавшиеся outbox items, формирует
    текст и, если сеть не находится в text-only режиме, PNG-карточку.
-7. После подтверждённого Telegram API вызова claim фиксируется в состоянии
-   `sent`, затем создаётся processed marker.
-8. После processed marker outbox item удаляется. Если marker не успел записаться,
+7. Непосредственно перед запросом к Telegram, Instagram или Threads claim
+   атомарно переводится из `sending` в неперехватываемое состояние `attempting`.
+8. После подтверждённого ответа платформы claim фиксируется в состоянии `sent`,
+   затем создаётся processed marker.
+9. После processed marker outbox item удаляется. Если marker не успел записаться,
    следующий запуск восстанавливает его по
    состоянию `sent` без повторной публикации. При определённом отклонении
-   Telegram claim освобождается; при неопределённом исходе он сохраняется для
-   диагностики и алерта, без автоматического повтора.
-9. Отдельный `retry_only` trigger раз в пять минут обрабатывает только outbox и не
+   платформы claim освобождается; при неопределённом исходе он переходит в
+   `uncertain`, сохраняется для диагностики и алерта и не повторяется
+   автоматически. У неоднозначного результата outbox удаляется.
+10. Отдельный `retry_only` trigger раз в пять минут обрабатывает только outbox и не
    расходует квоту PandaScore или Liquipedia shadow.
 
-## Поток расписания и контекста
+## Поток ежедневных выпусков и контекста
 
 1. `job=schedule` получает upcoming-матчи PandaScore в окне локального дня.
-2. В выпуск входят все валидные upcoming-матчи PandaScore за окно расписания;
-   `is_featured` остаётся диагностическим признаком и задаёт приоритет контекста.
+2. После исключений qualifier, showmatch, academy, youth и junior в выпуск входят
+   турниры PandaScore tier `S`/`A` либо матчи с
+   `feature_reason=tier1_tournament`. Для результатов tier остаётся диагностикой:
+   там действует отдельный строгий Tier-1 LAN-фильтр.
 3. Матчи сортируются хронологически и при необходимости разбиваются на две
    карточки.
 4. Для всех матчей расписания PandaScore context добавляет форму и подтверждённые
    очные встречи за последние три месяца; порядок остаётся приоритетным.
 5. Сбой контекста не блокирует основное расписание.
+6. `job=digest` отдельно получает завершённые матчи локального дня и применяет
+   строгий Tier-1 LAN-фильтр. Расписание и digest используют ежедневные content
+   claims для каждого канала и платформы, но не result outbox.
 
 ## Поток турнирного радара
 
@@ -86,7 +97,7 @@ flowchart LR
 Object Storage содержит дополнительные типы состояния доставки:
 
 - `outbox/results/` — нормализованные результаты до подтверждённой публикации;
-- `claims/` — временные leases для конкурентной доставки;
+- `claims/` — состояния `sending`, `attempting`, `uncertain`, `sent` и `released`;
 - `processed/` — завершённые per-channel публикации;
 - `delivery-health/` — короткое окно адаптивного text-only режима;
 - analytics journal — append-only события продукта.
@@ -113,10 +124,13 @@ Object Storage содержит дополнительные типы состо
 - Невалидный или stale ответ источника не доходит до публикации.
 - Shadow и analytics работают fail-open: их ошибка логируется, основной поток
   продолжается.
-- Определённая ошибка изображения или `ConnectTimeout` до установления TCP приводит
-  к текстовому fallback. После photo connect timeout результаты временно работают
-  в text-only режиме. При остальных сетевых сбоях, HTTP 5xx или невалидном ответе
-  Telegram fallback запрещён, чтобы не создать дубль.
+- Определённая ошибка изображения приводит к текстовому fallback. Для результата
+  Telegram PNG делает до двух попыток при `ConnectTimeout`, затем одна текстовая
+  попытка выполняется в том же invocation и на час включается text-only режим.
+  Если TCP-соединение не установилось и для текста, `attempting` безопасно
+  переводится в `released`, а outbox ждёт следующий trigger. При остальных
+  сетевых сбоях, HTTP 5xx или невалидном ответе claim остаётся неперехватываемым,
+  а fallback запрещён, чтобы не создать дубль.
 - Успешная генерация контента без успешной Telegram-доставки не создаёт processed
   marker.
 - Логи и диагностические ответы не должны содержать секреты.

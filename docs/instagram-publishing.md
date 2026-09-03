@@ -46,9 +46,13 @@ XRAY_ENABLED=1 scripts/build_function_zip.sh
   the five-minute `retry_only` trigger retries only that retained item.
 - The state key starts with `instagram_`, keeping deduplication independent of
   Telegram.
+- Immediately before the first Meta request, the claim becomes `attempting`.
+  That state is not reclaimed after the normal lease expires, so a crash after
+  Meta accepts a request cannot cause an automatic duplicate.
 - After Meta confirms publication, the delivery claim becomes `sent`, then the
   processed marker is written. A process crash between these operations is
   reconciled without another post.
-- A request with an ambiguous network outcome retains the claim and alerts the
-  administrator; it is not blindly retried because Instagram may already have
-  created a post.
+- Network errors, HTTP 5xx, malformed successful responses and a missing publish
+  acknowledgement become `uncertain` and alert the administrator. For a final
+  result the outbox item is removed; any retry is manual after checking
+  Instagram, because Meta may already have created a post.
