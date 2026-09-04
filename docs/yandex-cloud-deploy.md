@@ -83,6 +83,13 @@ scripts/build_function_zip.sh
 Скрипт создаёт `dist/function.zip` и не включает `.venv`, `.git`, `.pytest_cache` и локальные секреты.
 Архив содержит исходники и `requirements.txt`; зависимости устанавливаются в Linux-среде Cloud Functions, поэтому локальные platform-specific wheels в него не попадают.
 
+Прямая загрузка архива в Cloud Functions ограничена 3,5 МБ. Для
+большего ZIP задайте `YC_FUNCTION_PACKAGE_BUCKET`: deploy-скрипт загрузит
+архив в `function-packages/` и передаст Cloud Functions его SHA-256. Используйте
+отдельный или служебный приватный bucket; публичный bucket медиафайлов для
+этого не подходит. Для prefix нужен lifecycle, удаляющий устаревшие package-архивы
+после принятого окна rollback.
+
 ## 5. Настройка функции
 
 Параметры:
@@ -341,6 +348,7 @@ YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
+YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
 YC_DEPLOY_APPROVED=1 \
 scripts/deploy_yandex_function.sh deploy
 ```
@@ -349,11 +357,24 @@ scripts/deploy_yandex_function.sh deploy
 
 1. Повторная read-only проверка production-конфигурации и таймеров.
 2. Сборка ZIP.
-3. Создание версии с тегом `candidate` и полной копией настроек.
+3. При заданном `YC_FUNCTION_PACKAGE_BUCKET` загрузка ZIP в приватный bucket,
+   затем создание версии с тегом `candidate` и полной копией настроек.
 4. Вызов `candidate` с `dry_run=true`.
 5. Перенос тега `production` только при `statusCode=200` и подтверждённом
    `dry_run=true`.
 6. Проверка, что production-тег указывает на новую версию.
+
+После deploy повторите `check` и вызовите уже production-тег безопасным
+smoke-запросом:
+
+```bash
+yc serverless function invoke <function_id> \
+  --tag production \
+  --data '{"limit":1,"dry_run":true}'
+```
+
+Успех: `statusCode=200`, тело содержит `dry_run=true`; отправки и запись
+production-состояния не выполняются.
 
 Настраиваемые параметры:
 
@@ -362,6 +383,7 @@ YC_FOLDER_ID=<expected_folder_id>
 YC_PRODUCTION_TAG=production
 YC_CANDIDATE_TAG=candidate
 YC_DRY_RUN_PAYLOAD={"limit":1,"dry_run":true}
+YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket>
 ```
 
 Память, timeout и service account вручную не задаются: они копируются из
