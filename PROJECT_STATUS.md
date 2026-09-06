@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 4 сентября 2026 года.
+Обновлено: 6 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,15 +15,19 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 4 сентября 2026, версия `d4efef6caa8g4qd6u7hc`;
-  таймеры вызывают актуальную версию по тегу `production`.
+- Последний production-деплой: 6 сентября 2026, версия `d4e8lrfg9ihbfjsct4ob`
+  из Git `1e526b4`; таймеры вызывают её по тегу `production`. Предыдущая версия
+  `d4efef6caa8g4qd6u7hc` закреплена тегом `rollback`.
+- Release-архив хранится в приватном unversioned bucket
+  `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
+  `function-packages/` через 30 дней. Release manifest хранится отдельно.
 - В production включён флаг `ENABLE_LIQUIPEDIA_FINAL_CARDS=1`; Liquipedia fallback
   остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
-- Полная release-проверка: 366 тестов и сборка архива основной
-  функции. Candidate `d4efef6caa8g4qd6u7hc` прошёл `dry_run` до
-  переключения тега; после переключения production dry-run вернул
-  `200`, `dry_run=true` и не выполнил отправок.
+- Полная release-проверка: 393 теста и сборка архива основной функции. Candidate
+  `d4e8lrfg9ihbfjsct4ob` прошёл isolated `dry_run`; после promote production
+  smoke вернул `200`, `dry_run=true`, не обнаружил startup-ошибок и не выполнил
+  отправок.
 - CI проверяет зависимости, безопасность, компиляцию, pytest и сборку архива.
 
 ## Расписание jobs
@@ -127,13 +131,26 @@ production и сверки фактического состояния. Теку
   карточек; его работу с Instagram Graph API нужно подтвердить ближайшим штатным
   Instagram-выпуском. Неуспешный приватный Instagram test invocation (`502`) не
   повторялся, чтобы исключить дубль.
-- Локально подготовлен новый release-процесс: deploy-скрипт копирует environment
+- Новый release-процесс применён 6 сентября: deploy-скрипт копирует environment
   variables и Lockbox bindings из production, candidate собирается один раз,
   проходит dry-run и анализ startup-логов и сохраняется в release manifest.
   Отдельный `promote` переключает тег без повторной сборки, выполняет production
   smoke и при его ошибке проверяемо откатывается. Для ZIP больше 3,5 МБ
-  обязателен проверенный приватный package bucket с lifecycle. В production этот
-  процесс ещё не применялся.
+  обязателен проверенный приватный package bucket с lifecycle. Manifest связывает
+  Git SHA `1e526b4`, SHA-256 архива
+  `f02d2587142eda26e79c9d92a0155d5009463ca60ea984f673f9adfabeee7386` и обе
+  версии. Ручной rollback в production намеренно не запускался после успешного
+  smoke; готовность команды покрыта failure-injection тестами и тегом `rollback`.
+
+## Релиз 6 сентября 2026
+
+- Создан отдельный private package bucket с 30-дневным lifecycle для
+  `function-packages/`; media и state bucket не менялись.
+- Candidate `d4e8lrfg9ihbfjsct4ob` создан из уже собранного архива размером
+  16 339 780 байт, прошёл dry-run и анализ startup-логов.
+- После явного подтверждения `promote` переключил production на candidate без
+  повторной сборки. Все пять timer trigger остались закреплены за
+  `production`; post-deploy smoke прошёл.
 
 ## Релиз 4 сентября 2026
 
