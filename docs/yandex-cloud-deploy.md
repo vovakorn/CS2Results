@@ -231,7 +231,8 @@ dry-run, проверяет startup-ошибки в логах и сохраня
 `dist/releases/<candidate_version_id>.json` и `release-manifests/` package bucket.
 Таймеры и `production` не меняются. Candidate требует чистого Git working tree.
 Smoke ограничен локальными тайм-аутами: по умолчанию 150 секунд на invocation и
-30 секунд на чтение логов; при превышении candidate считается не прошедшим.
+30 секунд на чтение фиксированного интервала логов; при превышении candidate
+считается не прошедшим.
 Его стандартный payload запускает `analytics/import_metrics` с `dry_run=true`:
 он проверяет запуск handler без сетевых запросов, записи состояния или публикации.
 Для проверки источников задайте отдельный `YC_DRY_RUN_PAYLOAD`; он всё равно

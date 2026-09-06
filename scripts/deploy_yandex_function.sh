@@ -678,6 +678,7 @@ run_version_smoke() {
   local tag="$1"
   local version_id="$2"
   local started_at
+  local logs_until
   local checked_at
   local invoke_output=""
   local response_body=""
@@ -713,8 +714,10 @@ run_version_smoke() {
   if (( SMOKE_LOG_WAIT_SECONDS > 0 )); then
     sleep "${SMOKE_LOG_WAIT_SECONDS}"
   fi
+  logs_until="$(utc_now)"
   if ! logs_output="$(run_with_timeout "${SMOKE_LOG_TIMEOUT_SECONDS}" "${YC_BIN}" serverless function version logs "${version_id}" \
     --since "${started_at}" \
+    --until "${logs_until}" \
     --levels error,fatal --limit 1000 \
     --format json)"; then
     [[ -n "${error_code}" ]] || error_code="log_read_failed"
