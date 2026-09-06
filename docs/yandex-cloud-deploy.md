@@ -49,10 +49,14 @@ TELEGRAM_MEDIA_CARDS=0
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
-YC_DEPLOY_APPROVED=1 \
+YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
 YC_TELEGRAM_PROXY_SECRET_ID=<lockbox_secret_id> \
 YC_TELEGRAM_PROXY_SECRET_VERSION_ID=<pinned_version_id> \
-scripts/deploy_yandex_function.sh deploy
+scripts/deploy_yandex_function.sh candidate
+
+YC_FUNCTION_ID=<function_id> \
+YC_PROMOTE_APPROVED=1 \
+scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
 ```
 
 Значение `TELEGRAM_PROXY_URL` не передавайте в командной строке и не кладите в
@@ -83,12 +87,32 @@ scripts/build_function_zip.sh
 Скрипт создаёт `dist/function.zip` и не включает `.venv`, `.git`, `.pytest_cache` и локальные секреты.
 Архив содержит исходники и `requirements.txt`; зависимости устанавливаются в Linux-среде Cloud Functions, поэтому локальные platform-specific wheels в него не попадают.
 
-Прямая загрузка архива в Cloud Functions ограничена 3,5 МБ. Для
-большего ZIP задайте `YC_FUNCTION_PACKAGE_BUCKET`: deploy-скрипт загрузит
-архив в `function-packages/` и передаст Cloud Functions его SHA-256. Используйте
-отдельный или служебный приватный bucket; публичный bucket медиафайлов для
-этого не подходит. Для prefix нужен lifecycle, удаляющий устаревшие package-архивы
-после принятого окна rollback.
+Прямая загрузка архива в Cloud Functions ограничена 3,5 МБ. Deploy-скрипт
+измеряет готовый ZIP до обращения к Cloud Functions и для архива больше
+3 500 000 байт требует `YC_FUNCTION_PACKAGE_BUCKET`. Архив загружается под
+content-addressed ключом `function-packages/<git_sha>/<sha256>.zip`, а его
+SHA-256 передаётся Cloud Functions.
+
+Используйте отдельный приватный bucket; публичные media bucket для этого не
+подходят. Перед созданием candidate скрипт проверяет folder, anonymous access,
+публичные ACL/policy и наличие lifecycle, удаляющего `function-packages/`
+через срок до 30 дней (фактическое удаление выполняется асинхронно).
+Шаблон рассчитан на bucket без versioning; versioned bucket скрипт отклоняет,
+чтобы expiration не оставлял платные noncurrent-версии.
+Шаблон правила: `infra/function_package_lifecycle.json`.
+Для отдельного package bucket его можно применить один раз:
+
+```bash
+yc storage bucket update \
+  --name <private_package_bucket> \
+  --lifecycle-rules-from-file infra/function_package_lifecycle.json
+```
+
+Команда заменяет lifecycle-конфигурацию bucket целиком. Если bucket не выделен
+только под function packages, сначала объедините правило с существующими.
+Правило не затрагивает `release-manifests/`: журнал релизов сохраняется дольше
+архивов. Удаление ZIP не удаляет уже созданную версию Cloud Functions; для
+быстрого отката предыдущая версия удерживается тегом `rollback`.
 
 ## 5. Настройка функции
 
@@ -97,7 +121,7 @@ scripts/build_function_zip.sh
 ```text
 Runtime: Python 3.12
 Handler: cs2bot.main.handler
-Timeout: 30-60 seconds
+Timeout: 120 seconds (значение по умолчанию в release-скрипте)
 Memory: 256-512 MB
 ```
 
@@ -197,11 +221,15 @@ TIER1_FILTER_CONFIG_PATH=tier1_filter.json
 candidate-режим deploy-скрипта:
 
 ```bash
-YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh candidate
+YC_FUNCTION_ID=<function_id> \
+YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
+scripts/deploy_yandex_function.sh candidate
 ```
 
-Он создаёт новую версию с тегом `candidate`, выполняет dry-run и не меняет
-таймеры или `production`.
+Он один раз собирает архив, создаёт новую версию с тегом `candidate`, выполняет
+dry-run, проверяет startup-ошибки в логах и сохраняет release manifest в
+`dist/releases/<candidate_version_id>.json` и `release-manifests/` package bucket.
+Таймеры и `production` не меняются. Candidate требует чистого Git working tree.
 
 ## 7. Timer triggers
 
@@ -287,25 +315,33 @@ Liquipedia shadow; claims и processed markers предотвращают пар
 
 ## 8. Rollback
 
-Deploy-скрипт выводит ID предыдущей и новой production-версии. Для rollback
-перенесите стабильный тег на предыдущую версию:
+Release manifest хранит ID предыдущей и новой production-версии. Для
+проверяемого rollback выполните одну команду:
 
 ```bash
-yc serverless function version set-tag --id <previous_version_id> --tag production
+YC_FUNCTION_ID=<function_id> \
+YC_ROLLBACK_APPROVED=1 \
+scripts/deploy_yandex_function.sh rollback dist/releases/<candidate_version_id>.json
 ```
 
-После rollback проверьте:
-
-- доступ к Object Storage;
-- отсутствие дублей;
-- Telegram отправку в dry-run и production режимах.
+Команда отказывается работать, если текущий production не совпадает с candidate
+или предыдущей версией из manifest. Второй случай позволяет повторить проверку
+после прерванного rollback. После переноса тега она повторно проверяет тег, все пять timer
+trigger, production dry-run и startup-ошибки предыдущей версии. Реальная
+Telegram-публикация не выполняется.
+При откате на старый код, созданный до исправления dry-run алертов, сбой
+источника всё ещё может вызвать административный алерт этой старой версии.
 
 ## 9. Deploy script
 
 Скрипт использует версию с тегом `production` как единственный источник настроек.
-Он переносит runtime, handler, память, timeout, service account, concurrency,
+Он переносит runtime, handler, память, service account, concurrency,
 обычные переменные окружения, параметры логирования и закреплённые ссылки
-Lockbox. Значения секретов скрипт не читает и не выводит.
+Lockbox. Значения секретов скрипт не читает и не выводит. Создание candidate и
+promote разделены: после проверки candidate production продвигается строго по
+его manifest без повторной сборки и создания версии.
+Timeout по существующему production-профилю скрипта — `120s`; его можно
+изменить при создании candidate через `YC_EXECUTION_TIMEOUT`.
 
 ### Одноразовая подготовка
 
@@ -342,39 +378,53 @@ YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
 привязок зависит от включённых источников; их значения команда не читает. Код и
 облачные ресурсы она не меняет.
 
-### Deploy
+### Candidate
 
-Только после явного утверждения production-релиза:
+Создайте и проверьте release candidate:
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
 YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
-YC_DEPLOY_APPROVED=1 \
-scripts/deploy_yandex_function.sh deploy
+scripts/deploy_yandex_function.sh candidate
 ```
 
-Последовательность безопасного deploy:
+Последовательность candidate:
 
-1. Повторная read-only проверка production-конфигурации и таймеров.
-2. Сборка ZIP.
-3. При заданном `YC_FUNCTION_PACKAGE_BUCKET` загрузка ZIP в приватный bucket,
-   затем создание версии с тегом `candidate` и полной копией настроек.
-4. Вызов `candidate` с `dry_run=true`.
-5. Перенос тега `production` только при `statusCode=200` и подтверждённом
-   `dry_run=true`.
-6. Проверка, что production-тег указывает на новую версию.
+1. Проверка чистоты Git working tree и однократная сборка ZIP.
+2. Проверка размера и SHA-256 до обращения к Cloud Functions.
+3. Проверка приватности package bucket и lifecycle.
+4. Read-only проверка production-конфигурации и всех пяти таймеров, затем
+   загрузка архива и создание версии с тегом `candidate`.
+5. Вызов candidate с `dry_run=true` и анализ startup-ошибок в логах.
+6. Сохранение manifest с Git SHA, SHA-256 архива, package object и ID обеих
+   версий.
 
-После deploy повторите `check` и вызовите уже production-тег безопасным
-smoke-запросом:
+### Promote
+
+После проверки manifest и явного утверждения production-релиза:
 
 ```bash
-yc serverless function invoke <function_id> \
-  --tag production \
-  --data '{"limit":1,"dry_run":true}'
+YC_FUNCTION_ID=<function_id> \
+YC_PROMOTE_APPROVED=1 \
+scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
 ```
 
-Успех: `statusCode=200`, тело содержит `dry_run=true`; отправки и запись
-production-состояния не выполняются.
+`promote` проверяет, что production не изменился после создания candidate, а
+тег `candidate` всё ещё указывает на версию из manifest. Затем он закрепляет
+старую production-версию тегом `rollback`, переносит `production` на candidate и
+автоматически выполняет post-deploy smoke. При неуспехе production возвращается
+на предыдущую версию, а rollback проверяется тем же dry-run и анализом логов.
+
+Post-deploy smoke можно повторить отдельно:
+
+```bash
+YC_FUNCTION_ID=<function_id> \
+scripts/deploy_yandex_function.sh smoke dist/releases/<candidate_version_id>.json
+```
+
+Успех: production-тег и все пять timer trigger проверены, `statusCode=200`, тело
+содержит `dry_run=true`, в логах новой версии нет startup/import/runtime ошибок.
+Отправки и запись production-состояния не выполняются.
 
 Настраиваемые параметры:
 
@@ -382,9 +432,27 @@ production-состояния не выполняются.
 YC_FOLDER_ID=<expected_folder_id>
 YC_PRODUCTION_TAG=production
 YC_CANDIDATE_TAG=candidate
+YC_ROLLBACK_TAG=rollback
 YC_DRY_RUN_PAYLOAD={"limit":1,"dry_run":true}
 YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket>
+YC_DIRECT_UPLOAD_MAX_BYTES=3500000
+YC_EXPECTED_TRIGGER_COUNT=5
+YC_PACKAGE_LIFECYCLE_MAX_DAYS=30
+YC_RELEASE_DIR=dist/releases
 ```
 
-Память, timeout и service account вручную не задаются: они копируются из
-действующей production-версии, что исключает случайное расхождение конфигурации.
+Память и service account копируются из действующей production-версии.
+Manifest содержит исходный smoke payload и результаты проверок без ответов
+функции, сырых логов или значений секретов. В payload нельзя класть секреты.
+Теги из manifest должны совпадать с настройками команды; смена локального
+`YC_DRY_RUN_PAYLOAD` не меняет запрос проверенного релиза.
+
+Команды одного checkout сериализуются локальным lock в `dist/release-locks/`.
+Релизы с разных компьютеров пока нужно выполнять последовательно: повторное
+чтение тега обнаруживает изменения, но облачный `set-tag` не предоставляет
+скрипту условную запись по ожидаемой старой версии. Прерванный релиз имеет
+сохранённый manifest; после сверки тега используйте `smoke` или `rollback`.
+Один снимок startup-логов после паузы (по умолчанию 5 секунд,
+`YC_SMOKE_LOG_WAIT_SECONDS`) не заменяет дальнейшее наблюдение: задержавшиеся
+записи или ошибки под нагрузкой могут появиться позже. Непрочитанные логи
+считаются неуспехом smoke.

@@ -1558,7 +1558,8 @@ def _handle_content_job(
             error_type=type(exc).__name__,
             error=_safe_error_message(exc),
         )
-        _notify_admin(f"{job}_source_unavailable", f"Не удалось подготовить выпуск «{job}».")
+        if not dry_run:
+            _notify_admin(f"{job}_source_unavailable", f"Не удалось подготовить выпуск «{job}».")
         return _error_response(502, "match_source_unavailable")
 
     if not text:
@@ -2075,7 +2076,8 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
             error_type=type(exc).__name__,
             error=_safe_error_message(exc),
         )
-        _notify_admin("radar_discovery_source_unavailable", "Не удалось найти турниры для турнирного радара.")
+        if not dry_run:
+            _notify_admin("radar_discovery_source_unavailable", "Не удалось найти турниры для турнирного радара.")
         return _error_response(502, "match_source_unavailable")
 
     candidates = _radar_discovery_candidates(fetched)
@@ -2301,10 +2303,11 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 error_type=type(exc).__name__,
                 error=_safe_error_message(exc),
             )
-            _notify_admin(
-                "match_source_unavailable",
-                "Источник матчей недоступен, пуст или не обновлялся более 48 часов.",
-            )
+            if not dry_run:
+                _notify_admin(
+                    "match_source_unavailable",
+                    "Источник матчей недоступен, пуст или не обновлялся более 48 часов.",
+                )
             return _error_response(502, "match_source_unavailable")
 
     unconfirmed_tier1 = [

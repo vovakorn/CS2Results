@@ -461,13 +461,20 @@ scripts/build_function_zip.sh
 
 ```bash
 YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
-YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh candidate
-YC_FUNCTION_ID=<function_id> YC_DEPLOY_APPROVED=1 scripts/deploy_yandex_function.sh deploy
+YC_FUNCTION_ID=<function_id> YC_FUNCTION_PACKAGE_BUCKET=<private_bucket> \
+  scripts/deploy_yandex_function.sh candidate
+YC_FUNCTION_ID=<function_id> YC_PROMOTE_APPROVED=1 \
+  scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
+YC_FUNCTION_ID=<function_id> YC_ROLLBACK_APPROVED=1 \
+  scripts/deploy_yandex_function.sh rollback dist/releases/<candidate_version_id>.json
 ```
 
 Скрипт копирует конфигурацию и ссылки Lockbox из версии с тегом `production`,
-проверяет candidate через `dry_run` и только затем переносит production-тег.
-Таймеры должны быть заранее привязаны к тегу `production`, а не к `$latest`.
+проверяет размер и SHA-256 архива, приватность/lifecycle package bucket и
+candidate через `dry_run`. Команда `promote` переносит production-тег на точную
+версию из release manifest без повторной сборки, выполняет post-deploy smoke и
+автоматически откатывает неуспешный релиз. Таймеры должны быть заранее привязаны
+к тегу `production`, а не к `$latest`.
 
 ## Архитектурные контракты
 

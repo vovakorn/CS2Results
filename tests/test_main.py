@@ -1290,6 +1290,31 @@ def test_handler_returns_generic_fetch_error_and_redacts_logs(monkeypatch, caplo
     assert "SECRET" not in caplog.text
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize(
+    ("job", "fetcher"),
+    [
+        ("results", "get_new_finished_matches"),
+        ("schedule", "fetch_upcoming_matches"),
+        ("digest", "fetch_pandascore_finished_matches"),
+        ("radar_discovery", "fetch_upcoming_matches"),
+    ],
+)
+def test_source_failure_only_alerts_outside_dry_run(monkeypatch, job, fetcher, dry_run):
+    async def fail(*args, **kwargs):
+        raise RuntimeError("source unavailable")
+
+    alerts = []
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "test-chat", "teams": None}])
+    monkeypatch.setattr(main, fetcher, fail)
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
+
+    response = main.handler({"job": job, "dry_run": dry_run}, None)
+
+    assert response["statusCode"] == 502
+    assert len(alerts) == (0 if dry_run else 1)
+
+
 def test_invalid_dry_run_value_cannot_fall_through_to_production(monkeypatch):
     called = False
 

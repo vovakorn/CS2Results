@@ -127,8 +127,13 @@ production и сверки фактического состояния. Теку
   карточек; его работу с Instagram Graph API нужно подтвердить ближайшим штатным
   Instagram-выпуском. Неуспешный приватный Instagram test invocation (`502`) не
   повторялся, чтобы исключить дубль.
-- Deploy-скрипт копирует environment variables и Lockbox bindings из production,
-  выполняет candidate dry-run и только затем переключает тег.
+- Локально подготовлен новый release-процесс: deploy-скрипт копирует environment
+  variables и Lockbox bindings из production, candidate собирается один раз,
+  проходит dry-run и анализ startup-логов и сохраняется в release manifest.
+  Отдельный `promote` переключает тег без повторной сборки, выполняет production
+  smoke и при его ошибке проверяемо откатывается. Для ZIP больше 3,5 МБ
+  обязателен проверенный приватный package bucket с lifecycle. В production этот
+  процесс ещё не применялся.
 
 ## Релиз 4 сентября 2026
 
@@ -184,7 +189,8 @@ production и сверки фактического состояния. Теку
 3. Создать один PR и дождаться CI.
 4. После явного разрешения пользователя выполнить merge.
 5. Запустить `scripts/deploy_yandex_function.sh check`.
-6. Выполнить один deploy, candidate dry-run и переключение production-тега.
+6. Создать candidate, проверить release manifest и отдельной командой выполнить
+   `promote`; убедиться, что автоматический production smoke прошёл.
 7. Провести один контролируемый тестовый пост, только если он нужен.
 8. Обновить этот файл и `PROJECT_CONTEXT.md`, если production-состояние изменилось.
 

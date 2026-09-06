@@ -47,13 +47,23 @@
 
 ### Качество production-deploy
 
-- [ ] Добавить раннюю проверку размера ZIP: до обращения к Cloud Functions
+- [x] Добавить раннюю проверку размера ZIP: до обращения к Cloud Functions
   требовать `YC_FUNCTION_PACKAGE_BUCKET` для архива больше 3,5 МБ. Проверять,
-  что bucket приватный, и задать lifecycle для удаления старых package-архивов.
-- [ ] Разделить `candidate` и `promote`: повторная команда должна переключать тег на
+  что bucket приватный; подготовить lifecycle для удаления старых package-архивов.
+- [ ] Провести первый облачный релиз новым процессом, не меняя production до
+  успешной проверки candidate:
+  1. создать приватный package bucket и применить lifecycle для
+     `function-packages/`;
+  2. заполнить production-настройки функции, service account, bucket, Lockbox и
+     payload smoke;
+  3. создать candidate и проверить manifest и startup-логи;
+  4. после отдельного подтверждения выполнить promote, убедиться, что пять
+     trigger используют тег `production`, и проверить rollback по manifest.
+  Локальные проверки и шаблон готовы; облачные настройки пока не изменены.
+- [x] Разделить `candidate` и `promote`: повторная команда должна переключать тег на
   уже проверенный immutable candidate, а не пересобирать код. Сохранять release manifest с
   Git SHA, SHA-256 архива, ID предыдущей и новой версий.
-- [ ] Автоматизировать post-deploy smoke: проверка production-тега и всех пяти
+- [x] Автоматизировать post-deploy smoke: проверка production-тега и всех пяти
   timer trigger, production `dry_run=true`, проверка startup-ошибок в логах и одна
   команда rollback на предыдущую версию с повторной проверкой. Реальный пост оставить
   отдельным явно подтверждаемым шагом.
