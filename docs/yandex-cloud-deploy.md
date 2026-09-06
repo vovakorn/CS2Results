@@ -230,6 +230,8 @@ scripts/deploy_yandex_function.sh candidate
 dry-run, проверяет startup-ошибки в логах и сохраняет release manifest в
 `dist/releases/<candidate_version_id>.json` и `release-manifests/` package bucket.
 Таймеры и `production` не меняются. Candidate требует чистого Git working tree.
+Smoke ограничен локальными тайм-аутами: по умолчанию 150 секунд на invocation и
+30 секунд на чтение логов; при превышении candidate считается не прошедшим.
 
 ## 7. Timer triggers
 

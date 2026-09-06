@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 YC_BIN="${YC_BIN:-yc}"
 JQ_BIN="${JQ_BIN:-jq}"
+PYTHON_BIN="${YC_PYTHON_BIN:-python3}"
 BUILD_SCRIPT="${YC_BUILD_SCRIPT:-${ROOT_DIR}/scripts/build_function_zip.sh}"
 
 FUNCTION_ID="${YC_FUNCTION_ID:-}"
@@ -46,6 +47,8 @@ MANIFEST_PREFIX="${YC_RELEASE_MANIFEST_PREFIX:-release-manifests}"
 RELEASE_DIR="${YC_RELEASE_DIR:-${ROOT_DIR}/dist/releases}"
 PACKAGE_LIFECYCLE_MAX_DAYS="${YC_PACKAGE_LIFECYCLE_MAX_DAYS:-30}"
 SMOKE_LOG_WAIT_SECONDS="${YC_SMOKE_LOG_WAIT_SECONDS:-5}"
+SMOKE_INVOKE_TIMEOUT_SECONDS="${YC_SMOKE_INVOKE_TIMEOUT_SECONDS:-150}"
+SMOKE_LOG_TIMEOUT_SECONDS="${YC_SMOKE_LOG_TIMEOUT_SECONDS:-30}"
 
 readonly -a REQUIRED_ENVIRONMENT=(
   ALERT_COOLDOWN_SECONDS
@@ -182,6 +185,22 @@ acquire_release_lock() {
   trap 'rmdir "${RELEASE_LOCK}" 2>/dev/null || true' EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
+}
+
+run_with_timeout() {
+  local timeout_seconds="$1"
+  shift
+
+  "${PYTHON_BIN}" -c '
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(sys.argv[2:], timeout=int(sys.argv[1]), check=False)
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+raise SystemExit(result.returncode)
+' "${timeout_seconds}" "$@"
 }
 
 validate_package_bucket() {
@@ -605,11 +624,14 @@ preflight() {
 
   require_command "${YC_BIN}"
   require_command "${JQ_BIN}"
+  require_command "${PYTHON_BIN}"
   validate_upload_limit
   validate_positive_integer "YC_EXPECTED_TRIGGER_COUNT" "${EXPECTED_TRIGGER_COUNT}"
   validate_positive_integer "YC_PACKAGE_LIFECYCLE_MAX_DAYS" "${PACKAGE_LIFECYCLE_MAX_DAYS}"
   [[ "${SMOKE_LOG_WAIT_SECONDS}" =~ ^[0-9]+$ ]] || die "YC_SMOKE_LOG_WAIT_SECONDS must be a non-negative integer"
   (( SMOKE_LOG_WAIT_SECONDS <= 60 )) || die "YC_SMOKE_LOG_WAIT_SECONDS must be at most 60"
+  validate_positive_integer "YC_SMOKE_INVOKE_TIMEOUT_SECONDS" "${SMOKE_INVOKE_TIMEOUT_SECONDS}"
+  validate_positive_integer "YC_SMOKE_LOG_TIMEOUT_SECONDS" "${SMOKE_LOG_TIMEOUT_SECONDS}"
   printf '%s' "${DRY_RUN_PAYLOAD}" | "${JQ_BIN}" -e \
     'type == "object" and .dry_run == true and (has("messages") | not)' >/dev/null \
     || die "YC_DRY_RUN_PAYLOAD must be direct JSON with dry_run=true and no timer messages envelope"
@@ -669,9 +691,9 @@ run_version_smoke() {
   started_at="$(utc_now)"
   if ! verify_tag_points_to "${tag}" "${version_id}"; then
     error_code="tag_mismatch_before_smoke"
-  elif ! invoke_output="$("${YC_BIN}" serverless function invoke "${FUNCTION_ID}" \
+  elif ! invoke_output="$(run_with_timeout "${SMOKE_INVOKE_TIMEOUT_SECONDS}" "${YC_BIN}" serverless function invoke "${FUNCTION_ID}" \
     --tag "${tag}" \
-    --data "${DRY_RUN_PAYLOAD}" 2>/dev/null)"; then
+    --data "${DRY_RUN_PAYLOAD}")"; then
     error_code="invoke_failed"
   else
     status_code="$(printf '%s' "${invoke_output}" | "${JQ_BIN}" -r '.statusCode // empty' 2>/dev/null || true)"
@@ -691,10 +713,10 @@ run_version_smoke() {
   if (( SMOKE_LOG_WAIT_SECONDS > 0 )); then
     sleep "${SMOKE_LOG_WAIT_SECONDS}"
   fi
-  if ! logs_output="$("${YC_BIN}" serverless function version logs "${version_id}" \
+  if ! logs_output="$(run_with_timeout "${SMOKE_LOG_TIMEOUT_SECONDS}" "${YC_BIN}" serverless function version logs "${version_id}" \
     --since "${started_at}" \
     --levels error,fatal --limit 1000 \
-    --format json 2>/dev/null)"; then
+    --format json)"; then
     [[ -n "${error_code}" ]] || error_code="log_read_failed"
   elif ! printf '%s' "${logs_output}" | "${JQ_BIN}" -e . >/dev/null 2>&1; then
     [[ -n "${error_code}" ]] || error_code="invalid_log_response"
