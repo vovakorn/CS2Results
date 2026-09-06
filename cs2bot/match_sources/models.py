@@ -48,7 +48,7 @@ class SourceReferences(BaseModel):
 class MatchNormalized(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, validate_assignment=True)
 
-    source: Literal["pandascore", "liquipedia", "cs2api", "hltv"]
+    source: Literal["pandascore", "liquipedia"]
     match_id: str | None = Field(default=None, max_length=200)
     match_url: str | None = Field(default=None, max_length=2048)
 

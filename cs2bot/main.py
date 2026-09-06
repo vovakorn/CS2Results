@@ -138,14 +138,10 @@ _monotonic = time.monotonic
 MATCH_URL_HOSTS = {
     "pandascore": {"pandascore.co", "www.pandascore.co"},
     "liquipedia": {"liquipedia.net", "www.liquipedia.net"},
-    "cs2api": {"bo3.gg", "www.bo3.gg"},
-    "hltv": {"hltv.org", "www.hltv.org"},
 }
 SOURCE_LABELS = {
     "pandascore": "PandaScore",
     "liquipedia": "Liquipedia",
-    "cs2api": "BO3.gg",
-    "hltv": "HLTV",
 }
 RUSSIAN_MONTHS = (
     "",
@@ -620,7 +616,7 @@ def _get_attr(obj: Any, key: str, default: str = "") -> str:
         if value is not None:
             return str(value)
 
-    # вариант для dict, который мы получаем из HLTV
+    # вариант для dict из внешнего источника
     if isinstance(obj, dict):
         value = obj.get(key)
         if value is not None:

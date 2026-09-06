@@ -1,0 +1,42 @@
+[
+  {
+    "source": "pandascore",
+    "match_id": "984321",
+    "match_url": "https://pandascore.co/matches/984321",
+    "tournament_name": "IEM Cologne 2026",
+    "team1_name": "NAVI",
+    "team2_name": "FaZe",
+    "score1": 2,
+    "score2": 1,
+    "best_of": 3,
+    "maps": [
+      {"name": "Mirage", "score1": 13, "score2": 11},
+      {"name": "Ancient", "score1": 7, "score2": 13},
+      {"name": "Inferno", "score1": 13, "score2": 10}
+    ],
+    "start_date": "2026-02-17T10:30:00Z",
+    "end_date": "2026-02-17T12:40:00Z",
+    "location": "Cologne, Germany",
+    "prize_pool_usd": 1000000,
+    "operator": "ESL"
+  },
+  {
+    "source": "liquipedia",
+    "match_id": "abcdefghij_R01-M001",
+    "match_url": "https://liquipedia.net/counterstrike/IEM_Cologne_2026/Playoffs",
+    "tournament_name": "IEM Cologne 2026",
+    "competition_key": "IEM Cologne 2026",
+    "team1_name": "Natus Vincere",
+    "team2_name": "FaZe Clan",
+    "score1": 2,
+    "score2": 1,
+    "best_of": 3,
+    "maps": [
+      {"name": "Mirage", "score1": 13, "score2": 9},
+      {"name": "Nuke", "score1": 13, "score2": 11}
+    ],
+    "date": "2026-02-17T12:40:00Z",
+    "is_lan": true,
+    "tournament_tier": "s"
+  }
+]

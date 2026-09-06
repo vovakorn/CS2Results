@@ -224,9 +224,9 @@ class FakeMissingAfterConflictS3(FakeS3):
 
 def _match():
     return MatchNormalized(
-        source="hltv",
+        source="pandascore",
         match_id="2378481",
-        match_url="https://www.hltv.org/matches/2378481/test",
+        match_url="https://pandascore.co/matches/2378481/test",
         tournament_name="IEM Cologne 2026",
         team1_name="NAVI",
         team2_name="FaZe",
@@ -239,7 +239,7 @@ def _match():
 
 def test_is_processed_false_when_object_missing():
     s3 = FakeS3()
-    assert asyncio.run(is_processed("hltv_2378481", client=s3, bucket="bucket")) is False
+    assert asyncio.run(is_processed("pandascore_2378481", client=s3, bucket="bucket")) is False
 
 
 def test_logo_cache_round_trips_png_by_source_url():

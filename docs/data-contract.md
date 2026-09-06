@@ -181,7 +181,7 @@ invocation. При остальных сетевых ошибках, HTTP 5xx и
 1. PandaScore Fixtures adapter (`source=pandascore`).
 2. LiquipediaDB adapter (`source=liquipedia`), если `ENABLE_LIQUIPEDIA_FALLBACK=1`.
 
-Решение о fallback принимается после validation и freshness gate. Источники не объединяются в одном запуске. Явный выбор `pandascore` или `liquipedia` доступен для диагностики. Старые BO3.gg и HLTV адаптеры production selector не вызывает.
+Решение о fallback принимается после validation и freshness gate. Источники не объединяются в одном запуске. Явный выбор `pandascore` или `liquipedia` доступен для диагностики.
 
 ## Liquipedia shadow contract
 
