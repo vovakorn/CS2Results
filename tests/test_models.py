@@ -5,9 +5,9 @@ from cs2bot.match_sources.models import MatchNormalized, SourceReferences
 
 def _match(**kwargs):
     data = {
-        "source": "hltv",
+        "source": "pandascore",
         "match_id": "123456",
-        "match_url": "https://www.hltv.org/matches/123456/example",
+        "match_url": "https://pandascore.co/matches/123456/example",
         "tournament_name": "IEM Cologne 2026",
         "team1_name": "NAVI",
         "team2_name": "FaZe",
@@ -18,13 +18,13 @@ def _match(**kwargs):
     return MatchNormalized(**data)
 
 
-def test_legacy_match_uid_uses_source_match_id():
-    assert _match().legacy_match_uid == "hltv_123456"
+def test_source_specific_match_uid_uses_source_match_id():
+    assert _match().legacy_match_uid == "pandascore_123456"
 
 
-def test_legacy_match_uid_uses_match_url_when_id_missing():
-    match = _match(match_id=None, match_url="https://www.hltv.org/matches/123456/example-match")
-    assert match.legacy_match_uid == "hltv_example-match"
+def test_source_specific_match_uid_uses_match_url_when_id_missing():
+    match = _match(match_id=None, match_url="https://pandascore.co/matches/123456/example-match")
+    assert match.legacy_match_uid == "pandascore_example-match"
 
 
 def test_match_uid_requires_stable_identifier():
@@ -40,19 +40,19 @@ def test_match_accepts_start_and_end_dates():
 
 
 def test_canonical_uid_matches_across_sources_and_team_order():
-    hltv = _match(date="2026-02-17", score1=2, score2=1)
-    cs2api = _match(
-        source="cs2api",
+    pandascore = _match(date="2026-02-17", score1=2, score2=1)
+    liquipedia = _match(
+        source="liquipedia",
         match_id="984321",
-        match_url="https://bo3.gg/matches/984321",
+        match_url="https://liquipedia.net/counterstrike/IEM_Cologne_2026",
         date="2026-02-17T12:40:00Z",
         team1_name="FaZe",
         team2_name="NAVI",
         score1=1,
         score2=2,
     )
-    assert hltv.match_uid.startswith("match_v1_")
-    assert hltv.match_uid == cs2api.match_uid
+    assert pandascore.match_uid.startswith("match_v1_")
+    assert pandascore.match_uid == liquipedia.match_uid
 
 
 def test_canonical_uid_matches_provider_team_aliases_and_display_names():
@@ -81,7 +81,7 @@ def test_canonical_uid_matches_provider_team_aliases_and_display_names():
 
 
 def test_match_without_date_keeps_legacy_uid_to_avoid_false_collisions():
-    assert _match(date=None).match_uid == "hltv_123456"
+    assert _match(date=None).match_uid == "pandascore_123456"
 
 
 def test_source_references_and_tier_do_not_change_canonical_uid():
@@ -105,3 +105,9 @@ def test_source_references_and_tier_do_not_change_canonical_uid():
 def test_match_rejects_negative_score():
     with pytest.raises(ValueError):
         _match(score1=-1)
+
+
+@pytest.mark.parametrize("source", ["hltv", "cs2api"])
+def test_match_rejects_removed_legacy_sources(source):
+    with pytest.raises(ValueError):
+        _match(source=source)

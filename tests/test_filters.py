@@ -14,9 +14,9 @@ from cs2bot.match_sources.models import MatchNormalized, UpcomingMatchNormalized
 
 def _match(**kwargs):
     data = {
-        "source": "hltv",
+        "source": "pandascore",
         "match_id": "1",
-        "match_url": "https://www.hltv.org/matches/1/test",
+        "match_url": "https://pandascore.co/matches/1/test",
         "tournament_name": "IEM Cologne 2026",
         "team1_name": "NAVI",
         "team2_name": "FaZe",

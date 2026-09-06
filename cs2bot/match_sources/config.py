@@ -258,12 +258,3 @@ PANDASCORE_API_BASE_URL = os.getenv("PANDASCORE_API_BASE_URL", "https://api.pand
 LIQUIPEDIA_API_KEY = os.getenv("LIQUIPEDIA_API_KEY") or os.getenv("LPDB_API_KEY")
 LIQUIPEDIA_API_BASE_URL = os.getenv("LIQUIPEDIA_API_BASE_URL", "https://api.liquipedia.net/api/v3")
 LIQUIPEDIA_WIKI = os.getenv("LIQUIPEDIA_WIKI", "counterstrike")
-
-# Legacy sources remain in the repository only for migration tests and diagnostics.
-# Production source selection intentionally never calls them.
-HLTV_RESULTS_URL = "https://www.hltv.org/results"
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/125.0.0.0 Safari/537.36"
-)

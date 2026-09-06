@@ -1348,7 +1348,7 @@ def test_auto_accepts_liquipedia_as_only_configured_source(monkeypatch):
     assert called is True
 
 
-def test_legacy_source_is_rejected_before_fetch(monkeypatch):
+def test_unknown_source_is_rejected_before_fetch(monkeypatch):
     called = False
 
     async def fake_get_new_finished_matches(**kwargs):
@@ -1358,7 +1358,7 @@ def test_legacy_source_is_rejected_before_fetch(monkeypatch):
 
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
 
-    response = main.handler({"source": "hltv", "dry_run": True}, None)
+    response = main.handler({"source": "unsupported", "dry_run": True}, None)
 
     assert response["statusCode"] == 400
     assert called is False
