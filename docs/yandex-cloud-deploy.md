@@ -232,6 +232,10 @@ dry-run, проверяет startup-ошибки в логах и сохраня
 Таймеры и `production` не меняются. Candidate требует чистого Git working tree.
 Smoke ограничен локальными тайм-аутами: по умолчанию 150 секунд на invocation и
 30 секунд на чтение логов; при превышении candidate считается не прошедшим.
+Его стандартный payload запускает `analytics/import_metrics` с `dry_run=true`:
+он проверяет запуск handler без сетевых запросов, записи состояния или публикации.
+Для проверки источников задайте отдельный `YC_DRY_RUN_PAYLOAD`; он всё равно
+должен быть JSON-объектом с `dry_run: true` и без timer envelope `messages`.
 
 ## 7. Timer triggers
 

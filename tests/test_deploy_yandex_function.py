@@ -347,6 +347,16 @@ def test_candidate_preserves_configuration_and_writes_manifest(fake_cloud: dict[
     assert manifest["package_bucket"] == "package-bucket"
     assert manifest["package_object"].startswith("function-packages/")
     assert manifest["checks"]["candidate_smoke"]["dry_run_confirmed"] is True
+    invoke_call = next(call for call in calls if call[:3] == ["serverless", "function", "invoke"])
+    assert json.loads(invoke_call[invoke_call.index("--data") + 1]) == {
+        "job": "analytics",
+        "analytics_operation": "import_metrics",
+        "channel_id": "smoke",
+        "message_id": 1,
+        "views": 0,
+        "reactions": 0,
+        "dry_run": True,
+    }
 
 
 def test_promote_uses_validated_candidate_without_rebuilding(fake_cloud: dict[str, str]) -> None:

@@ -14,7 +14,7 @@ CANDIDATE_TAG="${YC_CANDIDATE_TAG:-candidate}"
 ROLLBACK_TAG="${YC_ROLLBACK_TAG:-rollback}"
 DRY_RUN_PAYLOAD="${YC_DRY_RUN_PAYLOAD:-}"
 if [[ -z "${DRY_RUN_PAYLOAD}" ]]; then
-  DRY_RUN_PAYLOAD='{"limit":1,"dry_run":true}'
+  DRY_RUN_PAYLOAD='{"job":"analytics","analytics_operation":"import_metrics","channel_id":"smoke","message_id":1,"views":0,"reactions":0,"dry_run":true}'
 fi
 LIQUIPEDIA_SECRET_ID="${YC_LIQUIPEDIA_SECRET_ID:-}"
 LIQUIPEDIA_SECRET_VERSION_ID="${YC_LIQUIPEDIA_SECRET_VERSION_ID:-}"
