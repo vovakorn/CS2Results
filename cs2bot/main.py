@@ -1507,6 +1507,89 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
         return "failed"
 
 
+def _send_schedule_context_to_telegram(
+    channel: dict[str, Any],
+    messages: Sequence[str],
+    matches: Sequence[UpcomingMatchNormalized],
+    local_now: datetime,
+    test_run_id: str | None,
+) -> None:
+    """Send optional context only after the main schedule is confirmed."""
+    if not messages:
+        return
+    channel_id = str(channel.get("id") or channel.get("name", "unknown"))
+    pending_messages = list(messages)
+    covers: list[bytes] = []
+    if TELEGRAM_MEDIA_CARDS and 1 <= len(matches) <= MAX_SCHEDULE_TOTAL_MATCHES:
+        try:
+            covers = render_schedule_context_covers(matches, local_now)
+            if len(covers) > 10:
+                covers = []
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "schedule_context_card_fallback",
+                channel=channel_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+    if covers:
+        prefix = "🧪 <b>Тестовая карточка</b>\n\n" if test_run_id else ""
+        attach_context = (
+            len(covers) == 1
+            and len(messages) == 1
+            and len(prefix + messages[0]) <= MAX_TELEGRAM_CAPTION_LENGTH
+        )
+        caption = prefix + (messages[0] if attach_context else "🔎 <b>Контекст к матчам дня</b>")
+        day_key = local_now.date().isoformat()
+        try:
+            if len(covers) == 1:
+                send_photo_to_telegram(
+                    channel["chat_id"],
+                    covers[0],
+                    caption,
+                    has_spoiler=False,
+                    filename=f"cs2-schedule-context-{day_key}.png",
+                )
+            else:
+                send_media_group_to_telegram(
+                    channel["chat_id"],
+                    covers,
+                    caption,
+                    filenames=[
+                        f"cs2-schedule-context-{day_key}-{index}.png"
+                        for index in range(1, len(covers) + 1)
+                    ],
+                )
+            if attach_context:
+                pending_messages = []
+        except TelegramDeliveryUncertainError:
+            # Do not repeat a caption whose delivery may already have succeeded.
+            raise
+        except TelegramDeliveryError as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "schedule_context_card_delivery_fallback",
+                channel=channel_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+    for message in pending_messages:
+        try:
+            send_to_telegram(channel["chat_id"], message)
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.WARNING,
+                "schedule_context_delivery_failed",
+                channel=channel_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+
+
 def _handle_content_job(
     job: str,
     dry_run: bool,
@@ -1621,7 +1704,7 @@ def _handle_content_job(
             )
     if card_supported and TELEGRAM_MEDIA_CARDS and job == "schedule":
         try:
-            telegram_media_cards = render_schedule_context_covers(selected, local_now)
+            telegram_media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
             if len(telegram_media_cards) > 10:
                 media_card_error = "too_many_tournament_cards"
                 telegram_media_cards = []
@@ -1675,7 +1758,6 @@ def _handle_content_job(
             content_uid = f"{content_uid}_test_{test_run_id}"
         claim = None
         telegram_confirmed = False
-        context_messages_to_send = list(schedule_context_messages)
         try:
             if asyncio.run(reconcile_content_delivery(content_uid, job)):
                 log_event(logger, logging.INFO, "delivery_state_reconciled", channel=channel_id, job=job)
@@ -1688,14 +1770,7 @@ def _handle_content_job(
             if telegram_media_cards:
                 try:
                     if job == "schedule":
-                        caption = text
-                        if len(telegram_media_cards) == 1 and len(schedule_context_messages) == 1:
-                            context_caption = schedule_context_messages[0]
-                            if test_run_id:
-                                context_caption = f"🧪 <b>Тестовая карточка</b>\n\n{context_caption}"
-                            if len(context_caption) <= MAX_TELEGRAM_CAPTION_LENGTH:
-                                caption = context_caption
-                                context_messages_to_send = []
+                        caption = format_schedule_photo_caption(local_now, len(selected))
                         filename = f"cs2-schedule-{day_key}.png"
                         has_spoiler = False
                     else:
@@ -1744,18 +1819,19 @@ def _handle_content_job(
             telegram_confirmed = True
             claim = asyncio.run(mark_delivery_claim_sent(claim))
             if job == "schedule":
-                for context_message in context_messages_to_send:
-                    try:
-                        send_to_telegram(channel["chat_id"], context_message)
-                    except Exception as exc:
-                        log_event(
-                            logger,
-                            logging.WARNING,
-                            "schedule_context_delivery_failed",
-                            channel=channel_id,
-                            error_type=type(exc).__name__,
-                            error=_safe_error_message(exc),
-                        )
+                try:
+                    _send_schedule_context_to_telegram(
+                        channel, schedule_context_messages, selected, local_now, test_run_id
+                    )
+                except Exception as exc:
+                    log_event(
+                        logger,
+                        logging.WARNING,
+                        "schedule_context_delivery_failed",
+                        channel=channel_id,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
             asyncio.run(mark_content_processed(content_uid, job))
             _record_post_analytics(
                 channel_id,

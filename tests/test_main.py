@@ -2001,6 +2001,7 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"schedule"])
     monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args, **kwargs: [b"card"])
     monkeypatch.setattr(
         main,
@@ -2018,8 +2019,10 @@ def test_schedule_test_run_uses_separate_dedupe_key_and_label(monkeypatch):
     assert body["messages_sent"] == 1
     assert body["test_run_id"] == "media-card-20260731"
     assert claimed[0].endswith("_test_media-card-20260731")
-    assert sent_photos[0][0][1] == b"card"
+    assert sent_photos[0][0][1] == b"schedule"
     assert sent_photos[0][0][2].startswith("🧪 <b>Тестовая карточка</b>")
+    assert sent_photos[1][0][1] == b"card"
+    assert sent_photos[1][0][2].startswith("🧪 <b>Тестовая карточка</b>")
 
 
 def test_schedule_attaches_single_context_note_to_its_cover(monkeypatch):
@@ -2041,6 +2044,7 @@ def test_schedule_attaches_single_context_note_to_its_cover(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"schedule"])
     monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args, **kwargs: [b"card"])
     monkeypatch.setattr(main, "format_schedule_context_messages", lambda *args, **kwargs: [context_note])
     monkeypatch.setattr(main, "send_photo_to_telegram", lambda *args, **kwargs: photos.append((args, kwargs)))
@@ -2049,8 +2053,87 @@ def test_schedule_attaches_single_context_note_to_its_cover(monkeypatch):
     response = main.handler({"job": "schedule"}, None)
 
     assert response["statusCode"] == 200
-    assert photos[0][0][2] == context_note
+    assert [photo[0][1] for photo in photos] == [b"schedule", b"card"]
+    assert "Матчи CS2 сегодня" in photos[0][0][2]
+    assert "Контекст к матчам дня" not in photos[0][0][2]
+    assert photos[1][0][2] == context_note
     assert sent_text == []
+
+
+@pytest.mark.parametrize("context_failure", ["render", "rejected", "uncertain", "text"])
+def test_context_failure_does_not_lose_or_repeat_confirmed_schedule(monkeypatch, context_failure):
+    delivered = []
+    processed = set()
+    context_note = "🔎 <b>Контекст к матчам дня</b>"
+
+    def render_context(*args):
+        if context_failure == "render":
+            raise RuntimeError("context cover unavailable")
+        return [b"cover"]
+
+    def send_photo(chat_id, photo, caption, **kwargs):
+        delivered.append((photo, caption))
+        if photo == b"cover":
+            if context_failure == "uncertain":
+                raise main.TelegramDeliveryUncertainError("unknown outcome")
+            raise main.TelegramDeliveryError("rejected")
+
+    def send_text(chat_id, text):
+        delivered.append(("text", text))
+        if context_failure == "text":
+            raise main.TelegramDeliveryError("rejected")
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", lambda *args: _async([_upcoming()]))
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", lambda matches: _async([None] * len(matches)))
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat"}])
+    monkeypatch.setattr(main, "claim_content_delivery", lambda uid: _async("claim"))
+    monkeypatch.setattr(main, "reconcile_content_delivery", lambda uid, job: _async(uid in processed))
+    monkeypatch.setattr(main, "mark_content_processed", lambda uid, job: _async(processed.add(uid)))
+    monkeypatch.setattr(main, "release_delivery_claim", lambda *args: pytest.fail("Confirmed schedule must stay claimed"))
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: [b"schedule"])
+    monkeypatch.setattr(main, "render_schedule_context_covers", render_context)
+    monkeypatch.setattr(main, "format_schedule_context_messages", lambda *args: [context_note])
+    monkeypatch.setattr(main, "send_photo_to_telegram", send_photo)
+    monkeypatch.setattr(main, "send_to_telegram", send_text)
+    monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
+
+    response = main.handler({"job": "schedule"}, None)
+
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"])["messages_sent"] == 1
+    assert delivered[0][0] == b"schedule"
+    assert len(processed) == 1
+    if context_failure == "uncertain":
+        assert len(delivered) == 2  # No text fallback after an ambiguous cover send.
+    else:
+        assert delivered[-1] == ("text", context_note)
+    before_retry = list(delivered)
+    assert main.handler({"job": "schedule"}, None)["statusCode"] == 200
+    assert delivered == before_retry
+
+
+@pytest.mark.parametrize("cover_count", [1, 2])
+@pytest.mark.parametrize("messages", [["context " * 200], ["first context", "second context"]])
+def test_long_or_multiple_context_notes_remain_complete(monkeypatch, cover_count, messages):
+    delivered = []
+    covers = [b"cover"] * cover_count
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args: covers)
+    monkeypatch.setattr(main, "send_photo_to_telegram", lambda chat, photo, caption, **kwargs: delivered.append(("photo", caption)))
+    monkeypatch.setattr(main, "send_media_group_to_telegram", lambda chat, photos, caption, **kwargs: delivered.append(("album", caption)))
+    monkeypatch.setattr(main, "send_to_telegram", lambda chat, text: delivered.append(("text", text)))
+
+    main._send_schedule_context_to_telegram(
+        {"name": "global", "chat_id": "chat"},
+        messages,
+        [_upcoming()],
+        main.datetime.fromisoformat("2026-09-06T10:00:00+03:00"),
+        None,
+    )
+
+    assert delivered[0] == ("photo" if cover_count == 1 else "album", "🔎 <b>Контекст к матчам дня</b>")
+    assert delivered[1:] == [("text", message) for message in messages]
 
 
 def test_schedule_keeps_telegram_and_social_card_policies_independent(monkeypatch):
@@ -2098,9 +2181,10 @@ def test_schedule_keeps_telegram_and_social_card_policies_independent(monkeypatc
     assert instagram_cards == [b"social-card"]
 
 
-def test_busy_schedule_is_sent_with_a_context_cover(monkeypatch):
+def test_busy_schedule_album_precedes_context_cover(monkeypatch):
     claimed = []
     photos = []
+    albums = []
     marked = []
     matches = [
         _upcoming().model_copy(update={"match_id": f"match-{index}"})
@@ -2122,6 +2206,7 @@ def test_busy_schedule_is_sent_with_a_context_cover(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat"}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"page-1", b"page-2"])
     monkeypatch.setattr(
         main,
         "render_schedule_context_covers",
@@ -2132,6 +2217,8 @@ def test_busy_schedule_is_sent_with_a_context_cover(monkeypatch):
         "send_photo_to_telegram",
         lambda *args, **kwargs: photos.append((args, kwargs)),
     )
+    monkeypatch.setattr(main, "send_media_group_to_telegram", lambda *args, **kwargs: albums.append((args, kwargs)))
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: None)
 
     response = main.handler({"job": "schedule"}, None)
     body = json.loads(response["body"])
@@ -2139,11 +2226,13 @@ def test_busy_schedule_is_sent_with_a_context_cover(monkeypatch):
     assert response["statusCode"] == 200
     assert body["matches_selected"] == 16
     assert body["messages_sent"] == 1
+    assert albums[0][0][1] == [b"page-1", b"page-2"]
+    assert "РасписаниеМатчей" in albums[0][0][2]
     assert photos[0][0][1] == b"cover"
     assert marked == [(claimed[0], "schedule")]
 
 
-def test_busy_schedule_cover_failure_falls_back_to_text(monkeypatch):
+def test_busy_schedule_album_failure_falls_back_to_text(monkeypatch):
     sent_text = []
     matches = [
         _upcoming().model_copy(update={"match_id": f"match-{index}"})
@@ -2164,6 +2253,7 @@ def test_busy_schedule_cover_failure_falls_back_to_text(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat"}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"page-1", b"page-2"])
     monkeypatch.setattr(
         main,
         "render_schedule_context_covers",
@@ -2176,6 +2266,11 @@ def test_busy_schedule_cover_failure_falls_back_to_text(monkeypatch):
     )
     monkeypatch.setattr(
         main,
+        "send_media_group_to_telegram",
+        lambda *args, **kwargs: (_ for _ in ()).throw(main.TelegramDeliveryError("failed")),
+    )
+    monkeypatch.setattr(
+        main,
         "send_to_telegram",
         lambda chat_id, text: sent_text.append((chat_id, text)),
     )
@@ -2184,6 +2279,9 @@ def test_busy_schedule_cover_failure_falls_back_to_text(monkeypatch):
 
     assert response["statusCode"] == 200
     assert sent_text and sent_text[0][0] == "chat"
+    assert "Матчи CS2 сегодня" in sent_text[0][1]
+    assert "14:00" in sent_text[0][1]
+    assert "Контекст к матчам дня" in sent_text[1][1]
 
 
 @pytest.mark.parametrize(
