@@ -12,6 +12,7 @@ from cs2bot.match_sources.models import (
     ScheduleMatchContext,
     SourceReferences,
     TeamForm,
+    TournamentPlacement,
     TournamentRadar,
     UpcomingMatchNormalized,
 )
@@ -105,6 +106,120 @@ def test_format_match_uses_normalized_fields():
     assert "⚔️" not in text
     assert "📊" not in text
     assert "✅" not in text
+
+
+def test_format_tournament_standings_lists_every_team_and_payout():
+    text = main.format_tournament_standings(
+        "IEM Cologne 2026",
+        [
+            TournamentPlacement(placement="1", team_name="NAVI", prize_usd=500_000),
+            TournamentPlacement(placement="2", team_name="FaZe", prize_usd=180_000),
+        ],
+    )
+
+    assert "<b>Итоги турнира — IEM Cologne 2026</b>" in text
+    assert "1. NAVI — $500 000" in text
+    assert "2. FaZe — $180 000" in text
+    assert "#CS2 #ИтогиТурнира" in text
+
+
+def test_format_tournament_standings_uses_the_supplied_source_label():
+    text = main.format_tournament_standings(
+        "BLAST Open Porto",
+        [
+            TournamentPlacement(placement="1", team_name="Spirit", prize_usd=150_000),
+            TournamentPlacement(placement="2", team_name="MOUZ", prize_usd=60_000),
+        ],
+        source_label="BLAST.tv",
+    )
+
+    assert "Источник: BLAST.tv" in text
+
+
+def test_tournament_standings_are_delivered_as_a_separate_confirmed_album(monkeypatch):
+    match = _match().model_copy(
+        update={
+            "source": "liquipedia",
+            "is_final": True,
+            "tournament_parent": "BLAST/Open/Porto/2026",
+            "tournament_placements": [
+                TournamentPlacement(placement="1", team_name="NAVI", prize_usd=150_000),
+                TournamentPlacement(placement="2", team_name="FaZe", prize_usd=60_000),
+            ],
+        }
+    )
+    pending = PendingDelivery(
+        key="outbox/results/global_final-tournament_standings.json",
+        channel_id="global",
+        channel_name="Global",
+        match=match,
+        created_at="2026-09-06T10:00:00Z",
+        content_type="tournament_standings",
+    )
+    claim = DeliveryClaim("content", "claims/content.json", "claim")
+    sent = []
+    marked = []
+    deleted = []
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(claim))
+    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: [b"card"])
+    monkeypatch.setattr(
+        main,
+        "send_photo_to_telegram",
+        lambda *args, **kwargs: (sent.append(args), {"ok": True})[1],
+    )
+    monkeypatch.setattr(main, "mark_content_processed", lambda uid, kind: _async(marked.append((uid, kind))))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+
+    assert main._deliver_tournament_standings(pending, {"chat_id": "@global"}, "Global") == "sent"
+    assert sent and sent[0][0] == "@global"
+    assert marked == [("tournament-standings-v1:global:BLAST/Open/Porto/2026", "tournament_standings")]
+    assert deleted == [pending.key]
+
+
+@pytest.mark.parametrize(
+    ("platform", "delivery", "publisher_name"),
+    [
+        ("instagram", main._deliver_instagram_tournament_standings, "publish_rendered_cards"),
+        ("threads", main._deliver_threads_tournament_standings, "publish_threads_rendered_cards"),
+    ],
+)
+def test_tournament_standings_are_delivered_to_each_social_platform(
+    monkeypatch,
+    platform,
+    delivery,
+    publisher_name,
+):
+    match = _match().model_copy(
+        update={
+            "source": "liquipedia",
+            "is_final": True,
+            "tournament_parent": "BLAST/Open/Porto/2026",
+            "tournament_placements": [
+                TournamentPlacement(placement="1", team_name="NAVI", prize_usd=150_000),
+                TournamentPlacement(placement="2", team_name="FaZe", prize_usd=60_000),
+            ],
+        }
+    )
+    pending = PendingDelivery(
+        key=f"outbox/results/{platform}_final-tournament_standings.json",
+        channel_id=platform,
+        channel_name=platform,
+        match=match,
+        created_at="2026-09-06T10:00:00Z",
+        content_type="tournament_standings",
+    )
+    claim = DeliveryClaim("content", "claims/content.json", "claim")
+    published = []
+    marked = []
+    monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(claim))
+    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: [b"card"])
+    monkeypatch.setattr(main, publisher_name, lambda *args: published.append(args))
+    monkeypatch.setattr(main, "mark_content_processed", lambda uid, kind: _async(marked.append((uid, kind))))
+
+    assert delivery(pending, None) == "sent"
+    assert published and published[0][0] == f"{platform}_standings_BLAST_Open_Porto_2026"
+    assert marked == [(f"tournament-standings-v1:{platform}:BLAST/Open/Porto/2026", "tournament_standings")]
 
 
 def test_instagram_content_delivery_has_separate_content_uid(monkeypatch):
@@ -1348,7 +1463,7 @@ def test_auto_accepts_liquipedia_as_only_configured_source(monkeypatch):
     assert called is True
 
 
-def test_legacy_source_is_rejected_before_fetch(monkeypatch):
+def test_unknown_source_is_rejected_before_fetch(monkeypatch):
     called = False
 
     async def fake_get_new_finished_matches(**kwargs):
@@ -1358,7 +1473,7 @@ def test_legacy_source_is_rejected_before_fetch(monkeypatch):
 
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
 
-    response = main.handler({"source": "hltv", "dry_run": True}, None)
+    response = main.handler({"source": "unsupported", "dry_run": True}, None)
 
     assert response["statusCode"] == 400
     assert called is False

@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from cs2bot.match_sources import match_fetcher
-from cs2bot.match_sources.models import MapResult, MatchNormalized, SourceUnavailableError
+from cs2bot.match_sources.models import MapResult, MatchNormalized, SourceUnavailableError, TournamentPlacement
 
 
 def _match(source="pandascore", match_id="1", tournament_name="IEM Cologne 2026"):
@@ -61,6 +61,21 @@ def test_final_card_selection_keeps_primary_when_liquipedia_final_is_incomplete(
     selected = match_fetcher._replace_with_liquipedia_finals([primary], [final])
 
     assert selected == [primary]
+
+
+def test_final_card_selection_uses_liquipedia_when_complete_standings_are_available():
+    primary = _match()
+    primary.date = "2026-08-23T16:00:00Z"
+    final = _match(source="liquipedia", match_id="liquipedia-final")
+    final.date = primary.date
+    final.is_final = True
+    final.tournament_parent = "IEM/Cologne/2026"
+    final.tournament_placements = [
+        TournamentPlacement(placement="1", team_name="NAVI", prize_usd=400_000),
+        TournamentPlacement(placement="2", team_name="FaZe", prize_usd=180_000),
+    ]
+
+    assert match_fetcher._replace_with_liquipedia_finals([primary], [final]) == [final]
 
 
 def test_liquipedia_shadow_timeout_does_not_block_primary_results(monkeypatch, caplog):

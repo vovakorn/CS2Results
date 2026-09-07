@@ -22,6 +22,16 @@ class MapResult(BaseModel):
     score2: int | None = Field(default=None, ge=0, le=100)
 
 
+class TournamentPlacement(BaseModel):
+    """A confirmed tournament finishing position and its payout."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    placement: str = Field(min_length=1, max_length=30)
+    team_name: str = Field(min_length=1, max_length=200)
+    prize_usd: int | None = Field(default=None, ge=0, le=10_000_000_000)
+
+
 class MatchDetails(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -61,6 +71,8 @@ class MatchNormalized(BaseModel):
     publisher_tier: str | None = Field(default=None, max_length=100)
     tournament_section: str | None = Field(default=None, max_length=200)
     is_final: bool = False
+    tournament_parent: str | None = Field(default=None, max_length=500)
+    tournament_placements: list[TournamentPlacement] = Field(default_factory=list, max_length=64)
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
     team1_logo_url: str | None = Field(default=None, max_length=2048)

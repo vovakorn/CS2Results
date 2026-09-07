@@ -15,7 +15,13 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
-from .match_sources.models import MatchNormalized, RadarBracketMatch, TournamentRadar, UpcomingMatchNormalized
+from .match_sources.models import (
+    MatchNormalized,
+    RadarBracketMatch,
+    TournamentPlacement,
+    TournamentRadar,
+    UpcomingMatchNormalized,
+)
 from .match_sources.storage import read_cached_logo, write_cached_logo
 
 RESULT_CARD_SIZE = (1080, 1080)
@@ -24,6 +30,8 @@ SCHEDULE_CONTEXT_COVER_SIZE = (1080, 1080)
 MAX_RESULT_MATCHES = 10
 MAX_SCHEDULE_MATCHES = 10
 MAX_SCHEDULE_TOTAL_MATCHES = 20
+MAX_TOURNAMENT_STANDINGS = 64
+TOURNAMENT_STANDINGS_PER_CARD = 8
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
 # PandaScore's CDN can take longer than two seconds to start a cold response.
@@ -51,6 +59,8 @@ WHITE = (244, 247, 251)
 MUTED = (150, 168, 191)
 CYAN = (22, 199, 255)
 AMBER = (255, 159, 28)
+STANDINGS_GOLD = (214, 181, 104)
+STANDINGS_SILVER = (190, 202, 214)
 LOGO_PLATE_DARK = (10, 24, 43)
 LOGO_PLATE_LIGHT = (220, 230, 240)
 MONTH_NAMES = (
@@ -502,10 +512,10 @@ def _draw_tournament_logo(
     center: tuple[int, int],
     diameter: int,
     logo_url: str | None,
-) -> None:
+) -> bool:
     """Draw an official event mark when PandaScore provides one; never invent it."""
     if not logo_url:
-        return
+        return False
     try:
         logo = fetch_team_logo(logo_url)
     except MediaCardError as exc:
@@ -514,15 +524,16 @@ def _draw_tournament_logo(
             urlparse(logo_url).hostname or "missing",
             exc,
         )
-        return
+        return False
     if logo is None:
-        return
+        return False
     _draw_logo_plate(draw, center, diameter, CYAN, _logo_plate_fill(logo))
     contained = ImageOps.contain(logo, (int(diameter * 0.64), int(diameter * 0.64)))
     canvas.alpha_composite(
         contained,
         (center[0] - contained.width // 2, center[1] - contained.height // 2),
     )
+    return True
 
 
 def _schedule_tournament_header(
@@ -1282,6 +1293,126 @@ def render_final_card(match: MatchNormalized) -> bytes:
                    _fit_font(draw, amount, 300, 54, 22, display=True), AMBER)
     _centered_text(draw, width // 2, 1012, "ИСТОЧНИК: LIQUIPEDIA", _font(18, display=True), MUTED)
     return _as_png(canvas)
+
+
+def can_render_tournament_standings(placements: Sequence[TournamentPlacement]) -> bool:
+    """Only render a complete, source-confirmed standings table."""
+    return (
+        2 <= len(placements) <= MAX_TOURNAMENT_STANDINGS
+        and all(item.placement and item.team_name and item.prize_usd is not None for item in placements)
+    )
+
+
+def _standings_row_color(placement: str) -> tuple[int, int, int]:
+    if placement == "1":
+        return STANDINGS_GOLD
+    if placement == "2":
+        return STANDINGS_SILVER
+    return WHITE
+
+
+def _render_tournament_standings_page(
+    tournament_name: str,
+    placements: Sequence[TournamentPlacement],
+    *,
+    source_label: str,
+    page_number: int,
+    page_count: int,
+) -> bytes:
+    canvas = _background(RESULT_CARD_SIZE, header_accent_y=98).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    width = RESULT_CARD_SIZE[0]
+
+    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
+    _centered_text(draw, width // 2, 207, "ИТОГИ ТУРНИРА", _font(44, display=True), WHITE)
+    title = tournament_name.upper()
+    _centered_text(
+        draw,
+        width // 2,
+        278,
+        title,
+        _fit_font(draw, title, 890, 30, 16, display=True),
+        CYAN,
+    )
+
+    row_height = 68
+    header_height = 62
+    table_height = header_height + row_height * len(placements)
+    table_top = 340 + (TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
+    table = (64, table_top, 1016, table_top + table_height)
+    _chamfered_panel(draw, table, cut=20)
+    x0, y0, x1, y1 = table
+    place_divider = 228
+    prize_divider = 760
+    draw.line((place_divider, y0 + 14, place_divider, y1 - 14), fill=(*AMBER, 180), width=2)
+    draw.line((prize_divider, y0 + 14, prize_divider, y1 - 14), fill=(*AMBER, 180), width=2)
+    _centered_text(draw, (x0 + place_divider) // 2, y0 + 17, "МЕСТО", _font(22, display=True), AMBER)
+    _aligned_text(draw, place_divider + 30, y0 + 17, "КОМАНДА", _font(22, display=True), AMBER, "left")
+    _centered_text(draw, (prize_divider + x1) // 2, y0 + 17, "ПРИЗОВЫЕ", _font(22, display=True), AMBER)
+
+    for index, item in enumerate(placements):
+        row_top = y0 + header_height + row_height * index
+        if index:
+            draw.line((x0 + 18, row_top, x1 - 18, row_top), fill=(*AMBER, 125), width=1)
+        highlight = _standings_row_color(item.placement)
+        _centered_text(
+            draw,
+            (x0 + place_divider) // 2,
+            row_top + 18,
+            item.placement,
+            _fit_font(draw, item.placement, 110, 32, 16, display=True),
+            highlight,
+        )
+        team_name = item.team_name.upper()
+        _aligned_text(
+            draw,
+            place_divider + 30,
+            row_top + 15,
+            team_name,
+            _fit_font(draw, team_name, prize_divider - place_divider - 58, 36, 16),
+            highlight,
+            "left",
+        )
+        amount = _format_usd(item.prize_usd or 0)
+        _centered_text(
+            draw,
+            (prize_divider + x1) // 2,
+            row_top + 18,
+            amount,
+            _fit_font(draw, amount, 225, 30, 15, display=True),
+            highlight,
+        )
+
+    if page_count > 1:
+        _centered_text(draw, width // 2, 972, f"СТРАНИЦА {page_number}/{page_count}", _font(20, display=True), MUTED)
+    source_text = f"ИСТОЧНИК: {source_label.upper()}"
+    _centered_text(draw, width // 2, 1012, source_text, _fit_font(draw, source_text, 700, 18, 12, display=True), MUTED)
+    return _as_png(canvas)
+
+
+def render_tournament_standings_cards(
+    tournament_name: str,
+    placements: Sequence[TournamentPlacement],
+    source_label: str = "Liquipedia",
+) -> list[bytes]:
+    """Render every confirmed placement, splitting long tables into an album."""
+    if not tournament_name.strip() or not source_label.strip() or not can_render_tournament_standings(placements):
+        raise MediaCardError("Tournament standings require complete placements and payouts")
+
+    chunks = [
+        placements[index:index + TOURNAMENT_STANDINGS_PER_CARD]
+        for index in range(0, len(placements), TOURNAMENT_STANDINGS_PER_CARD)
+    ]
+    return [
+        _render_tournament_standings_page(
+            tournament_name,
+            chunk,
+            source_label=source_label,
+            page_number=index,
+            page_count=len(chunks),
+        )
+        for index, chunk in enumerate(chunks, start=1)
+    ]
 
 
 def render_results_card(

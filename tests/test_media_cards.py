@@ -9,6 +9,7 @@ from cs2bot.match_sources.models import (
     MatchNormalized,
     RadarBracketMatch,
     RadarStandingTeam,
+    TournamentPlacement,
     TournamentRadar,
     UpcomingMatchNormalized,
 )
@@ -105,6 +106,59 @@ def test_final_card_requires_confirmed_final_data_and_is_square_png():
     assert image.size == media_cards.RESULT_CARD_SIZE
     assert media_cards.can_render_final_card(match)
     assert not media_cards.can_render_final_card(_result())
+
+
+def test_tournament_standings_cards_render_all_placements_in_an_album():
+    placements = [
+        TournamentPlacement(
+            placement=str(index + 1),
+            team_name=f"Team {index + 1}",
+            prize_usd=(12 - index) * 25_000,
+        )
+        for index in range(12)
+    ]
+
+    cards = media_cards.render_tournament_standings_cards("IEM Cologne 2026", placements)
+
+    assert len(cards) == 2
+    assert all(Image.open(io.BytesIO(card)).size == media_cards.RESULT_CARD_SIZE for card in cards)
+    assert media_cards.can_render_tournament_standings(placements)
+
+
+def test_tournament_standings_require_payout_for_every_team():
+    placements = [
+        TournamentPlacement(placement="1", team_name="NAVI", prize_usd=500_000),
+        TournamentPlacement(placement="2", team_name="FaZe", prize_usd=None),
+    ]
+
+    assert not media_cards.can_render_tournament_standings(placements)
+    with pytest.raises(media_cards.MediaCardError, match="complete placements"):
+        media_cards.render_tournament_standings_cards("IEM Cologne 2026", placements)
+
+
+def test_tournament_standings_use_subtle_gold_and_silver_for_top_two():
+    assert media_cards._standings_row_color("1") == media_cards.STANDINGS_GOLD
+    assert media_cards._standings_row_color("2") == media_cards.STANDINGS_SILVER
+    assert media_cards._standings_row_color("3–4") == media_cards.WHITE
+
+
+def test_tournament_standings_use_the_source_label_on_every_page(monkeypatch):
+    drawn = []
+    original = media_cards._centered_text
+
+    def capture_text(draw, center_x, y, text, font, fill):
+        drawn.append(text)
+        return original(draw, center_x, y, text, font, fill)
+
+    placements = [
+        TournamentPlacement(placement=str(index + 1), team_name=f"Team {index + 1}", prize_usd=10_000)
+        for index in range(9)
+    ]
+    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
+
+    media_cards.render_tournament_standings_cards("BLAST Open Porto", placements, source_label="BLAST.tv")
+
+    assert drawn.count("ИСТОЧНИК: BLAST.TV") == 2
 
 
 def test_result_card_channel_logo_is_centered_at_top(monkeypatch):
