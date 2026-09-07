@@ -47,6 +47,7 @@ class PendingDelivery:
     created_at: str
     last_attempt_at: str | None = None
     attempt_count: int = 0
+    content_type: str = "result"
 
 
 RESULT_OUTBOX_PREFIX = "outbox/results/"
@@ -72,8 +73,9 @@ def claim_key(match_uid: str) -> str:
     return f"claims/{match_uid}.json"
 
 
-def result_outbox_key(match: MatchNormalized, channel_id: str) -> str:
-    return f"{RESULT_OUTBOX_PREFIX}{channel_match_uid(match, channel_id)}.json"
+def result_outbox_key(match: MatchNormalized, channel_id: str, content_type: str = "result") -> str:
+    suffix = "" if content_type == "result" else f"-{safe_storage_part(content_type)}"
+    return f"{RESULT_OUTBOX_PREFIX}{channel_match_uid(match, channel_id)}{suffix}.json"
 
 
 def alert_key(alert_code: str, now: datetime) -> str:
@@ -175,6 +177,7 @@ def _pending_delivery_payload(
     created_at: str,
     last_attempt_at: str | None,
     attempt_count: int,
+    content_type: str,
 ) -> bytes:
     return json.dumps(
         {
@@ -184,6 +187,7 @@ def _pending_delivery_payload(
             "created_at": created_at,
             "last_attempt_at": last_attempt_at,
             "attempt_count": attempt_count,
+            "content_type": content_type,
             "match": match.model_dump(mode="json"),
         },
         ensure_ascii=False,
@@ -198,11 +202,14 @@ async def enqueue_result_delivery(
     client: Any | None = None,
     bucket: str | None = None,
     now: datetime | None = None,
+    content_type: str = "result",
 ) -> bool:
     """Create a durable result outbox item without resetting existing retry state."""
     s3 = client or _client()
     bucket_name = bucket or _bucket()
-    key = result_outbox_key(match, channel_id)
+    if content_type not in {"result", "tournament_standings"}:
+        raise ValueError("unsupported result outbox content type")
+    key = result_outbox_key(match, channel_id, content_type)
     created_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
     body = _pending_delivery_payload(
         match,
@@ -211,6 +218,7 @@ async def enqueue_result_delivery(
         created_at=created_at,
         last_attempt_at=None,
         attempt_count=0,
+        content_type=content_type,
     )
 
     try:
@@ -278,6 +286,7 @@ async def list_pending_result_deliveries(
                             else None
                         ),
                         attempt_count=max(0, int(payload.get("attempt_count", 0))),
+                        content_type=str(payload.get("content_type", "result")),
                     )
                 )
             except (ClientError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -319,6 +328,7 @@ async def record_result_delivery_attempt(
         created_at=pending.created_at,
         last_attempt_at=attempted_at,
         attempt_count=pending.attempt_count + 1,
+        content_type=pending.content_type,
     )
     body = _pending_delivery_payload(
         updated.match,
@@ -327,6 +337,7 @@ async def record_result_delivery_attempt(
         created_at=updated.created_at,
         last_attempt_at=updated.last_attempt_at,
         attempt_count=updated.attempt_count,
+        content_type=updated.content_type,
     )
     try:
         await asyncio.to_thread(

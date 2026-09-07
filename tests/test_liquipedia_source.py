@@ -105,6 +105,26 @@ def test_liquipedia_does_not_guess_winner_prize_for_another_team():
     assert liquipedia_source._winner_prize_from_placements(match, placements) is None
 
 
+def test_liquipedia_accepts_only_complete_tournament_standings():
+    placements = liquipedia_source._tournament_placements_from_response(
+        {
+            "result": [
+                {"placement": "1", "opponentname": "Natus Vincere", "prizemoney": "500000"},
+                {"placement": "2", "opponentname": "FaZe Clan", "prizemoney": "170000"},
+            ]
+        }
+    )
+    incomplete = liquipedia_source._tournament_placements_from_response(
+        {"result": [{"placement": "1", "opponentname": "Natus Vincere", "prizemoney": "500000"}]}
+    )
+
+    assert [(item.placement, item.team_name, item.prize_usd) for item in placements] == [
+        ("1", "Natus Vincere", 500_000),
+        ("2", "FaZe Clan", 170_000),
+    ]
+    assert incomplete == []
+
+
 def test_liquipedia_skips_match_not_confirmed_finished():
     response = _sample_response()
     response["result"][0]["finished"] = "0"

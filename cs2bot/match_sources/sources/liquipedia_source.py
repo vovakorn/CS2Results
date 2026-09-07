@@ -9,7 +9,7 @@ import aiohttp
 from pydantic import ValidationError
 
 from .. import config as source_config
-from ..models import MapResult, MatchNormalized, SourceUnavailableError
+from ..models import MapResult, MatchNormalized, SourceUnavailableError, TournamentPlacement
 from .http_utils import read_limited_response
 
 logger = logging.getLogger(__name__)
@@ -231,25 +231,72 @@ def _winner_prize_from_placements(match: MatchNormalized, data: Any) -> int | No
     return prizes.pop() if len(prizes) == 1 else None
 
 
-async def _fetch_winner_prize(
+def _tournament_placements_from_response(data: Any) -> list[TournamentPlacement]:
+    """Return a complete, payout-confirmed standings table or no table at all."""
+    if not isinstance(data, dict) or not isinstance(data.get("result"), list):
+        return []
+
+    placements: list[TournamentPlacement] = []
+    team_identities: set[str] = set()
+    for item in data["result"]:
+        if not isinstance(item, dict):
+            return []
+        placement = _optional_text(item.get("placement"))
+        team_name = _optional_text(item.get("opponentname")) or _optional_text(item.get("opponenttemplate"))
+        prize_usd = _optional_int(item.get("prizemoney"))
+        if not placement or not team_name or prize_usd is None or prize_usd < 0:
+            return []
+        identity = MatchNormalized._identity_part(team_name)
+        if not identity or identity in team_identities:
+            return []
+        team_identities.add(identity)
+        placements.append(
+            TournamentPlacement(
+                placement=placement,
+                team_name=team_name,
+                prize_usd=prize_usd,
+            )
+        )
+    return placements if 2 <= len(placements) <= 64 else []
+
+
+def _winner_prize_from_tournament_placements(
+    match: MatchNormalized,
+    placements: list[TournamentPlacement],
+) -> int | None:
+    if match.score1 is None or match.score2 is None or match.score1 == match.score2:
+        return None
+    winner_name = match.team1_name if match.score1 > match.score2 else match.team2_name
+    winner_identity = MatchNormalized._identity_part(winner_name)
+    prizes = {
+        item.prize_usd
+        for item in placements
+        if item.placement == "1"
+        and MatchNormalized._identity_part(item.team_name) == winner_identity
+        and item.prize_usd is not None
+        and item.prize_usd > 0
+    }
+    return prizes.pop() if len(prizes) == 1 else None
+
+
+async def _fetch_tournament_placements(
     session: aiohttp.ClientSession,
     *,
     parent: str,
-    match: MatchNormalized,
-) -> int | None:
+) -> list[TournamentPlacement]:
     url = f"{source_config.LIQUIPEDIA_API_BASE_URL.rstrip('/')}/placement"
     params = {
         "wiki": source_config.LIQUIPEDIA_WIKI,
-        "conditions": f"[[parent::{parent}]] AND [[placement::1]]",
+        "conditions": f"[[parent::{parent}]]",
         "query": LIQUIPEDIA_PLACEMENT_QUERY,
-        "limit": 10,
+        "limit": 100,
         "offset": 0,
     }
     async with session.get(url, params=params, allow_redirects=False) as response:
         if response.status >= 300:
             raise SourceUnavailableError(f"Liquipedia placement returned HTTP {response.status}")
         raw = await read_limited_response(response, source_config.MAX_SOURCE_RESPONSE_BYTES, "Liquipedia placement")
-    return _winner_prize_from_placements(match, json.loads(raw))
+    return _tournament_placements_from_response(json.loads(raw))
 
 
 async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
@@ -296,10 +343,14 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
                 if not match.is_final or not parent:
                     continue
                 try:
-                    match.winner_prize_usd = await _fetch_winner_prize(session, parent=parent, match=match)
+                    placements = await _fetch_tournament_placements(session, parent=parent)
+                    if placements:
+                        match.tournament_parent = parent
+                        match.tournament_placements = placements
+                        match.winner_prize_usd = _winner_prize_from_tournament_placements(match, placements)
                 except Exception as exc:
                     logger.warning(
-                        "source=liquipedia winner_prize_unavailable match_id=%s error_type=%s",
+                        "source=liquipedia standings_unavailable match_id=%s error_type=%s",
                         match.match_id,
                         type(exc).__name__,
                     )
