@@ -42,11 +42,13 @@ from .media_cards import (
     MAX_RESULT_MATCHES,
     MAX_SCHEDULE_TOTAL_MATCHES,
     can_render_final_card,
+    can_render_tournament_standings,
     render_final_card,
     render_result_card,
     render_results_card,
     render_schedule_cards,
     render_schedule_context_covers,
+    render_tournament_standings_cards,
     render_tournament_radar_cards,
 )
 from .match_sources.config import (
@@ -620,7 +622,7 @@ def _get_attr(obj: Any, key: str, default: str = "") -> str:
         if value is not None:
             return str(value)
 
-    # вариант для dict, который мы получаем из HLTV
+    # вариант для dict из внешнего источника
     if isinstance(obj, dict):
         value = obj.get(key)
         if value is not None:
@@ -761,6 +763,194 @@ def format_match(match: Any) -> str:
 
     message = "\n".join(pieces)
     return _truncate_telegram_html(message, MAX_TELEGRAM_MESSAGE_LENGTH)
+
+
+def format_tournament_standings(
+    tournament_name: str,
+    placements: Sequence[TournamentPlacement],
+    source_label: str = "Liquipedia",
+) -> str:
+    """Build the text companion for a complete tournament standings album."""
+    if (
+        not tournament_name.strip()
+        or not source_label.strip()
+        or not placements
+        or any(item.prize_usd is None for item in placements)
+    ):
+        raise ValueError("Tournament standings require a name and confirmed payouts")
+
+    lines = [f"🏆 <b>Итоги турнира — {html.escape(tournament_name)}</b>", "", "<b>Итоговая таблица:</b>"]
+    for item in placements:
+        amount = f"${item.prize_usd:,}".replace(",", " ")
+        lines.append(f"{html.escape(item.placement)}. {html.escape(item.team_name)} — {amount}")
+    lines.extend(["", f"Источник: {html.escape(source_label)}", "", "#CS2 #ИтогиТурнира"])
+    return "\n".join(lines)
+
+
+def _can_publish_tournament_standings(match: MatchNormalized) -> bool:
+    return (
+        match.source == "liquipedia"
+        and match.is_final
+        and bool(match.tournament_parent)
+        and can_render_tournament_standings(match.tournament_placements)
+    )
+
+
+def _tournament_standings_content_uid(match: MatchNormalized, channel_id: str) -> str:
+    return f"tournament-standings-v1:{channel_id}:{match.tournament_parent}"
+
+
+def _enqueue_tournament_standings(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
+    """Queue one standings post after the platform's final-result marker exists."""
+    if not _can_publish_tournament_standings(match):
+        return False
+    return asyncio.run(
+        enqueue_result_delivery(
+            match,
+            channel_id,
+            channel_name,
+            content_type="tournament_standings",
+        )
+    )
+
+
+def _deliver_tournament_standings(
+    pending: PendingDelivery,
+    channel: dict[str, Any],
+    channel_name: str,
+) -> str:
+    """Publish a queued standings album only after the final score has been confirmed."""
+    match = pending.match
+    channel_id = pending.channel_id
+    if not _can_publish_tournament_standings(match):
+        asyncio.run(delete_result_delivery(pending))
+        log_event(
+            logger,
+            logging.WARNING,
+            "tournament_standings_outbox_discarded",
+            channel=channel_name,
+            match_uid=match.match_uid,
+            reason="incomplete_data",
+        )
+        return "duplicate"
+    content_uid = _tournament_standings_content_uid(match, channel_id)
+    try:
+        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_standings")):
+            asyncio.run(delete_result_delivery(pending))
+            return "reconciled"
+        claim = asyncio.run(claim_content_delivery(content_uid))
+    except Exception as exc:
+        log_event(logger, logging.ERROR, "tournament_standings_claim_failed", channel=channel_name,
+                  match_uid=match.match_uid, error_type=type(exc).__name__, error=_safe_error_message(exc))
+        return "failed"
+
+    if claim is None:
+        try:
+            if asyncio.run(reconcile_content_delivery(content_uid, "tournament_standings")):
+                asyncio.run(delete_result_delivery(pending))
+                return "reconciled"
+        except Exception:
+            pass
+        return "duplicate"
+
+    confirmed = False
+    try:
+        text = _truncate_telegram_html(
+            format_tournament_standings(match.tournament_name, match.tournament_placements),
+            MAX_TELEGRAM_MESSAGE_LENGTH,
+        )
+        cards: list[bytes] = []
+        if TELEGRAM_MEDIA_CARDS:
+            try:
+                cards = render_tournament_standings_cards(
+                    match.tournament_name,
+                    match.tournament_placements,
+                )
+            except Exception as exc:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "tournament_standings_card_fallback",
+                    match_uid=match.match_uid,
+                    error_type=type(exc).__name__,
+                    error=_safe_error_message(exc),
+                )
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
+        if cards:
+            caption = _truncate_telegram_html(text, MAX_TELEGRAM_CAPTION_LENGTH)
+            try:
+                if len(cards) == 1:
+                    send_photo_to_telegram(
+                        channel["chat_id"],
+                        cards[0],
+                        caption,
+                        filename=f"cs2-standings-{match.match_id or 'final'}.png",
+                        timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                        max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
+                    )
+                else:
+                    send_media_group_to_telegram(
+                        channel["chat_id"],
+                        cards,
+                        caption,
+                        filenames=[
+                            f"cs2-standings-{match.match_id or 'final'}-{index}.png"
+                            for index in range(1, len(cards) + 1)
+                        ],
+                        timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                        max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
+                    )
+            except TelegramDeliveryUncertainError:
+                raise
+            except TelegramDeliveryError as exc:
+                log_event(
+                    logger,
+                    logging.WARNING,
+                    "tournament_standings_card_delivery_fallback",
+                    channel=channel_name,
+                    match_uid=match.match_uid,
+                    error_type=type(exc).__name__,
+                    error=_safe_error_message(exc),
+                )
+                send_to_telegram(
+                    channel["chat_id"],
+                    text,
+                    timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                    max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS,
+                )
+        else:
+            send_to_telegram(channel["chat_id"], text, timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
+                             max_attempts=RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS)
+        confirmed = True
+        claim = asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_content_processed(content_uid, "tournament_standings"))
+        asyncio.run(delete_result_delivery(pending))
+        log_event(logger, logging.INFO, "tournament_standings_delivery_succeeded", channel=channel_name,
+                  match_uid=match.match_uid, media_card=bool(cards))
+        return "sent"
+    except (TelegramDeliveryError, StorageUnavailableError) as exc:
+        uncertain = isinstance(exc, TelegramDeliveryUncertainError)
+        if uncertain:
+            _retain_uncertain_delivery_claim(claim)
+            _notify_admin("tournament_standings_delivery_uncertain",
+                          f"Telegram не подтвердил публикацию итогов турнира {match.tournament_name} в канал {channel_name}; повтор отключён.")
+            try:
+                asyncio.run(delete_result_delivery(pending))
+            except StorageUnavailableError:
+                pass
+        elif not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except StorageUnavailableError:
+                pass
+        if not uncertain:
+            try:
+                asyncio.run(record_result_delivery_attempt(pending))
+            except StorageUnavailableError:
+                pass
+        log_event(logger, logging.ERROR, "tournament_standings_delivery_failed", channel=channel_name,
+                  match_uid=match.match_uid, error_type=type(exc).__name__, error=_safe_error_message(exc))
+        return "failed"
 
 
 def _local_day_window(
@@ -1316,11 +1506,13 @@ def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
     confirmed = False
     try:
         if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+            _enqueue_tournament_standings(match, channel_id, channel_id)
             asyncio.run(delete_result_delivery(pending))
             return "reconciled"
         claim = asyncio.run(claim_channel_delivery(match, channel_id))
         if claim is None:
             if asyncio.run(is_channel_processed(match, channel_id)):
+                _enqueue_tournament_standings(match, channel_id, channel_id)
                 asyncio.run(delete_result_delivery(pending))
             return "duplicate"
         card = (
@@ -1338,6 +1530,7 @@ def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
         confirmed = True
         asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_channel_processed(match, channel_id))
+        _enqueue_tournament_standings(match, channel_id, channel_id)
         asyncio.run(delete_result_delivery(pending))
         _record_post_analytics("instagram", match.match_uid, "results", media_card=True)
         log_event(logger, logging.INFO, "instagram_delivery_succeeded", job="results", match_uid=match.match_uid)
@@ -1377,6 +1570,94 @@ def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
             error=_safe_error_message(exc),
         )
         return "failed"
+
+
+def _deliver_social_tournament_standings(
+    pending: PendingDelivery,
+    *,
+    platform: str,
+    context: Any,
+    publisher: Any,
+    uncertain_error: type[Exception],
+) -> str:
+    """Publish a complete final table to one Meta platform after its final score."""
+    match = pending.match
+    if not _can_publish_tournament_standings(match):
+        asyncio.run(delete_result_delivery(pending))
+        return "duplicate"
+    content_uid = _tournament_standings_content_uid(match, platform)
+    claim = None
+    confirmed = False
+    try:
+        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_standings")):
+            asyncio.run(delete_result_delivery(pending))
+            return "reconciled"
+        claim = asyncio.run(claim_content_delivery(content_uid))
+        if claim is None:
+            return "duplicate"
+        cards = render_tournament_standings_cards(match.tournament_name, match.tournament_placements)
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
+        publisher(
+            f"{platform}_standings_{safe_storage_part(match.tournament_parent or match.match_uid)}",
+            cards,
+            _instagram_caption(format_tournament_standings(match.tournament_name, match.tournament_placements)),
+            context,
+        )
+        confirmed = True
+        asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_content_processed(content_uid, "tournament_standings"))
+        asyncio.run(delete_result_delivery(pending))
+        _record_post_analytics(platform, content_uid, "tournament_standings", media_card=True)
+        log_event(
+            logger,
+            logging.INFO,
+            "tournament_standings_delivery_succeeded",
+            platform=platform,
+            match_uid=match.match_uid,
+            cards=len(cards),
+        )
+        return "sent"
+    except uncertain_error:
+        _retain_uncertain_delivery_claim(claim)
+        try:
+            asyncio.run(delete_result_delivery(pending))
+        except Exception:
+            pass
+        _notify_admin(
+            f"{platform}_tournament_standings_uncertain",
+            f"{platform.title()} не подтвердил публикацию итогов турнира {match.tournament_name}; повтор отключён.",
+        )
+        return "uncertain"
+    except Exception as exc:
+        if claim is not None and not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except Exception:
+                pass
+        try:
+            asyncio.run(record_result_delivery_attempt(pending))
+        except Exception:
+            pass
+        log_event(
+            logger,
+            logging.ERROR,
+            "tournament_standings_delivery_failed",
+            platform=platform,
+            match_uid=match.match_uid,
+            error_type=type(exc).__name__,
+            error=_safe_error_message(exc),
+        )
+        return "failed"
+
+
+def _deliver_instagram_tournament_standings(pending: PendingDelivery, context: Any) -> str:
+    return _deliver_social_tournament_standings(
+        pending,
+        platform="instagram",
+        context=context,
+        publisher=publish_rendered_cards,
+        uncertain_error=InstagramDeliveryUncertainError,
+    )
 
 
 def _deliver_threads_content(
@@ -1448,11 +1729,13 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
     confirmed = False
     try:
         if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+            _enqueue_tournament_standings(match, channel_id, channel_id)
             asyncio.run(delete_result_delivery(pending))
             return "reconciled"
         claim = asyncio.run(claim_channel_delivery(match, channel_id))
         if claim is None:
             if asyncio.run(is_channel_processed(match, channel_id)):
+                _enqueue_tournament_standings(match, channel_id, channel_id)
                 asyncio.run(delete_result_delivery(pending))
             return "duplicate"
         card = (
@@ -1470,6 +1753,7 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
         confirmed = True
         asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_channel_processed(match, channel_id))
+        _enqueue_tournament_standings(match, channel_id, channel_id)
         asyncio.run(delete_result_delivery(pending))
         _record_post_analytics("threads", match.match_uid, "results", media_card=True)
         log_event(logger, logging.INFO, "threads_delivery_succeeded", job="results", match_uid=match.match_uid)
@@ -1505,6 +1789,16 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
             error=_safe_error_message(exc),
         )
         return "failed"
+
+
+def _deliver_threads_tournament_standings(pending: PendingDelivery, context: Any) -> str:
+    return _deliver_social_tournament_standings(
+        pending,
+        platform="threads",
+        context=context,
+        publisher=publish_threads_rendered_cards,
+        uncertain_error=ThreadsDeliveryUncertainError,
+    )
 
 
 def _send_schedule_context_to_telegram(
@@ -2483,6 +2777,25 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             legacy_channel_name=name,
                         )
                     ):
+                        if _can_publish_tournament_standings(match):
+                            standings_key = result_outbox_key(match, channel_id, "tournament_standings")
+                            created = asyncio.run(
+                                enqueue_result_delivery(
+                                    match,
+                                    channel_id,
+                                    name,
+                                    content_type="tournament_standings",
+                                )
+                            )
+                            if created:
+                                current_targets[standings_key] = PendingDelivery(
+                                    key=standings_key,
+                                    channel_id=channel_id,
+                                    channel_name=name,
+                                    match=match,
+                                    created_at=queued_at,
+                                    content_type="tournament_standings",
+                                )
                         skipped_duplicates += 1
                         continue
                     created = asyncio.run(enqueue_result_delivery(match, channel_id, name))
@@ -2511,6 +2824,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 key = result_outbox_key(match, "instagram")
                 try:
                     if asyncio.run(is_channel_processed(match, "instagram")):
+                        _enqueue_tournament_standings(match, "instagram", "instagram")
                         skipped_duplicates += 1
                         continue
                     created = asyncio.run(enqueue_result_delivery(match, "instagram", "instagram"))
@@ -2538,6 +2852,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 key = result_outbox_key(match, "threads")
                 try:
                     if asyncio.run(is_channel_processed(match, "threads")):
+                        _enqueue_tournament_standings(match, "threads", "threads")
                         skipped_duplicates += 1
                         continue
                     created = asyncio.run(enqueue_result_delivery(match, "threads", "threads"))
@@ -2638,6 +2953,22 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         name = str(channel.get("name", pending.channel_name))
         channel_id = pending.channel_id
 
+        if pending.content_type == "tournament_standings":
+            if channel.get("platform") == "instagram":
+                outcome = _deliver_instagram_tournament_standings(pending, context)
+            elif channel.get("platform") == "threads":
+                outcome = _deliver_threads_tournament_standings(pending, context)
+            else:
+                outcome = _deliver_tournament_standings(pending, channel, name)
+            if outcome == "sent":
+                channel_stats[name] += 1
+                sent_messages += 1
+            elif outcome in {"duplicate", "reconciled"}:
+                skipped_duplicates += 1
+            else:
+                failed_messages += 1
+            continue
+
         if channel.get("platform") == "instagram":
             outcome = _deliver_instagram_result(pending, context)
             if outcome == "sent":
@@ -2662,6 +2993,27 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
         try:
             if asyncio.run(reconcile_channel_delivery(match, channel_id)):
+                if _can_publish_tournament_standings(match):
+                    standings_key = result_outbox_key(match, channel_id, "tournament_standings")
+                    created = asyncio.run(
+                        enqueue_result_delivery(
+                            match,
+                            channel_id,
+                            name,
+                            content_type="tournament_standings",
+                        )
+                    )
+                    if created:
+                        pending_deliveries.append(
+                            PendingDelivery(
+                                key=standings_key,
+                                channel_id=channel_id,
+                                channel_name=name,
+                                match=match,
+                                created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                content_type="tournament_standings",
+                            )
+                        )
                 asyncio.run(delete_result_delivery(pending))
                 log_event(
                     logger,
@@ -2695,6 +3047,27 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             skipped_duplicates += 1
             try:
                 if asyncio.run(is_channel_processed(match, channel_id, legacy_channel_name=name)):
+                    if _can_publish_tournament_standings(match):
+                        standings_key = result_outbox_key(match, channel_id, "tournament_standings")
+                        created = asyncio.run(
+                            enqueue_result_delivery(
+                                match,
+                                channel_id,
+                                name,
+                                content_type="tournament_standings",
+                            )
+                        )
+                        if created:
+                            pending_deliveries.append(
+                                PendingDelivery(
+                                    key=standings_key,
+                                    channel_id=channel_id,
+                                    channel_name=name,
+                                    match=match,
+                                    created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                                    content_type="tournament_standings",
+                                )
+                            )
                     asyncio.run(delete_result_delivery(pending))
             except Exception as exc:
                 log_event(
@@ -2908,6 +3281,27 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
         try:
             asyncio.run(mark_channel_processed(match, channel_id))
+            if _can_publish_tournament_standings(match):
+                standings_key = result_outbox_key(match, channel_id, "tournament_standings")
+                created = asyncio.run(
+                    enqueue_result_delivery(
+                        match,
+                        channel_id,
+                        name,
+                        content_type="tournament_standings",
+                    )
+                )
+                if created:
+                    pending_deliveries.append(
+                        PendingDelivery(
+                            key=standings_key,
+                            channel_id=channel_id,
+                            channel_name=name,
+                            match=match,
+                            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            content_type="tournament_standings",
+                        )
+                    )
             asyncio.run(delete_result_delivery(pending))
             log_event(
                 logger,

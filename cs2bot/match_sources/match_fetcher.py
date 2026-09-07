@@ -46,14 +46,22 @@ def _score_by_team(match: MatchNormalized) -> dict[str, int | None]:
 
 
 def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
-    """Accept a final only when its complete card data came from Liquipedia."""
-    return (
+    """Accept a fully sourced final card or a final with a complete standings table."""
+    complete_result_card = (
         match.source == "liquipedia"
         and match.is_final
         and match.winner_prize_usd is not None
         and 3 <= len(match.maps) <= 5
         and all(item.score1 is not None and item.score2 is not None for item in match.maps)
     )
+    complete_standings = (
+        match.source == "liquipedia"
+        and match.is_final
+        and bool(match.tournament_parent)
+        and 2 <= len(match.tournament_placements) <= 64
+        and all(item.prize_usd is not None for item in match.tournament_placements)
+    )
+    return complete_result_card or complete_standings
 
 
 def _same_match(left: MatchNormalized, right: MatchNormalized) -> bool:
