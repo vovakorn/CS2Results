@@ -38,6 +38,25 @@ def _team_name(value: Any) -> str | None:
     return name.strip() if isinstance(name, str) and name.strip() else None
 
 
+def _earliest_match_at(data: Any) -> str | None:
+    earliest: datetime | None = None
+    earliest_raw: str | None = None
+    for item in _walk_dicts(data):
+        raw = item.get("scheduled_at") or item.get("begin_at")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        if earliest is None or parsed < earliest:
+            earliest = parsed
+            earliest_raw = raw.strip()
+    return earliest_raw
+
+
 def _team_form(team_name: str, team_id: str | None, matches: list[MatchNormalized]) -> TeamForm:
     wins = 0
     losses = 0
@@ -270,13 +289,20 @@ async def fetch_tournament_radar(tournament_id: str) -> TournamentRadar:
             f"/tournaments/{tournament_id}/matches",
             {"filter[status]": "not_started", "sort": "begin_at", "per_page": 4},
         ),
+        pandascore_source._fetch_json(
+            f"/tournaments/{tournament_id}/matches",
+            {"sort": "begin_at", "per_page": 1},
+        ),
         return_exceptions=True,
     )
-    bracket, rosters, matches = [value if not isinstance(value, Exception) else [] for value in responses]
+    bracket, rosters, matches, all_matches = [
+        value if not isinstance(value, Exception) else [] for value in responses
+    ]
     if all(isinstance(value, Exception) for value in responses):
         raise SourceUnavailableError("PandaScore tournament radar endpoints are unavailable")
     return TournamentRadar(
         tournament_id=tournament_id,
+        earliest_match_at=_earliest_match_at(all_matches),
         bracket_matches=_bracket_matches(bracket),
         next_matches=pandascore_source._normalize_raw_upcoming(matches)[:4],
         roster_team_count=_roster_team_count(rosters),

@@ -219,6 +219,7 @@ class TournamentRadar(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     tournament_id: str = Field(min_length=1, max_length=200)
+    earliest_match_at: str | None = Field(default=None, max_length=100)
     standings: list[str] = Field(default_factory=list, max_length=12)
     standing_teams: list["RadarStandingTeam"] = Field(default_factory=list, max_length=12)
     bracket_matches: list["RadarBracketMatch"] = Field(default_factory=list, max_length=24)
