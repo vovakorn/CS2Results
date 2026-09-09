@@ -1839,6 +1839,7 @@ def test_radar_discovery_dry_run_previews_next_day_tournaments(monkeypatch):
         assert tournament_id == "100"
         return TournamentRadar(
             tournament_id=tournament_id,
+            earliest_match_at="2026-08-31T09:00:00Z",
             roster_team_count=16,
             bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
         )
@@ -1846,6 +1847,15 @@ def test_radar_discovery_dry_run_previews_next_day_tournaments(monkeypatch):
     monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
     monkeypatch.setattr(main, "fetch_tournament_radar", fake_radar)
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(
+        main,
+        "_next_local_day_window",
+        lambda: (
+            main.datetime.fromisoformat("2026-08-31T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-08-30T12:00:00+03:00"),
+        ),
+    )
 
     response = main.handler({"job": "radar_discovery", "dry_run": True}, None)
     body = json.loads(response["body"])
@@ -1870,16 +1880,141 @@ def test_radar_discovery_skips_tournament_without_confirmed_pairs(monkeypatch):
         return [match]
 
     async def fake_radar(tournament_id):
-        return TournamentRadar(tournament_id=tournament_id, roster_team_count=16)
+        return TournamentRadar(
+            tournament_id=tournament_id,
+            earliest_match_at="2026-08-31T09:00:00Z",
+            roster_team_count=16,
+        )
 
     monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
     monkeypatch.setattr(main, "fetch_tournament_radar", fake_radar)
+    monkeypatch.setattr(
+        main,
+        "_next_local_day_window",
+        lambda: (
+            main.datetime.fromisoformat("2026-08-31T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-08-30T12:00:00+03:00"),
+        ),
+    )
     response = main.handler({"job": "radar_discovery", "dry_run": True}, None)
     body = json.loads(response["body"])
 
     assert response["statusCode"] == 200
     assert body["messages_sent"] == 0
     assert body["radars"][0]["preview"] is None
+    assert body["radars"][0]["skipped_reason"] == "bracket_unavailable"
+
+
+def test_radar_discovery_skips_tournament_that_already_started(monkeypatch):
+    match = _upcoming().model_copy(
+        update={
+            "scheduled_at": "2026-08-31T09:00:00Z",
+            "source_refs": SourceReferences(tournament_id="100"),
+        }
+    )
+
+    async def fake_fetch(*args):
+        return [match]
+
+    async def fake_radar(tournament_id):
+        return TournamentRadar(
+            tournament_id=tournament_id,
+            earliest_match_at="2026-08-30T09:00:00Z",
+            bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
+        )
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "fetch_tournament_radar", fake_radar)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(
+        main,
+        "_next_local_day_window",
+        lambda: (
+            main.datetime.fromisoformat("2026-08-31T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-08-30T12:00:00+03:00"),
+        ),
+    )
+
+    response = main.handler({"job": "radar_discovery", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["messages_sent"] == 0
+    assert body["skipped_reasons"] == {"tournament_already_started": 1}
+    assert body["radars"][0]["skipped_reason"] == "tournament_already_started"
+
+
+def test_radar_discovery_skips_tournament_with_unknown_start(monkeypatch):
+    match = _upcoming().model_copy(
+        update={
+            "scheduled_at": "2026-08-31T09:00:00Z",
+            "source_refs": SourceReferences(tournament_id="100"),
+        }
+    )
+
+    async def fake_fetch(*args):
+        return [match]
+
+    async def fake_radar(tournament_id):
+        return TournamentRadar(
+            tournament_id=tournament_id,
+            bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
+        )
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "fetch_tournament_radar", fake_radar)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(
+        main,
+        "_next_local_day_window",
+        lambda: (
+            main.datetime.fromisoformat("2026-08-31T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-09-01T00:00:00+00:00"),
+            main.datetime.fromisoformat("2026-08-30T12:00:00+03:00"),
+        ),
+    )
+
+    response = main.handler({"job": "radar_discovery", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert body["messages_sent"] == 0
+    assert body["skipped_reasons"] == {"tournament_start_unknown": 1}
+
+
+def test_automatic_radar_uses_stable_tournament_deduplication_key(monkeypatch):
+    claimed = []
+    sent = []
+    radar = TournamentRadar(
+        tournament_id="100",
+        earliest_match_at="2026-08-31T09:00:00Z",
+        bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
+    )
+
+    async def fake_claim(content_uid):
+        claimed.append(content_uid)
+        if len(claimed) == 1:
+            return DeliveryClaim("content_" + content_uid, "claim-key", "claim-id")
+        return None
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent.append(args))
+
+    first = main._handle_radar_job("100", "IEM Cologne 2026", False, publication_key="auto", radar=radar)
+    second = main._handle_radar_job("100", "IEM Cologne 2026", False, publication_key="auto", radar=radar)
+
+    assert json.loads(first["body"])["messages_sent"] == 1
+    assert json.loads(second["body"])["duplicates_skipped"] == 1
+    assert claimed == ["radar_100_auto_global", "radar_100_auto_global"]
+    assert len(sent) == 1
 
 
 def test_schedule_photo_caption_omits_timezone_label():

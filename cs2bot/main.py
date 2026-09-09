@@ -2236,9 +2236,10 @@ def _handle_radar_job(
     card_variant: str = "auto",
     publication_key: str | None = None,
     require_bracket: bool = False,
+    radar: TournamentRadar | None = None,
 ) -> Dict[str, Any]:
     try:
-        radar = asyncio.run(fetch_tournament_radar(tournament_id))
+        radar = radar or asyncio.run(fetch_tournament_radar(tournament_id))
         text = format_tournament_radar(radar, tournament_name)
     except Exception as exc:
         log_event(
@@ -2285,8 +2286,10 @@ def _handle_radar_job(
     sent = 0
     duplicates = 0
     failures = 0
-    # Keep radar deduplication aligned with the channel's displayed calendar day.
-    day_key = publication_key or _local_day_window()[2].date().isoformat()
+    # Manual radars remain daily; automatic discovery uses a stable tournament key.
+    local_day_key = _local_day_window()[2].date().isoformat()
+    day_key = publication_key or local_day_key
+    display_day_key = local_day_key
     for channel in _iter_channels():
         if dry_run:
             sent += 1
@@ -2317,7 +2320,7 @@ def _handle_radar_job(
                             media_cards,
                             caption,
                             filenames=[
-                                f"cs2-radar-{tournament_id}-{day_key}-{index}-of-{len(media_cards)}.png"
+                                f"cs2-radar-{tournament_id}-{display_day_key}-{index}-of-{len(media_cards)}.png"
                                 for index in range(1, len(media_cards) + 1)
                             ],
                         )
@@ -2326,7 +2329,7 @@ def _handle_radar_job(
                             channel["chat_id"],
                             media_cards[0],
                             caption,
-                            filename=f"cs2-radar-{tournament_id}-{day_key}.png",
+                            filename=f"cs2-radar-{tournament_id}-{display_day_key}.png",
                         )
                 except TelegramDeliveryUncertainError:
                     raise
@@ -2450,15 +2453,78 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
 
     candidates = _radar_discovery_candidates(fetched)
     sent = duplicates = failures = 0
+    skipped_reasons: dict[str, int] = {}
     radars: list[dict[str, Any]] = []
     for tournament_id, tournament_name, first_at in candidates:
-        publication_key = first_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+        try:
+            radar = asyncio.run(fetch_tournament_radar(tournament_id))
+        except Exception as exc:
+            failures += 1
+            skipped_reasons["radar_source_unavailable"] = skipped_reasons.get(
+                "radar_source_unavailable", 0
+            ) + 1
+            log_event(
+                logger,
+                logging.ERROR,
+                "radar_discovery_candidate_failed",
+                tournament_id=tournament_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+            radars.append(
+                {
+                    "tournament_id": tournament_id,
+                    "tournament_name": tournament_name,
+                    "first_match_at": first_at.isoformat(),
+                    "status_code": 502,
+                    "skipped_reason": "radar_source_unavailable",
+                    "preview": None,
+                }
+            )
+            continue
+
+        earliest_at = _parse_datetime(radar.earliest_match_at)
+        skip_reason: str | None = None
+        if earliest_at is None:
+            skip_reason = "tournament_start_unknown"
+        elif earliest_at < start:
+            skip_reason = "tournament_already_started"
+        elif earliest_at >= end:
+            skip_reason = "tournament_start_outside_window"
+        elif not radar.bracket_matches:
+            skip_reason = "bracket_unavailable"
+
+        if skip_reason:
+            skipped_reasons[skip_reason] = skipped_reasons.get(skip_reason, 0) + 1
+            log_event(
+                logger,
+                logging.INFO,
+                "radar_discovery_candidate_skipped",
+                tournament_id=tournament_id,
+                reason=skip_reason,
+                earliest_match_at=radar.earliest_match_at,
+                next_match_at=first_at.isoformat(),
+            )
+            radars.append(
+                {
+                    "tournament_id": tournament_id,
+                    "tournament_name": tournament_name,
+                    "first_match_at": first_at.isoformat(),
+                    "earliest_match_at": radar.earliest_match_at,
+                    "status_code": 200,
+                    "skipped_reason": skip_reason,
+                    "preview": None,
+                }
+            )
+            continue
+
         response = _handle_radar_job(
             tournament_id,
             tournament_name,
             dry_run,
-            publication_key=publication_key,
+            publication_key="auto",
             require_bracket=True,
+            radar=radar,
         )
         body = json.loads(response["body"])
         sent += body["messages_sent"]
@@ -2469,6 +2535,7 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
                 "tournament_id": tournament_id,
                 "tournament_name": tournament_name,
                 "first_match_at": first_at.isoformat(),
+                "earliest_match_at": radar.earliest_match_at,
                 "status_code": response["statusCode"],
                 "preview": body.get("preview"),
             }
@@ -2483,6 +2550,7 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
         "messages_sent": sent,
         "duplicates_skipped": duplicates,
         "delivery_failures": failures,
+        "skipped_reasons": skipped_reasons,
         "dry_run": dry_run,
     }
     if dry_run:

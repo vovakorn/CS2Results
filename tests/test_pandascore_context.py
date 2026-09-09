@@ -52,6 +52,26 @@ def test_tournament_radar_keeps_available_data_when_one_endpoint_fails(monkeypat
 
     assert radar.roster_team_count == 1
     assert radar.bracket_matches == []
+    assert radar.earliest_match_at is None
+
+
+def test_tournament_radar_extracts_earliest_match_from_all_statuses(monkeypatch):
+    async def fake_fetch(path, params):
+        if path.endswith("/matches") and params == {"sort": "begin_at", "per_page": 1}:
+            return [
+                {
+                    "status": "finished",
+                    "scheduled_at": "2026-08-30T09:00:00Z",
+                    "begin_at": "2026-08-30T09:05:00Z",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(pandascore_context.pandascore_source, "_fetch_json", fake_fetch)
+
+    radar = asyncio.run(pandascore_context.fetch_tournament_radar("3"))
+
+    assert radar.earliest_match_at == "2026-08-30T09:00:00Z"
 
 
 def test_schedule_context_extracts_recent_head_to_head_from_team_history():
