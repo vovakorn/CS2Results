@@ -136,10 +136,33 @@ def test_tournament_standings_require_payout_for_every_team():
         media_cards.render_tournament_standings_cards("IEM Cologne 2026", placements)
 
 
-def test_tournament_standings_use_subtle_gold_and_silver_for_top_two():
+def test_tournament_standings_use_subtle_podium_colors_for_top_four():
     assert media_cards._standings_row_color("1") == media_cards.STANDINGS_GOLD
     assert media_cards._standings_row_color("2") == media_cards.STANDINGS_SILVER
-    assert media_cards._standings_row_color("3–4") == media_cards.WHITE
+    assert media_cards._standings_row_color("3–4") == media_cards.STANDINGS_BRONZE
+    assert media_cards._standings_row_color("3-4") == media_cards.STANDINGS_BRONZE
+
+
+def test_tournament_standings_draws_filled_podium_medals_and_a_distinct_header():
+    placements = [
+        TournamentPlacement(placement="1", team_name="Spirit", prize_usd=150_000),
+        TournamentPlacement(placement="2", team_name="MOUZ", prize_usd=60_000),
+        TournamentPlacement(placement="3–4", team_name="Vitality", prize_usd=40_000),
+        TournamentPlacement(placement="3–4", team_name="Falcons", prize_usd=40_000),
+    ]
+
+    image = Image.open(
+        io.BytesIO(media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)[0])
+    ).convert("RGB")
+    table_top = 340 + (media_cards.TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
+    first_row_top = table_top + 62
+
+    assert image.getpixel((128, first_row_top + 24)) == media_cards.STANDINGS_GOLD
+    assert image.getpixel((128, first_row_top + 68 + 24)) == media_cards.STANDINGS_SILVER
+    assert image.getpixel((122, first_row_top + 2 * 68 + 24)) == media_cards.STANDINGS_BRONZE
+    assert image.getpixel((540, table_top + 30)) == media_cards.STANDINGS_HEADER
+    assert image.getpixel((540, table_top)) == media_cards.STANDINGS_HEADER_LINE
+    assert image.getpixel((540, table_top + 62)) == media_cards.STANDINGS_HEADER_LINE
 
 
 def test_tournament_standings_use_the_source_label_on_every_page(monkeypatch):

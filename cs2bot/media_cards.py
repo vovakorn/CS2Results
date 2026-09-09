@@ -61,6 +61,10 @@ CYAN = (22, 199, 255)
 AMBER = (255, 159, 28)
 STANDINGS_GOLD = (214, 181, 104)
 STANDINGS_SILVER = (190, 202, 214)
+STANDINGS_BRONZE = (178, 122, 82)
+STANDINGS_MEDAL_TEXT = (20, 31, 43)
+STANDINGS_HEADER = (28, 55, 83)
+STANDINGS_HEADER_LINE = (94, 137, 174)
 LOGO_PLATE_DARK = (10, 24, 43)
 LOGO_PLATE_LIGHT = (220, 230, 240)
 MONTH_NAMES = (
@@ -1308,7 +1312,47 @@ def _standings_row_color(placement: str) -> tuple[int, int, int]:
         return STANDINGS_GOLD
     if placement == "2":
         return STANDINGS_SILVER
+    if placement in {"3", "4", "3-4", "3–4"}:
+        return STANDINGS_BRONZE
     return WHITE
+
+
+def _draw_standings_medal(
+    draw: ImageDraw.ImageDraw,
+    center_x: int,
+    row_top: int,
+    placement: str,
+) -> None:
+    """Give podium placements a quiet filled medal badge in the place column."""
+    color = _standings_row_color(placement)
+    if color == WHITE:
+        _centered_text(
+            draw,
+            center_x,
+            row_top + 18,
+            placement,
+            _fit_font(draw, placement, 110, 32, 16, display=True),
+            WHITE,
+        )
+        return
+
+    is_single_place = placement in {"1", "2", "3", "4"}
+    badge_width = 46 if is_single_place else 84
+    badge_height = 46 if is_single_place else 44
+    badge_top = row_top + (68 - badge_height) // 2
+    badge_box = (center_x - badge_width // 2, badge_top, center_x + badge_width // 2, badge_top + badge_height)
+    if is_single_place:
+        draw.ellipse(badge_box, fill=color)
+    else:
+        draw.rounded_rectangle(badge_box, radius=badge_height // 2, fill=color)
+    _centered_text(
+        draw,
+        center_x,
+        badge_top + (8 if is_single_place else 7),
+        placement,
+        _fit_font(draw, placement, badge_width - 12, 28, 14, display=True),
+        STANDINGS_MEDAL_TEXT,
+    )
 
 
 def _render_tournament_standings_page(
@@ -1324,12 +1368,12 @@ def _render_tournament_standings_page(
     width = RESULT_CARD_SIZE[0]
 
     _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
-    _centered_text(draw, width // 2, 207, "ИТОГИ ТУРНИРА", _font(44, display=True), WHITE)
+    _centered_text(draw, width // 2, 182, "ИТОГИ ТУРНИРА", _font(44, display=True), WHITE)
     title = tournament_name.upper()
     _centered_text(
         draw,
         width // 2,
-        278,
+        246,
         title,
         _fit_font(draw, title, 890, 30, 16, display=True),
         CYAN,
@@ -1344,25 +1388,29 @@ def _render_tournament_standings_page(
     x0, y0, x1, y1 = table
     place_divider = 228
     prize_divider = 760
-    draw.line((place_divider, y0 + 14, place_divider, y1 - 14), fill=(*AMBER, 180), width=2)
-    draw.line((prize_divider, y0 + 14, prize_divider, y1 - 14), fill=(*AMBER, 180), width=2)
-    _centered_text(draw, (x0 + place_divider) // 2, y0 + 17, "МЕСТО", _font(22, display=True), AMBER)
-    _aligned_text(draw, place_divider + 30, y0 + 17, "КОМАНДА", _font(22, display=True), AMBER, "left")
-    _centered_text(draw, (prize_divider + x1) // 2, y0 + 17, "ПРИЗОВЫЕ", _font(22, display=True), AMBER)
+    header_cut = 20
+    header_points = [
+        (x0 + header_cut, y0),
+        (x1 - header_cut, y0),
+        (x1, y0 + header_cut),
+        (x1, y0 + header_height),
+        (x0, y0 + header_height),
+        (x0, y0 + header_cut),
+    ]
+    draw.polygon(header_points, fill=(*STANDINGS_HEADER, 255))
+    draw.line(header_points + [header_points[0]], fill=(*STANDINGS_HEADER_LINE, 230), width=2)
+    draw.line((place_divider, y0 + 14, place_divider, y1 - 14), fill=(*STANDINGS_HEADER_LINE, 145), width=1)
+    draw.line((prize_divider, y0 + 14, prize_divider, y1 - 14), fill=(*STANDINGS_HEADER_LINE, 145), width=1)
+    _centered_text(draw, (x0 + place_divider) // 2, y0 + 17, "МЕСТО", _font(22, display=True), WHITE)
+    _aligned_text(draw, place_divider + 30, y0 + 17, "КОМАНДА", _font(22, display=True), WHITE, "left")
+    _centered_text(draw, (prize_divider + x1) // 2, y0 + 17, "ПРИЗОВЫЕ", _font(22, display=True), WHITE)
 
     for index, item in enumerate(placements):
         row_top = y0 + header_height + row_height * index
         if index:
             draw.line((x0 + 18, row_top, x1 - 18, row_top), fill=(*AMBER, 125), width=1)
         highlight = _standings_row_color(item.placement)
-        _centered_text(
-            draw,
-            (x0 + place_divider) // 2,
-            row_top + 18,
-            item.placement,
-            _fit_font(draw, item.placement, 110, 32, 16, display=True),
-            highlight,
-        )
+        _draw_standings_medal(draw, (x0 + place_divider) // 2, row_top, item.placement)
         team_name = item.team_name.upper()
         _aligned_text(
             draw,
