@@ -15,21 +15,21 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 10 сентября 2026, версия `d4evd2uvjb73bm1ehhr1`
-  (Git merge `470238e`, PR #111, итоговая VRS-таблица турнира);
+- Последний production-деплой: 10 сентября 2026, версия `d4eoos50gn0nm7eoi9gv`
+  (Git merge `55f5c8f`, PR #113, включение VRS);
   таймеры вызывают
   тег `production`. Предыдущая версия `d4e5rsmh5u8jm6t8fc5l`
   закреплена тегом `rollback`.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
-- В production включён флаг `ENABLE_LIQUIPEDIA_FINAL_CARDS=1`; Liquipedia fallback
-  остаётся выключен.
+- В production включены флаги `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
+  `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
-- Полная release-проверка: 424 теста, GitHub Actions на Python 3.11 и 3.12
+- Полная release-проверка: 426 тестов, GitHub Actions на Python 3.11 и 3.12
   и сборка архива основной функции. Candidate и production smoke прошли:
   `200`, `dry_run=true`, без startup-ошибок и публикаций. SHA-256 архива:
-  `7680fba23be0ce4c5b66321bac850df22e6b3dc23e472f1c9cf1e474ed667bf9`.
+  `c24c819c48be9d5a930a57355c2114bafd53184152b5ccd4f527af2b02992955`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
@@ -114,8 +114,8 @@ production и сверки фактического состояния. Теку
 - Турнирный радар: до 24 подтверждённых пар PandaScore, по четыре пары на
   квадратную PNG-карточку с нумерацией страниц; таблица положения не публикуется.
 - VRS-альбом: отдельный outbox и content UID, две соседние колонки изменения
-  очков и мест, snapshots до/после в Object Storage; production включается
-  только после настройки `ENABLE_VRS=1`.
+  очков и мест, snapshots до/после в Object Storage; production-флаг
+  `ENABLE_VRS=1` включён 10 сентября 2026.
 - Radar discovery и один контролируемый тестовый пост карточек сетки успешно
   доставлены; dry-run без подтверждённых пар корректно не создаёт публикацию.
 - Analytics journal для событий публикаций, снимков подписчиков, invite links и
