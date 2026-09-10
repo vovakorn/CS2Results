@@ -210,6 +210,11 @@ delivery-uncertain. Для неоднозначного результата out
 обязательны `channel_id` и целочисленный `message_id`; `views_24h` и `reactions`
 необязательны, но не могут быть отрицательными.
 
+Для включения VRS в production используйте поэтапный release с
+`YC_ENABLE_VRS=1`; флаг не требует Lockbox-секрета. После включения baseline
+сохраняется при радаре турнира, а VRS-альбом появляется только при полном
+подтверждённом after-снимке Valve.
+
 `tournament_tier` PandaScore виден в dry-run как `tier1_autopilot_selected` и
 `tier1_autopilot_reason`. Для расписания tier `S`/`A` участвует в настоящем
 отборе вместе с явно распознанными Tier-1 турнирами и всегда уступает исключениям

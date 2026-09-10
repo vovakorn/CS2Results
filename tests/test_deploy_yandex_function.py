@@ -490,6 +490,29 @@ def test_candidate_can_add_pinned_liquipedia_secret_and_shadow_flag(fake_cloud: 
     ) in secret_flags
 
 
+def test_candidate_can_override_vrs_flag_without_secret(fake_cloud: dict[str, str]) -> None:
+    fake_cloud["YC_ENABLE_VRS"] = "1"
+
+    _create_candidate(fake_cloud)
+    create_call = next(
+        call for call in _calls(fake_cloud) if call[:4] == ["serverless", "function", "version", "create"]
+    )
+    environment_csv = create_call[create_call.index("--environment") + 1]
+    environment = dict(item.split("=", 1) for item in next(csv.reader([environment_csv])))
+
+    assert environment["ENABLE_VRS"] == "1"
+    assert len([value for value in create_call if value == "--secret"]) == 4
+
+
+def test_invalid_vrs_override_is_rejected(fake_cloud: dict[str, str]) -> None:
+    fake_cloud["YC_ENABLE_VRS"] = "maybe"
+
+    result = _run("candidate", fake_cloud)
+
+    assert result.returncode != 0
+    assert "YC_ENABLE_VRS must be a boolean" in result.stderr
+
+
 def test_candidate_can_add_pinned_telegram_proxy_secret(fake_cloud: dict[str, str]) -> None:
     fake_cloud.update(
         {
