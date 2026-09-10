@@ -15,8 +15,8 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 9 сентября 2026, версия `d4evr3lci669potqgrl0`
-  (Git merge `0760632`, доработка карточек итогов турнира из PR #110);
+- Последний production-деплой: 10 сентября 2026, версия `d4evd2uvjb73bm1ehhr1`
+  (Git merge `470238e`, PR #111, итоговая VRS-таблица турнира);
   таймеры вызывают
   тег `production`. Предыдущая версия `d4e5rsmh5u8jm6t8fc5l`
   закреплена тегом `rollback`.
@@ -26,9 +26,10 @@ production и сверки фактического состояния. Теку
 - В production включён флаг `ENABLE_LIQUIPEDIA_FINAL_CARDS=1`; Liquipedia fallback
   остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
-- Полная release-проверка: 391 тест и сборка архива основной функции.
-  Candidate и production smoke прошли: `200`,
-  `dry_run=true`, без startup-ошибок и публикаций.
+- Полная release-проверка: 424 теста, GitHub Actions на Python 3.11 и 3.12
+  и сборка архива основной функции. Candidate и production smoke прошли:
+  `200`, `dry_run=true`, без startup-ошибок и публикаций. SHA-256 архива:
+  `7680fba23be0ce4c5b66321bac850df22e6b3dc23e472f1c9cf1e474ed667bf9`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
@@ -149,8 +150,8 @@ production и сверки фактического состояния. Теку
   Отдельный `promote` переключает тег без повторной сборки, выполняет production
   smoke и при его ошибке проверяемо откатывается. Для ZIP больше 3,5 МБ
   обязателен проверенный приватный package bucket с lifecycle. Manifest связывает
-  Git SHA `1e526b4`, SHA-256 архива
-  `f02d2587142eda26e79c9d92a0155d5009463ca60ea984f673f9adfabeee7386` и обе
+  Git SHA `6808b19`, SHA-256 архива
+  `7680fba23be0ce4c5b66321bac850df22e6b3dc23e472f1c9cf1e474ed667bf9` и обе
   версии. Ручной rollback в production намеренно не запускался после успешного
   smoke; готовность команды покрыта failure-injection тестами и тегом `rollback`.
 
