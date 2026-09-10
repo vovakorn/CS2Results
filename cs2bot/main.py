@@ -43,16 +43,19 @@ from .media_cards import (
     MAX_SCHEDULE_TOTAL_MATCHES,
     can_render_final_card,
     can_render_tournament_standings,
+    can_render_tournament_vrs,
     render_final_card,
     render_result_card,
     render_results_card,
     render_schedule_cards,
     render_schedule_context_covers,
     render_tournament_standings_cards,
+    render_tournament_vrs_cards,
     render_tournament_radar_cards,
 )
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
+    ENABLE_VRS,
     ENABLE_LIQUIPEDIA_FALLBACK,
     LIQUIPEDIA_API_KEY,
     MATCH_SOURCE,
@@ -65,13 +68,17 @@ from .match_sources.match_fetcher import SourceName, apply_quality_filters, get_
 from .match_sources.models import (
     MatchNormalized,
     ScheduleMatchContext,
+    TournamentPlacement,
     TournamentRadar,
+    TournamentVRSImpact,
     UpcomingMatchNormalized,
 )
 from .match_sources.sources.pandascore_context import (
     fetch_schedule_match_context,
     fetch_tournament_radar,
 )
+from .match_sources.sources.vrs_source import VRSUnavailableError, fetch_snapshot as fetch_vrs_snapshot
+from .match_sources.vrs import VRSDataError, calculate_impacts
 from .match_sources.sources.pandascore_source import (
     fetch_finished_matches as fetch_pandascore_finished_matches,
     fetch_upcoming_matches,
@@ -99,6 +106,8 @@ from .match_sources.storage import (
     reconcile_content_delivery,
     release_delivery_claim,
     result_outbox_key,
+    read_latest_vrs_snapshot,
+    write_vrs_snapshot,
     safe_storage_part,
     StorageUnavailableError,
 )
@@ -140,14 +149,10 @@ _monotonic = time.monotonic
 MATCH_URL_HOSTS = {
     "pandascore": {"pandascore.co", "www.pandascore.co"},
     "liquipedia": {"liquipedia.net", "www.liquipedia.net"},
-    "cs2api": {"bo3.gg", "www.bo3.gg"},
-    "hltv": {"hltv.org", "www.hltv.org"},
 }
 SOURCE_LABELS = {
     "pandascore": "PandaScore",
     "liquipedia": "Liquipedia",
-    "cs2api": "BO3.gg",
-    "hltv": "HLTV",
 }
 RUSSIAN_MONTHS = (
     "",
@@ -802,16 +807,135 @@ def _tournament_standings_content_uid(match: MatchNormalized, channel_id: str) -
 
 def _enqueue_tournament_standings(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
     """Queue one standings post after the platform's final-result marker exists."""
-    if not _can_publish_tournament_standings(match):
-        return False
-    return asyncio.run(
-        enqueue_result_delivery(
-            match,
-            channel_id,
-            channel_name,
-            content_type="tournament_standings",
+    created = False
+    if _can_publish_tournament_standings(match):
+        created = asyncio.run(
+            enqueue_result_delivery(
+                match,
+                channel_id,
+                channel_name,
+                content_type="tournament_standings",
+            )
         )
-    )
+    _enqueue_tournament_vrs(match, channel_id, channel_name)
+    return created
+
+
+def format_tournament_vrs(tournament_name: str, impacts: Sequence[TournamentVRSImpact]) -> str:
+    if not tournament_name.strip() or not can_render_tournament_vrs(impacts):
+        raise ValueError("Tournament VRS requires complete impacts")
+    lines = [f"📈 <b>Влияние турнира на VRS — {html.escape(tournament_name)}</b>", "", "<b>Изменения рейтинга:</b>"]
+    for item in impacts:
+        points = f"+{item.points_delta}" if item.points_delta > 0 else f"−{abs(item.points_delta)}" if item.points_delta < 0 else "—"
+        rank = f"↑ {item.rank_delta}" if item.rank_delta > 0 else f"↓ {abs(item.rank_delta)}" if item.rank_delta < 0 else "—"
+        lines.append(f"{html.escape(item.placement)}. {html.escape(item.team_name)} — {points} очков · {rank}")
+    lines.extend([
+        "",
+        "Изменение VRS после турнира; другие события между снимками тоже могут влиять.",
+        f"Источник VRS: {html.escape(impacts[0].source)}",
+        "",
+        "#CS2 #VRS #ИтогиТурнира",
+    ])
+    return "\n".join(lines)
+
+
+def _vrs_tournament_id(match: MatchNormalized) -> str | None:
+    return match.tournament_parent or (match.source_refs.tournament_id if match.source_refs else None)
+
+
+def _capture_vrs_baseline(tournament_id: str, *, dry_run: bool = False) -> str:
+    if not ENABLE_VRS or dry_run:
+        return "disabled"
+    try:
+        snapshot = asyncio.run(fetch_vrs_snapshot())
+        asyncio.run(write_vrs_snapshot(tournament_id, "before", snapshot))
+        log_event(logger, logging.INFO, "vrs_baseline_saved", tournament_id=tournament_id, version=snapshot.version)
+        return "saved"
+    except (VRSUnavailableError, VRSDataError, StorageUnavailableError, requests.RequestException) as exc:
+        log_event(logger, logging.WARNING, "vrs_baseline_skipped", tournament_id=tournament_id,
+                  reason=type(exc).__name__, error=_safe_error_message(exc))
+        return "skipped"
+
+
+def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
+    if not ENABLE_VRS or not match.is_final or not match.tournament_placements:
+        return False
+    tournament_id = _vrs_tournament_id(match)
+    if not tournament_id:
+        log_event(logger, logging.WARNING, "vrs_publication_skipped", match_uid=match.match_uid, reason="missing_tournament_id")
+        return False
+    try:
+        before = asyncio.run(read_latest_vrs_snapshot(tournament_id, "before"))
+        if before is None:
+            raise VRSDataError("baseline snapshot is missing")
+        after = asyncio.run(fetch_vrs_snapshot())
+        completed_at = match.end_date or match.date or match.start_date
+        completed_datetime = _parse_datetime(completed_at) if completed_at else None
+        effective_datetime = _parse_datetime(after.effective_at)
+        if completed_datetime and effective_datetime and effective_datetime < completed_datetime:
+            raise VRSDataError("after snapshot predates tournament completion")
+        impacts = calculate_impacts(match.tournament_placements, before, after)
+        asyncio.run(write_vrs_snapshot(tournament_id, "after", after))
+        return asyncio.run(enqueue_result_delivery(
+            match, channel_id, channel_name,
+            content_type="tournament_vrs_standings",
+            vrs_impacts=tuple(impacts),
+        ))
+    except (VRSUnavailableError, VRSDataError, StorageUnavailableError, requests.RequestException) as exc:
+        log_event(logger, logging.WARNING, "vrs_publication_skipped", match_uid=match.match_uid,
+                  tournament_id=tournament_id, reason=type(exc).__name__, error=_safe_error_message(exc))
+        return False
+
+
+def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], channel_name: str) -> str:
+    impacts = pending.vrs_impacts
+    if not can_render_tournament_vrs(impacts):
+        asyncio.run(delete_result_delivery(pending))
+        log_event(logger, logging.WARNING, "vrs_outbox_discarded", match_uid=pending.match.match_uid, reason="incomplete_data")
+        return "duplicate"
+    content_uid = f"tournament-vrs-v1:{pending.channel_id}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
+    claim = asyncio.run(claim_content_delivery(content_uid))
+    if claim is None:
+        asyncio.run(delete_result_delivery(pending))
+        return "duplicate"
+    confirmed = False
+    try:
+        text = format_tournament_vrs(pending.match.tournament_name, impacts)
+        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source) if TELEGRAM_MEDIA_CARDS else []
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
+        if cards:
+            try:
+                if len(cards) > 1:
+                    send_media_group_to_telegram(channel["chat_id"], cards, _truncate_telegram_html(text, MAX_TELEGRAM_CAPTION_LENGTH),
+                                                  filenames=[f"cs2-vrs-{pending.match.match_id or 'final'}-{i}.png" for i in range(1, len(cards) + 1)])
+                else:
+                    send_photo_to_telegram(channel["chat_id"], cards[0], _truncate_telegram_html(text, MAX_TELEGRAM_CAPTION_LENGTH),
+                                           filename=f"cs2-vrs-{pending.match.match_id or 'final'}.png")
+            except TelegramDeliveryUncertainError:
+                raise
+            except TelegramDeliveryError:
+                send_to_telegram(channel["chat_id"], text)
+        else:
+            send_to_telegram(channel["chat_id"], text)
+        confirmed = True
+        asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_content_processed(content_uid, "tournament_vrs_standings"))
+        asyncio.run(delete_result_delivery(pending))
+        log_event(logger, logging.INFO, "vrs_delivery_succeeded", channel=channel_name, match_uid=pending.match.match_uid)
+        return "sent"
+    except (TelegramDeliveryError, StorageUnavailableError) as exc:
+        if not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except Exception:
+                pass
+        try:
+            asyncio.run(record_result_delivery_attempt(pending))
+        except Exception:
+            pass
+        log_event(logger, logging.ERROR, "vrs_delivery_failed", channel=channel_name, match_uid=pending.match.match_uid,
+                  error_type=type(exc).__name__, error=_safe_error_message(exc))
+        return "failed"
 
 
 def _deliver_tournament_standings(
@@ -1660,6 +1784,78 @@ def _deliver_instagram_tournament_standings(pending: PendingDelivery, context: A
     )
 
 
+def _deliver_social_tournament_vrs(
+    pending: PendingDelivery,
+    *,
+    platform: str,
+    context: Any,
+    publisher: Any,
+    uncertain_error: type[Exception],
+) -> str:
+    impacts = pending.vrs_impacts
+    if not can_render_tournament_vrs(impacts):
+        asyncio.run(delete_result_delivery(pending))
+        return "duplicate"
+    content_uid = f"tournament-vrs-v1:{platform}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
+    claim = None
+    confirmed = False
+    try:
+        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_vrs_standings")):
+            asyncio.run(delete_result_delivery(pending))
+            return "reconciled"
+        claim = asyncio.run(claim_content_delivery(content_uid))
+        if claim is None:
+            return "duplicate"
+        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source)
+        claim = asyncio.run(mark_delivery_claim_attempting(claim))
+        publisher(
+            f"{platform}_vrs_{safe_storage_part(_vrs_tournament_id(pending.match) or pending.match.match_uid)}",
+            cards,
+            _instagram_caption(format_tournament_vrs(pending.match.tournament_name, impacts)),
+            context,
+        )
+        confirmed = True
+        asyncio.run(mark_delivery_claim_sent(claim))
+        asyncio.run(mark_content_processed(content_uid, "tournament_vrs_standings"))
+        asyncio.run(delete_result_delivery(pending))
+        _record_post_analytics(platform, content_uid, "tournament_vrs_standings", media_card=True)
+        return "sent"
+    except uncertain_error:
+        _retain_uncertain_delivery_claim(claim)
+        try:
+            asyncio.run(delete_result_delivery(pending))
+        except Exception:
+            pass
+        return "uncertain"
+    except Exception as exc:
+        if claim is not None and not confirmed:
+            try:
+                asyncio.run(release_delivery_claim(claim))
+            except Exception:
+                pass
+        try:
+            asyncio.run(record_result_delivery_attempt(pending))
+        except Exception:
+            pass
+        log_event(logger, logging.ERROR, "tournament_vrs_delivery_failed", platform=platform,
+                  match_uid=pending.match.match_uid, error_type=type(exc).__name__, error=_safe_error_message(exc))
+        return "failed"
+
+
+def _deliver_instagram_tournament_vrs(pending: PendingDelivery, context: Any) -> str:
+    return _deliver_social_tournament_vrs(
+        pending, platform="instagram", context=context,
+        publisher=publish_rendered_cards, uncertain_error=InstagramDeliveryUncertainError,
+    )
+
+
+def _deliver_threads_tournament_vrs(pending: PendingDelivery, context: Any) -> str:
+    return _deliver_social_tournament_vrs(
+        pending, platform="threads", context=context,
+        publisher=publish_threads_rendered_cards, uncertain_error=ThreadsDeliveryUncertainError,
+    )
+
+
 def _deliver_threads_content(
     *,
     job: str,
@@ -2237,9 +2433,11 @@ def _handle_radar_job(
     card_variant: str = "auto",
     publication_key: str | None = None,
     require_bracket: bool = False,
+    radar: TournamentRadar | None = None,
 ) -> Dict[str, Any]:
     try:
-        radar = asyncio.run(fetch_tournament_radar(tournament_id))
+        radar = radar or asyncio.run(fetch_tournament_radar(tournament_id))
+        _capture_vrs_baseline(tournament_id, dry_run=dry_run)
         text = format_tournament_radar(radar, tournament_name)
     except Exception as exc:
         log_event(
@@ -2286,8 +2484,10 @@ def _handle_radar_job(
     sent = 0
     duplicates = 0
     failures = 0
-    # Keep radar deduplication aligned with the channel's displayed calendar day.
-    day_key = publication_key or _local_day_window()[2].date().isoformat()
+    # Manual radars remain daily; automatic discovery uses a stable tournament key.
+    local_day_key = _local_day_window()[2].date().isoformat()
+    day_key = publication_key or local_day_key
+    display_day_key = local_day_key
     for channel in _iter_channels():
         if dry_run:
             sent += 1
@@ -2318,7 +2518,7 @@ def _handle_radar_job(
                             media_cards,
                             caption,
                             filenames=[
-                                f"cs2-radar-{tournament_id}-{day_key}-{index}-of-{len(media_cards)}.png"
+                                f"cs2-radar-{tournament_id}-{display_day_key}-{index}-of-{len(media_cards)}.png"
                                 for index in range(1, len(media_cards) + 1)
                             ],
                         )
@@ -2327,7 +2527,7 @@ def _handle_radar_job(
                             channel["chat_id"],
                             media_cards[0],
                             caption,
-                            filename=f"cs2-radar-{tournament_id}-{day_key}.png",
+                            filename=f"cs2-radar-{tournament_id}-{display_day_key}.png",
                         )
                 except TelegramDeliveryUncertainError:
                     raise
@@ -2427,7 +2627,7 @@ def _radar_discovery_candidates(
         if current is None or first_at < current[2]:
             candidates[tournament_id] = (
                 tournament_id,
-                match.competition_key or match.tournament_name,
+                match.tournament_name,
                 first_at,
             )
     return sorted(candidates.values(), key=lambda candidate: candidate[2])
@@ -2452,15 +2652,78 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
 
     candidates = _radar_discovery_candidates(fetched)
     sent = duplicates = failures = 0
+    skipped_reasons: dict[str, int] = {}
     radars: list[dict[str, Any]] = []
     for tournament_id, tournament_name, first_at in candidates:
-        publication_key = first_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H%MZ")
+        try:
+            radar = asyncio.run(fetch_tournament_radar(tournament_id))
+        except Exception as exc:
+            failures += 1
+            skipped_reasons["radar_source_unavailable"] = skipped_reasons.get(
+                "radar_source_unavailable", 0
+            ) + 1
+            log_event(
+                logger,
+                logging.ERROR,
+                "radar_discovery_candidate_failed",
+                tournament_id=tournament_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+            radars.append(
+                {
+                    "tournament_id": tournament_id,
+                    "tournament_name": tournament_name,
+                    "first_match_at": first_at.isoformat(),
+                    "status_code": 502,
+                    "skipped_reason": "radar_source_unavailable",
+                    "preview": None,
+                }
+            )
+            continue
+
+        earliest_at = _parse_datetime(radar.earliest_match_at)
+        skip_reason: str | None = None
+        if earliest_at is None:
+            skip_reason = "tournament_start_unknown"
+        elif earliest_at < start:
+            skip_reason = "tournament_already_started"
+        elif earliest_at >= end:
+            skip_reason = "tournament_start_outside_window"
+        elif not radar.bracket_matches:
+            skip_reason = "bracket_unavailable"
+
+        if skip_reason:
+            skipped_reasons[skip_reason] = skipped_reasons.get(skip_reason, 0) + 1
+            log_event(
+                logger,
+                logging.INFO,
+                "radar_discovery_candidate_skipped",
+                tournament_id=tournament_id,
+                reason=skip_reason,
+                earliest_match_at=radar.earliest_match_at,
+                next_match_at=first_at.isoformat(),
+            )
+            radars.append(
+                {
+                    "tournament_id": tournament_id,
+                    "tournament_name": tournament_name,
+                    "first_match_at": first_at.isoformat(),
+                    "earliest_match_at": radar.earliest_match_at,
+                    "status_code": 200,
+                    "skipped_reason": skip_reason,
+                    "preview": None,
+                }
+            )
+            continue
+
         response = _handle_radar_job(
             tournament_id,
             tournament_name,
             dry_run,
-            publication_key=publication_key,
+            publication_key="auto",
             require_bracket=True,
+            radar=radar,
         )
         body = json.loads(response["body"])
         sent += body["messages_sent"]
@@ -2471,6 +2734,7 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
                 "tournament_id": tournament_id,
                 "tournament_name": tournament_name,
                 "first_match_at": first_at.isoformat(),
+                "earliest_match_at": radar.earliest_match_at,
                 "status_code": response["statusCode"],
                 "preview": body.get("preview"),
             }
@@ -2485,6 +2749,7 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
         "messages_sent": sent,
         "duplicates_skipped": duplicates,
         "delivery_failures": failures,
+        "skipped_reasons": skipped_reasons,
         "dry_run": dry_run,
     }
     if dry_run:
@@ -2960,6 +3225,22 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 outcome = _deliver_threads_tournament_standings(pending, context)
             else:
                 outcome = _deliver_tournament_standings(pending, channel, name)
+            if outcome == "sent":
+                channel_stats[name] += 1
+                sent_messages += 1
+            elif outcome in {"duplicate", "reconciled"}:
+                skipped_duplicates += 1
+            else:
+                failed_messages += 1
+            continue
+
+        if pending.content_type == "tournament_vrs_standings":
+            if channel.get("platform") == "instagram":
+                outcome = _deliver_instagram_tournament_vrs(pending, context)
+            elif channel.get("platform") == "threads":
+                outcome = _deliver_threads_tournament_vrs(pending, context)
+            else:
+                outcome = _deliver_tournament_vrs(pending, channel, name)
             if outcome == "sent":
                 channel_stats[name] += 1
                 sent_messages += 1

@@ -8,6 +8,7 @@ from cs2bot.match_sources.models import (
     MapResult,
     MatchNormalized,
     RadarBracketMatch,
+    RadarBracketNode,
     RadarStandingTeam,
     TournamentPlacement,
     TournamentRadar,
@@ -136,10 +137,33 @@ def test_tournament_standings_require_payout_for_every_team():
         media_cards.render_tournament_standings_cards("IEM Cologne 2026", placements)
 
 
-def test_tournament_standings_use_subtle_gold_and_silver_for_top_two():
+def test_tournament_standings_use_subtle_podium_colors_for_top_four():
     assert media_cards._standings_row_color("1") == media_cards.STANDINGS_GOLD
     assert media_cards._standings_row_color("2") == media_cards.STANDINGS_SILVER
-    assert media_cards._standings_row_color("3–4") == media_cards.WHITE
+    assert media_cards._standings_row_color("3–4") == media_cards.STANDINGS_BRONZE
+    assert media_cards._standings_row_color("3-4") == media_cards.STANDINGS_BRONZE
+
+
+def test_tournament_standings_draws_filled_podium_medals_and_a_distinct_header():
+    placements = [
+        TournamentPlacement(placement="1", team_name="Spirit", prize_usd=150_000),
+        TournamentPlacement(placement="2", team_name="MOUZ", prize_usd=60_000),
+        TournamentPlacement(placement="3–4", team_name="Vitality", prize_usd=40_000),
+        TournamentPlacement(placement="3–4", team_name="Falcons", prize_usd=40_000),
+    ]
+
+    image = Image.open(
+        io.BytesIO(media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)[0])
+    ).convert("RGB")
+    table_top = 340 + (media_cards.TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
+    first_row_top = table_top + 62
+
+    assert image.getpixel((128, first_row_top + 24)) == media_cards.STANDINGS_GOLD
+    assert image.getpixel((128, first_row_top + 68 + 24)) == media_cards.STANDINGS_SILVER
+    assert image.getpixel((122, first_row_top + 2 * 68 + 24)) == media_cards.STANDINGS_BRONZE
+    assert image.getpixel((540, table_top + 30)) == media_cards.STANDINGS_HEADER
+    assert image.getpixel((540, table_top)) == media_cards.STANDINGS_HEADER_LINE
+    assert image.getpixel((540, table_top + 62)) == media_cards.STANDINGS_HEADER_LINE
 
 
 def test_tournament_standings_use_the_source_label_on_every_page(monkeypatch):
@@ -356,6 +380,93 @@ def test_tournament_radar_bracket_is_paginated_into_square_pngs():
 
     assert len(cards) == 3
     assert all(Image.open(io.BytesIO(card)).size == media_cards.SCHEDULE_CARD_SIZE for card in cards)
+
+
+def test_tournament_radar_bracket_uses_links_and_team_logos(monkeypatch):
+    matches = [
+        RadarBracketMatch(
+            match_id="opening-1",
+            round_name="Opening round",
+            team1_name="NAVI",
+            team2_name="FaZe",
+            team1_logo_url="https://cdn.pandascore.co/images/team/image/10/navi.png",
+            team2_logo_url="https://cdn.pandascore.co/images/team/image/20/faze.png",
+        ),
+        RadarBracketMatch(
+            match_id="opening-2",
+            round_name="Opening round",
+            team1_name="Spirit",
+            team2_name="Vitality",
+            team1_logo_url="https://cdn.pandascore.co/images/team/image/30/spirit.png",
+            team2_logo_url="https://cdn.pandascore.co/images/team/image/40/vitality.png",
+        ),
+        RadarBracketMatch(
+            match_id="final",
+            round_name="Upper final",
+            team1_name="NAVI",
+            team2_name="Spirit",
+            previous_match_ids=["opening-1", "opening-2"],
+        ),
+    ]
+    calls = []
+
+    def capture_logo(canvas, draw, center, diameter, team_name, logo_url, *args):
+        calls.append((team_name, logo_url))
+
+    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
+    columns, positions = media_cards._radar_bracket_columns(matches)
+    data = media_cards.render_tournament_radar_card(
+        TournamentRadar(tournament_id="3", bracket_matches=matches),
+        "FISSURE PLAYGROUND — SEASON 3 2026 — GROUP A",
+        "Europe/Moscow",
+        "bracket",
+    )
+
+    assert [[match.match_id for match in column] for column in columns] == [
+        ["opening-1", "opening-2"], ["final"]
+    ]
+    assert positions["opening-1"] < positions["final"]
+    assert ("NAVI", "https://cdn.pandascore.co/images/team/image/10/navi.png") in calls
+    assert ("Vitality", "https://cdn.pandascore.co/images/team/image/40/vitality.png") in calls
+    assert Image.open(io.BytesIO(data)).size == media_cards.SCHEDULE_CARD_SIZE
+
+
+def test_tournament_radar_shows_future_slots_as_tbd_without_inventing_teams(monkeypatch):
+    opening = RadarBracketMatch(
+        match_id="opening",
+        round_name="Opening round",
+        team1_name="NAVI",
+        team2_name="FaZe",
+        team1_logo_url="https://cdn.pandascore.co/images/team/image/10/navi.png",
+        team2_logo_url="https://cdn.pandascore.co/images/team/image/20/faze.png",
+    )
+    future = RadarBracketNode(
+        match_id="upper-final",
+        round_name="Upper final",
+        previous_match_ids=["opening"],
+    )
+    rendered_names = []
+    original = media_cards._aligned_text
+
+    def capture_text(draw, edge_x, y, text, font, fill, alignment):
+        rendered_names.append(text)
+        return original(draw, edge_x, y, text, font, fill, alignment)
+
+    monkeypatch.setattr(media_cards, "_aligned_text", capture_text)
+    data = media_cards.render_tournament_radar_card(
+        TournamentRadar(
+            tournament_id="3",
+            bracket_matches=[opening],
+            bracket_structure=[opening, future],
+        ),
+        "FISSURE PLAYGROUND — SEASON 3 2026 — GROUP A",
+        "Europe/Moscow",
+        "bracket",
+    )
+
+    assert rendered_names.count("TBD") == 2
+    assert "NAVI" in rendered_names
+    assert Image.open(io.BytesIO(data)).size == media_cards.SCHEDULE_CARD_SIZE
 
 
 def test_schedule_card_supports_ten_matches():

@@ -1,6 +1,7 @@
 # Yandex Cloud Functions Deploy
 
-Документ описывает ручной production-like deploy без Terraform. Если проект вырастет, эти шаги можно перенести в IaC.
+Документ описывает release-скрипт для Yandex Cloud без Terraform. Оркестрация
+автоматического CI release находится вне репозитория.
 
 ## 1. Bucket состояния
 
@@ -143,7 +144,20 @@ ALERT_COOLDOWN_SECONDS=21600
 DISPLAY_TIMEZONE=Europe/Moscow
 MAX_SOURCE_RESPONSE_BYTES=5000000
 TELEGRAM_MEDIA_CARDS=0
+ENABLE_VRS=0
+VRS_GITHUB_REPO=ValveSoftware/counter-strike_regional_standings
+VRS_GITHUB_BRANCH=main
+VRS_VIEWS_PATH=live
+VRS_REGION=global
+VRS_SOURCE_NAME="Valve VRS live/global"
 ```
+
+VRS не требует отдельного timer trigger: baseline сохраняется при выпуске
+турнирного радара, а after-снимок проверяется существующим контуром результатов
+после завершения турнира. Для включения установите `ENABLE_VRS=1`. Функция
+читает versioned Markdown-снимки Valve через GitHub Contents API и сохраняет
+дату файла и blob SHA в Object Storage. Если полный набор команд не найден,
+VRS-альбом не создаётся.
 
 Для первого теста оставьте `TELEGRAM_MEDIA_CARDS=0`. После проверки новой
 версии функции включите `TELEGRAM_MEDIA_CARDS=1`: расписание, отдельные

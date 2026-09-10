@@ -32,6 +32,48 @@ class TournamentPlacement(BaseModel):
     prize_usd: int | None = Field(default=None, ge=0, le=10_000_000_000)
 
 
+class VRSTeamSnapshot(BaseModel):
+    """One team entry from a single official VRS ranking snapshot."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    team_id: str = Field(min_length=1, max_length=200)
+    team_name: str = Field(min_length=1, max_length=200)
+    points: int = Field(ge=0, le=10_000_000)
+    rank: int = Field(ge=1, le=10_000)
+
+
+class VRSRankingSnapshot(BaseModel):
+    """Immutable, source-scoped VRS snapshot used for reproducible deltas."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source: str = Field(min_length=1, max_length=200)
+    version: str = Field(min_length=1, max_length=200)
+    effective_at: str = Field(min_length=1, max_length=100)
+    fetched_at: str = Field(min_length=1, max_length=100)
+    teams: list[VRSTeamSnapshot] = Field(min_length=1, max_length=1000)
+
+
+class TournamentVRSImpact(BaseModel):
+    """VRS before/after comparison for one tournament participant."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    placement: str = Field(min_length=1, max_length=30)
+    team_name: str = Field(min_length=1, max_length=200)
+    team_id: str = Field(min_length=1, max_length=200)
+    before_points: int = Field(ge=0)
+    after_points: int = Field(ge=0)
+    before_rank: int = Field(ge=1)
+    after_rank: int = Field(ge=1)
+    points_delta: int
+    rank_delta: int
+    source: str = Field(min_length=1, max_length=200)
+    before_version: str = Field(min_length=1, max_length=200)
+    after_version: str = Field(min_length=1, max_length=200)
+
+
 class MatchDetails(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -58,7 +100,7 @@ class SourceReferences(BaseModel):
 class MatchNormalized(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, validate_assignment=True)
 
-    source: Literal["pandascore", "liquipedia", "cs2api", "hltv"]
+    source: Literal["pandascore", "liquipedia"]
     match_id: str | None = Field(default=None, max_length=200)
     match_url: str | None = Field(default=None, max_length=2048)
 
@@ -213,20 +255,6 @@ class ScheduleMatchContext(BaseModel):
     team2_roster_size: int | None = Field(default=None, ge=0, le=20)
 
 
-class TournamentRadar(BaseModel):
-    """Safe, compact tournament snapshot for a manual or scheduled radar post."""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-
-    tournament_id: str = Field(min_length=1, max_length=200)
-    standings: list[str] = Field(default_factory=list, max_length=12)
-    standing_teams: list["RadarStandingTeam"] = Field(default_factory=list, max_length=12)
-    bracket_matches: list["RadarBracketMatch"] = Field(default_factory=list, max_length=24)
-    next_matches: list[UpcomingMatchNormalized] = Field(default_factory=list, max_length=4)
-    roster_team_count: int = Field(default=0, ge=0, le=128)
-    bracket_match_count: int = Field(default=0, ge=0, le=1000)
-
-
 class RadarStandingTeam(BaseModel):
     """A ranked team with an optional official logo for radar media cards."""
 
@@ -237,13 +265,43 @@ class RadarStandingTeam(BaseModel):
     logo_url: str | None = Field(default=None, max_length=2048)
 
 
-class RadarBracketMatch(BaseModel):
-    """A confirmed pair from PandaScore's bracket response."""
+class RadarBracketNode(BaseModel):
+    """One source-confirmed slot in a tournament bracket, including a future TBD slot."""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     match_id: str = Field(min_length=1, max_length=200)
     round_name: str | None = Field(default=None, max_length=200)
+    team1_name: str | None = Field(default=None, max_length=200)
+    team2_name: str | None = Field(default=None, max_length=200)
+    team1_logo_url: str | None = Field(default=None, max_length=2048)
+    team2_logo_url: str | None = Field(default=None, max_length=2048)
+    team1_logo_fallback_url: str | None = Field(default=None, max_length=2048)
+    team2_logo_fallback_url: str | None = Field(default=None, max_length=2048)
+    previous_match_ids: list[str] = Field(default_factory=list, max_length=2)
+    status: str | None = Field(default=None, max_length=50)
+
+
+class RadarBracketMatch(RadarBracketNode):
+    """A confirmed opening pair from PandaScore's bracket response."""
+
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
-    status: str | None = Field(default=None, max_length=50)
+
+
+class TournamentRadar(BaseModel):
+    """Safe, compact tournament snapshot for a manual or scheduled radar post."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    tournament_id: str = Field(min_length=1, max_length=200)
+    earliest_match_at: str | None = Field(default=None, max_length=100)
+    standings: list[str] = Field(default_factory=list, max_length=12)
+    standing_teams: list[RadarStandingTeam] = Field(default_factory=list, max_length=12)
+    # The full source-confirmed route supplies the tournament format; only
+    # ``bracket_matches`` is suitable for textual "confirmed pairs" output.
+    bracket_structure: list[RadarBracketNode] = Field(default_factory=list, max_length=48)
+    bracket_matches: list[RadarBracketMatch] = Field(default_factory=list, max_length=24)
+    next_matches: list[UpcomingMatchNormalized] = Field(default_factory=list, max_length=4)
+    roster_team_count: int = Field(default=0, ge=0, le=128)
+    bracket_match_count: int = Field(default=0, ge=0, le=1000)

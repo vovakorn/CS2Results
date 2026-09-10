@@ -19,7 +19,7 @@ from .config import (
     OBJECT_STORAGE_BUCKET,
     OBJECT_STORAGE_ENDPOINT,
 )
-from .models import MatchNormalized
+from .models import MatchNormalized, TournamentVRSImpact, VRSRankingSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +48,11 @@ class PendingDelivery:
     last_attempt_at: str | None = None
     attempt_count: int = 0
     content_type: str = "result"
+    vrs_impacts: tuple[TournamentVRSImpact, ...] = ()
 
 
 RESULT_OUTBOX_PREFIX = "outbox/results/"
+VRS_SNAPSHOT_PREFIX = "vrs-snapshots/"
 TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
 CLAIM_CREATE_MAX_ATTEMPTS = 3
 
@@ -92,6 +94,88 @@ def logo_cache_key(url: str) -> str:
     """Return an opaque, versioned Object Storage key for a logo URL."""
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
     return f"media/logos/{digest}.png"
+
+
+def vrs_snapshot_key(tournament_id: str, phase: str, version: str) -> str:
+    if phase not in {"before", "after"}:
+        raise ValueError("VRS snapshot phase must be before or after")
+    return f"{VRS_SNAPSHOT_PREFIX}{safe_storage_part(tournament_id)}/{phase}/{safe_storage_part(version)}.json"
+
+
+async def write_vrs_snapshot(
+    tournament_id: str,
+    phase: str,
+    snapshot: VRSRankingSnapshot,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> bool:
+    """Write an immutable snapshot; duplicate versions are harmless cache hits."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = vrs_snapshot_key(tournament_id, phase, snapshot.version)
+    body = json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    try:
+        await asyncio.to_thread(s3.put_object, Bucket=bucket_name, Key=key, Body=body,
+                                ContentType="application/json", IfNoneMatch="*")
+        return True
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return False
+        raise StorageUnavailableError(f"VRS snapshot write failed for {key}") from exc
+
+
+async def read_vrs_snapshot(
+    tournament_id: str,
+    phase: str,
+    version: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> VRSRankingSnapshot | None:
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = vrs_snapshot_key(tournament_id, phase, version)
+    try:
+        response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return None
+        raise StorageUnavailableError(f"VRS snapshot read failed for {key}") from exc
+    body = response["Body"]
+    try:
+        return VRSRankingSnapshot.model_validate(json.loads(body.read()))
+    finally:
+        body.close()
+
+
+async def read_latest_vrs_snapshot(
+    tournament_id: str,
+    phase: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> VRSRankingSnapshot | None:
+    """Return the newest valid immutable snapshot for a tournament phase."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    prefix = f"{VRS_SNAPSHOT_PREFIX}{safe_storage_part(tournament_id)}/{phase}/"
+    try:
+        response = await asyncio.to_thread(s3.list_objects_v2, Bucket=bucket_name, Prefix=prefix)
+    except ClientError as exc:
+        raise StorageUnavailableError("VRS snapshot list failed") from exc
+    snapshots: list[VRSRankingSnapshot] = []
+    for item in response.get("Contents", []):
+        key = item.get("Key")
+        if not isinstance(key, str):
+            continue
+        try:
+            obj = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+            body = obj["Body"]
+            try:
+                snapshots.append(VRSRankingSnapshot.model_validate(json.loads(body.read())))
+            finally:
+                body.close()
+        except (ClientError, TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("vrs_snapshot_invalid key=%s", key)
+    return max(snapshots, key=lambda snapshot: snapshot.effective_at, default=None)
 
 
 def read_cached_logo(
@@ -178,6 +262,7 @@ def _pending_delivery_payload(
     last_attempt_at: str | None,
     attempt_count: int,
     content_type: str,
+    vrs_impacts: tuple[TournamentVRSImpact, ...] = (),
 ) -> bytes:
     return json.dumps(
         {
@@ -188,6 +273,7 @@ def _pending_delivery_payload(
             "last_attempt_at": last_attempt_at,
             "attempt_count": attempt_count,
             "content_type": content_type,
+            "vrs_impacts": [item.model_dump(mode="json") for item in vrs_impacts],
             "match": match.model_dump(mode="json"),
         },
         ensure_ascii=False,
@@ -203,11 +289,12 @@ async def enqueue_result_delivery(
     bucket: str | None = None,
     now: datetime | None = None,
     content_type: str = "result",
+    vrs_impacts: tuple[TournamentVRSImpact, ...] = (),
 ) -> bool:
     """Create a durable result outbox item without resetting existing retry state."""
     s3 = client or _client()
     bucket_name = bucket or _bucket()
-    if content_type not in {"result", "tournament_standings"}:
+    if content_type not in {"result", "tournament_standings", "tournament_vrs_standings"}:
         raise ValueError("unsupported result outbox content type")
     key = result_outbox_key(match, channel_id, content_type)
     created_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
@@ -219,6 +306,7 @@ async def enqueue_result_delivery(
         last_attempt_at=None,
         attempt_count=0,
         content_type=content_type,
+        vrs_impacts=vrs_impacts,
     )
 
     try:
@@ -287,6 +375,7 @@ async def list_pending_result_deliveries(
                         ),
                         attempt_count=max(0, int(payload.get("attempt_count", 0))),
                         content_type=str(payload.get("content_type", "result")),
+                        vrs_impacts=tuple(TournamentVRSImpact.model_validate(item) for item in payload.get("vrs_impacts", [])),
                     )
                 )
             except (ClientError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -338,6 +427,7 @@ async def record_result_delivery_attempt(
         last_attempt_at=updated.last_attempt_at,
         attempt_count=updated.attempt_count,
         content_type=updated.content_type,
+        vrs_impacts=updated.vrs_impacts,
     )
     try:
         await asyncio.to_thread(

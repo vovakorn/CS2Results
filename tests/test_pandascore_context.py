@@ -38,12 +38,56 @@ def test_tournament_radar_extracts_only_explicit_bracket_pairs():
     ]
 
 
+def test_tournament_radar_keeps_bracket_links_and_team_logos():
+    data = [{
+        "round": "Upper final",
+        "match": {
+            "id": 103,
+            "previous_matches": [{"match_id": 101, "type": "winner"}],
+            "opponents": [
+                {"opponent": {"name": "NAVI", "image_url": "https://cdn.pandascore.co/images/team/image/10/navi.png"}},
+                {"opponent": {"name": "FaZe", "dark_mode_image_url": "https://cdn.pandascore.co/images/team/image/20/faze-dark.png"}},
+            ],
+        },
+    }]
+
+    [pair] = pandascore_context._bracket_matches(data)
+
+    assert pair.previous_match_ids == ["101"]
+    assert pair.team1_logo_url.endswith("/10/navi.png")
+    assert pair.team2_logo_url.endswith("/20/faze-dark.png")
+
+
+def test_tournament_radar_keeps_future_tbd_slots_for_the_bracket_format():
+    data = [
+        {"round": "Opening round", "match": {"id": 101, "opponents": [
+            {"opponent": {"name": "NAVI"}}, {"opponent": {"name": "FaZe"}}
+        ]}},
+        {"round": "Upper final", "match": {
+            "id": 103,
+            "previous_matches": [{"match_id": 101, "type": "winner"}],
+            "opponents": [],
+        }},
+    ]
+
+    nodes = pandascore_context._bracket_structure(data)
+    pairs = pandascore_context._bracket_matches(data)
+
+    assert [(node.match_id, node.team1_name, node.team2_name) for node in nodes] == [
+        ("101", "NAVI", "FaZe"), ("103", None, None)
+    ]
+    assert nodes[1].previous_match_ids == ["101"]
+    assert [pair.match_id for pair in pairs] == ["101"]
+
+
 def test_tournament_radar_keeps_available_data_when_one_endpoint_fails(monkeypatch):
     async def fake_fetch(path, params):
         if path.endswith("/brackets"):
             raise RuntimeError("unavailable")
         if path.endswith("/rosters"):
             return [{"team": {"id": 10, "name": "NAVI"}}]
+        if params.get("per_page") == 1:
+            raise RuntimeError("earliest match unavailable")
         return []
 
     monkeypatch.setattr(pandascore_context.pandascore_source, "_fetch_json", fake_fetch)
@@ -52,6 +96,27 @@ def test_tournament_radar_keeps_available_data_when_one_endpoint_fails(monkeypat
 
     assert radar.roster_team_count == 1
     assert radar.bracket_matches == []
+    assert radar.bracket_structure == []
+    assert radar.earliest_match_at is None
+
+
+def test_tournament_radar_extracts_earliest_match_from_all_statuses(monkeypatch):
+    async def fake_fetch(path, params):
+        if path.endswith("/matches") and params == {"sort": "begin_at", "per_page": 1}:
+            return [
+                {
+                    "status": "finished",
+                    "scheduled_at": "2026-08-30T09:00:00Z",
+                    "begin_at": "2026-08-30T09:05:00Z",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(pandascore_context.pandascore_source, "_fetch_json", fake_fetch)
+
+    radar = asyncio.run(pandascore_context.fetch_tournament_radar("3"))
+
+    assert radar.earliest_match_at == "2026-08-30T09:00:00Z"
 
 
 def test_schedule_context_extracts_recent_head_to_head_from_team_history():
