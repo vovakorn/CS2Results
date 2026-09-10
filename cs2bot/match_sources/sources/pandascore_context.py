@@ -77,6 +77,25 @@ def _previous_match_ids(*values: Any) -> list[str]:
     return match_ids[:2]
 
 
+def _earliest_match_at(data: Any) -> str | None:
+    earliest: datetime | None = None
+    earliest_raw: str | None = None
+    for item in _walk_dicts(data):
+        raw = item.get("scheduled_at") or item.get("begin_at")
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        if earliest is None or parsed < earliest:
+            earliest = parsed
+            earliest_raw = raw.strip()
+    return earliest_raw
+
+
 def _team_form(team_name: str, team_id: str | None, matches: list[MatchNormalized]) -> TeamForm:
     wins = 0
     losses = 0
