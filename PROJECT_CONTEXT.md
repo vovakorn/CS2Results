@@ -14,15 +14,11 @@ CS2 без информационного шума. Ближайшая прод�
 
 - MVP работает в production на Yandex Cloud Functions, runtime Python 3.12.
 - Instagram и Threads OAuth подтверждены для `@cs2results`. Независимая
-  Threads-доставка карточек через Xray, Lockbox и public media bucket развёрнута
-  в production, но выключена `ENABLE_THREADS_PUBLISHING=0`. Telegram proxy не
-  участвует. Для одинаковых Instagram-карточек пользователь включил нативный
-  Instagram → Threads cross-posting; его применимость к API-постам ещё не
-  подтверждена.
-- Последний production-деплой: 10 сентября 2026, версия `d4eoos50gn0nm7eoi9gv`
-  (Git merge `55f5c8f`, PR #113, включение VRS);
-  таймеры вызывают
-  тег `production`. Предыдущая версия `d4e5rsmh5u8jm6t8fc5l`
+  Threads-доставка карточек через Xray, Lockbox и public media bucket включена
+  в production (`ENABLE_THREADS_PUBLISHING=1`). Telegram proxy не участвует.
+  Private visual test подтвердил отображение branded PNG-карточки в Threads.
+- Последний production-деплой: 10 сентября 2026, версия `d4ecjei19q4qnu04ko84`;
+  таймеры вызывают тег `production`, предыдущая версия `d4eoos50gn0nm7eoi9gv`
   закреплена тегом `rollback`.
 - Telegram Bot API направляется через `TELEGRAM_PROXY_URL` из отдельного
   Lockbox-секрета; подключение подтверждено запросом счётчика подписчиков и
