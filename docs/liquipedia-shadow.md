@@ -78,8 +78,12 @@ YC_LIQUIPEDIA_SECRET_ID=<LIQUIPEDIA_SECRET_ID> \
 YC_LIQUIPEDIA_SECRET_VERSION_ID=<LIQUIPEDIA_SECRET_VERSION_ID> \
 YC_LIQUIPEDIA_SECRET_KEY=LIQUIPEDIA_API_KEY \
 YC_ENABLE_LIQUIPEDIA_SHADOW=1 \
-YC_DEPLOY_APPROVED=1 \
-scripts/deploy_yandex_function.sh deploy
+YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
+scripts/deploy_yandex_function.sh candidate
+
+YC_FUNCTION_ID=d4e6e13rlrl7go01m2q2 \
+YC_PROMOTE_APPROVED=1 \
+scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
 ```
 
 Команду выполняют только после утверждения release. Первый deploy добавит

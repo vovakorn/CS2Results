@@ -36,6 +36,12 @@
 | `TIER1_FILTER_CONFIG_JSON` | JSON-конфиг Tier-1 отбора без изменения кода. |
 | `TIER1_FILTER_CONFIG_PATH` | Путь к JSON-файлу Tier-1 отбора, по умолчанию `tier1_filter.json`. |
 | `PANDASCORE_API_TOKEN` | Токен PandaScore Fixtures API. Обязателен для основного источника. |
+| `VRS_GITHUB_REPO` | Официальный репозиторий Valve со снимками VRS, по умолчанию `ValveSoftware/counter-strike_regional_standings`. |
+| `VRS_GITHUB_BRANCH` | Ветка репозитория VRS, по умолчанию `main`. |
+| `VRS_VIEWS_PATH` | Каталог снимков, по умолчанию `live`. |
+| `VRS_REGION` | Регион рейтинга, по умолчанию `global`. |
+| `VRS_SOURCE_NAME` | Стабильная метка источника, по умолчанию `Valve VRS live/global`. |
+| `ENABLE_VRS` | Включает сохранение снимков и публикацию VRS-альбомов; по умолчанию `0`. |
 | `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
 | `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`; безопасное значение по умолчанию — `0`. |
 | `ENABLE_LIQUIPEDIA_SHADOW` | `1` параллельно сравнивает завершённые матчи PandaScore и Liquipedia, не меняя источник публикации; по умолчанию `0`. |
@@ -165,8 +171,6 @@ Storage, затем выбирает новые и наименее недавн
 invocation. Остальные сетевые ошибки, HTTP 5xx и нечитаемый ответ считаются
 delivery-uncertain. Для неоднозначного результата outbox удаляется: дальнейший
 повтор возможен только вручную после проверки платформы.
-
-Старые адаптеры BO3.gg и HLTV сохранены только для миграционных тестов и диагностики. Production selector их не вызывает.
 
 ## Режимы работы
 
@@ -465,13 +469,20 @@ scripts/build_function_zip.sh
 
 ```bash
 YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
-YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh candidate
-YC_FUNCTION_ID=<function_id> YC_DEPLOY_APPROVED=1 scripts/deploy_yandex_function.sh deploy
+YC_FUNCTION_ID=<function_id> YC_FUNCTION_PACKAGE_BUCKET=<private_bucket> \
+  scripts/deploy_yandex_function.sh candidate
+YC_FUNCTION_ID=<function_id> YC_PROMOTE_APPROVED=1 \
+  scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
+YC_FUNCTION_ID=<function_id> YC_ROLLBACK_APPROVED=1 \
+  scripts/deploy_yandex_function.sh rollback dist/releases/<candidate_version_id>.json
 ```
 
 Скрипт копирует конфигурацию и ссылки Lockbox из версии с тегом `production`,
-проверяет candidate через `dry_run` и только затем переносит production-тег.
-Таймеры должны быть заранее привязаны к тегу `production`, а не к `$latest`.
+проверяет размер и SHA-256 архива, приватность/lifecycle package bucket и
+candidate через `dry_run`. Команда `promote` переносит production-тег на точную
+версию из release manifest без повторной сборки, выполняет post-deploy smoke и
+автоматически откатывает неуспешный релиз. Таймеры должны быть заранее привязаны
+к тегу `production`, а не к `$latest`.
 
 ## Архитектурные контракты
 

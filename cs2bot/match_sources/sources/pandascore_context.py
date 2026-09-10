@@ -8,6 +8,7 @@ from ..models import (
     MatchNormalized,
     HeadToHead,
     RadarBracketMatch,
+    RadarBracketNode,
     ScheduleMatchContext,
     SourceUnavailableError,
     RadarStandingTeam,
@@ -36,6 +37,44 @@ def _team_name(value: Any) -> str | None:
         return None
     name = value.get("name") or value.get("full_name")
     return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+def _team_logo_urls(value: Any) -> tuple[str | None, str | None]:
+    """Keep PandaScore's regular mark first and dark-mode mark as a fallback."""
+    if not isinstance(value, dict):
+        return None, None
+    urls: list[str] = []
+    for field in ("image_url", "dark_mode_image_url"):
+        url = value.get(field)
+        if isinstance(url, str) and url.strip() and url.strip() not in urls:
+            urls.append(url.strip())
+    urls.extend([None, None])
+    return urls[0], urls[1]
+
+
+def _previous_match_ids(*values: Any) -> list[str]:
+    """Extract explicit bracket predecessors without guessing missing pairings."""
+    match_ids: list[str] = []
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        previous_matches = value.get("previous_matches")
+        if not isinstance(previous_matches, list):
+            continue
+        for previous in previous_matches:
+            if not isinstance(previous, dict):
+                continue
+            previous_match = previous.get("match")
+            raw_id = previous.get("match_id")
+            if raw_id is None and isinstance(previous_match, dict):
+                raw_id = previous_match.get("id")
+            if raw_id is None:
+                raw_id = previous.get("id")
+            if isinstance(raw_id, (str, int)) and not isinstance(raw_id, bool):
+                match_id = str(raw_id).strip()
+                if match_id and match_id not in match_ids:
+                    match_ids.append(match_id)
+    return match_ids[:2]
 
 
 def _earliest_match_at(data: Any) -> str | None:
@@ -235,38 +274,71 @@ def _bracket_match_count(data: Any) -> int:
     return len(match_ids)
 
 
-def _bracket_matches(data: Any, limit: int = 24) -> list[RadarBracketMatch]:
-    """Extract only explicit pairs; never infer a playoff matchup from standings."""
-    matches: list[RadarBracketMatch] = []
+def _bracket_teams(raw_match: dict[str, Any]) -> list[dict[str, Any]]:
+    opponents = raw_match.get("opponents")
+    if isinstance(opponents, list):
+        return [entry.get("opponent", entry) for entry in opponents if isinstance(entry, dict)]
+    if isinstance(raw_match.get("teams"), list):
+        return [team for team in raw_match["teams"] if isinstance(team, dict)]
+    if isinstance(raw_match.get("team1"), dict) and isinstance(raw_match.get("team2"), dict):
+        return [raw_match["team1"], raw_match["team2"]]
+    return []
+
+
+def _bracket_structure(data: Any, limit: int = 48) -> list[RadarBracketNode]:
+    """Keep future TBD slots so the card explains the source's tournament format."""
+    nodes: list[RadarBracketNode] = []
     seen: set[str] = set()
     for item in _walk_dicts(data):
         raw_match = item.get("match") if isinstance(item.get("match"), dict) else item
         match_id = raw_match.get("id") or item.get("match_id")
-        opponents = raw_match.get("opponents")
-        teams: list[dict[str, Any]] = []
-        if isinstance(opponents, list):
-            teams = [entry.get("opponent", entry) for entry in opponents if isinstance(entry, dict)]
-        elif isinstance(raw_match.get("teams"), list):
-            teams = [team for team in raw_match["teams"] if isinstance(team, dict)]
-        elif isinstance(raw_match.get("team1"), dict) and isinstance(raw_match.get("team2"), dict):
-            teams = [raw_match["team1"], raw_match["team2"]]
-        names = [_team_name(team) for team in teams]
-        if not isinstance(match_id, (str, int)) or len(names) < 2 or not names[0] or not names[1]:
+        if not isinstance(match_id, (str, int)) or isinstance(match_id, bool):
             continue
         key = str(match_id)
         if key in seen:
             continue
+        teams = _bracket_teams(raw_match)
+        has_slot_data = (
+            bool(teams)
+            or isinstance(raw_match.get("previous_matches"), list)
+            or isinstance(item.get("previous_matches"), list)
+            or isinstance(item.get("round"), str)
+            or isinstance(item.get("round_name"), str)
+        )
+        if not has_slot_data:
+            continue
         round_value = item.get("round") or item.get("round_name") or item.get("name")
-        matches.append(
-            RadarBracketMatch(
+        team1 = teams[0] if teams else None
+        team2 = teams[1] if len(teams) > 1 else None
+        team1_logo_url, team1_logo_fallback_url = _team_logo_urls(team1)
+        team2_logo_url, team2_logo_fallback_url = _team_logo_urls(team2)
+        nodes.append(
+            RadarBracketNode(
                 match_id=key,
                 round_name=round_value if isinstance(round_value, str) else None,
-                team1_name=names[0],
-                team2_name=names[1],
+                team1_name=_team_name(team1),
+                team2_name=_team_name(team2),
+                team1_logo_url=team1_logo_url,
+                team2_logo_url=team2_logo_url,
+                team1_logo_fallback_url=team1_logo_fallback_url,
+                team2_logo_fallback_url=team2_logo_fallback_url,
+                previous_match_ids=_previous_match_ids(raw_match, item),
                 status=raw_match.get("status") if isinstance(raw_match.get("status"), str) else None,
             )
         )
         seen.add(key)
+        if len(nodes) >= limit:
+            break
+    return nodes
+
+
+def _bracket_matches(data: Any, limit: int = 24) -> list[RadarBracketMatch]:
+    """Return only real pairs; later source slots remain structural TBD nodes."""
+    matches: list[RadarBracketMatch] = []
+    for node in _bracket_structure(data):
+        if not node.team1_name or not node.team2_name:
+            continue
+        matches.append(RadarBracketMatch(**node.model_dump()))
         if len(matches) >= limit:
             break
     return matches
@@ -279,6 +351,29 @@ def _roster_team_count(data: Any) -> int:
         if isinstance(item.get("team"), dict) and item["team"].get("id") is not None
     }
     return len(ids)
+
+
+def _earliest_match_at(data: Any) -> str | None:
+    """Return the source-confirmed timestamp of the earliest tournament match."""
+    if not isinstance(data, list):
+        return None
+    timestamps: list[tuple[datetime, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("scheduled_at") or item.get("begin_at")
+        if not isinstance(value, str) or not value.strip():
+            continue
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        timestamps.append((parsed, value.strip()))
+    if not timestamps:
+        return None
+    return min(timestamps, key=lambda item: item[0])[1]
 
 
 async def fetch_tournament_radar(tournament_id: str) -> TournamentRadar:
@@ -300,10 +395,16 @@ async def fetch_tournament_radar(tournament_id: str) -> TournamentRadar:
     ]
     if all(isinstance(value, Exception) for value in responses):
         raise SourceUnavailableError("PandaScore tournament radar endpoints are unavailable")
+    structure = _bracket_structure(bracket)
     return TournamentRadar(
         tournament_id=tournament_id,
         earliest_match_at=_earliest_match_at(all_matches),
-        bracket_matches=_bracket_matches(bracket),
+        bracket_structure=structure,
+        bracket_matches=[
+            RadarBracketMatch(**node.model_dump())
+            for node in structure
+            if node.team1_name and node.team2_name
+        ][:24],
         next_matches=pandascore_source._normalize_raw_upcoming(matches)[:4],
         roster_team_count=_roster_team_count(rosters),
         bracket_match_count=_bracket_match_count(bracket),

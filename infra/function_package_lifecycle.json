@@ -1,0 +1,14 @@
+{
+  "lifecycleRules": [
+    {
+      "id": "delete-old-function-packages",
+      "enabled": true,
+      "filter": {
+        "prefix": "function-packages/"
+      },
+      "expiration": {
+        "days": "30"
+      }
+    }
+  ]
+}

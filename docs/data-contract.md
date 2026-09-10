@@ -35,6 +35,28 @@
 - не помечает матч обработанным после публикации;
 - не знает о конкретных Telegram-каналах, кроме CLI debug-режима с `--channel`.
 
+## VRS snapshots
+
+VRS берётся из официального репозитория Valve
+`ValveSoftware/counter-strike_regional_standings`, из versioned Markdown-файлов
+`live/{year}/standings_{region}_{date}.md`, и не смешивается с PandaScore или
+Liquipedia. Каждый снимок обязан содержать `source`, стабильную
+`version`, `effective_at`, `fetched_at`, а также полный список команд с
+`team_id`, очками и местом.
+
+Baseline сохраняется при обнаружении предстоящего турнира, after-снимок — после
+его финала. After принимается только если его версия и `effective_at` новее
+baseline и не раньше времени завершения турнира. Снимки хранятся неизменно в
+`vrs-snapshots/{tournament}/{before|after}/{version}.json`.
+
+Если нет версии, даты, baseline, after-снимка или хотя бы одной команды из
+подтверждённой итоговой таблицы, VRS-публикация пропускается. Причина
+фиксируется событиями `vrs_baseline_skipped` или `vrs_publication_skipped`.
+
+VRS-альбом использует отдельный outbox `content_type=tournament_vrs_standings`
+и content UID `tournament-vrs-v1:{channel}:{tournament}`, поэтому не дублирует
+обычный альбом итогов турнира.
+
 ## Ответственность delivery-layer
 
 `cs2bot.main` отвечает за Cloud Functions handler и публикацию.
@@ -82,7 +104,10 @@ PandaScore; URL от других источников не загружаютс
 турнирами и сетками. Они, как и `tournament_tier`, не входят в fingerprint и не
 могут создавать повторные публикации при переключении источника.
 
-`is_final` и `winner_prize_usd` — только source-confirmed поля LiquipediaDB.
+`is_final`, `winner_prize_usd`, `tournament_parent` и `tournament_placements` —
+только source-confirmed поля LiquipediaDB. Итоговая таблица принимается, только
+когда в ней есть минимум два уникальных участника и подтверждённые призовые для
+каждого; частичный ответ не публикуется.
 Специальная карточка финала с картами и призовыми создаётся исключительно для
 матча с `source=liquipedia`, явным признаком финала, суммой победителя и полным
 счётом карт. Для PandaScore и неполных данных используется обычная карточка
@@ -116,6 +141,24 @@ showmatch, academy, youth и junior. Для завершённых резуль�
 решений пишутся агрегированные события `pandascore_tier_diagnostics` и
 `pandascore_upcoming_tier_diagnostics`; dry-run возвращает tier рядом с
 фактическим решением фильтра.
+
+## Tournament radar contract
+
+`TournamentRadar.earliest_match_at` содержит самый ранний подтверждённый
+timestamp матча из `GET /tournaments/{id}/matches`, включая уже завершённые
+матчи. Поле может быть `null`, если источник не вернул корректную дату; ручной
+радар при этом может использовать остальные данные, а автоматический discovery
+не публикует такой турнир.
+
+Автоматическая дедупликация использует стабильный ключ:
+
+```text
+claims/content_radar_{tournament_id}_auto_{channel_id}.json
+processed/content_radar_{tournament_id}_auto_{channel_id}.json
+```
+
+Ручной `radar` сохраняет дневной ключ публикации. `test_run_id` добавляет
+отдельный тестовый суффикс в обоих режимах.
 
 ## Дедупликация
 
@@ -157,6 +200,13 @@ Outbox хранит исходные данные матча, канал, вре
 сначала ещё не обработанные, потом наименее недавно обработанные элементы и
 только после этого применяет limit. После processed marker элемент удаляется.
 
+После подтверждённой публикации счёта явного финала с полной
+`tournament_placements` создаётся отдельный outbox item
+`content_type=tournament_standings`. Он использует стабильный content UID из
+канала или социальной платформы и Liquipedia `tournament_parent`, поэтому не
+повторяет ни счёт, ни итоговую таблицу. Определённый отказ остаётся в очереди для retry; при
+неоднозначном исходе применяется тот же ручной разбор, что и для результата.
+
 `If-None-Match: *` и `If-Match: <etag>` не позволяют двум параллельным invocation одновременно получить один claim. У claim есть состояние доставки в metadata:
 
 - `sending` — короткий lease до внешнего запроса; после истечения
@@ -194,7 +244,7 @@ invocation. При остальных сетевых ошибках, HTTP 5xx и
 1. PandaScore Fixtures adapter (`source=pandascore`).
 2. LiquipediaDB adapter (`source=liquipedia`), если `ENABLE_LIQUIPEDIA_FALLBACK=1`.
 
-Решение о fallback принимается после validation и freshness gate. Источники не объединяются в одном запуске. Явный выбор `pandascore` или `liquipedia` доступен для диагностики. Старые BO3.gg и HLTV адаптеры production selector не вызывает.
+Решение о fallback принимается после validation и freshness gate. Источники не объединяются в одном запуске. Явный выбор `pandascore` или `liquipedia` доступен для диагностики.
 
 ## Liquipedia shadow contract
 
@@ -209,8 +259,9 @@ Shadow-ответ не объединяется с PandaScore, не участв
 
 `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` дополнительно выбирает полный объект
 LiquipediaDB вместо PandaScore только для свежего, явно отмеченного финала с
-картами и однозначными призовыми победителя. Это fail-open правило: при ошибке
-Liquipedia или неполных данных остаётся обычный PandaScore-результат.
+картами и однозначными призовыми победителя либо полной итоговой таблицей. Это
+fail-open правило: при ошибке Liquipedia или неполных данных остаётся обычный
+PandaScore-результат.
 
 ## Freshness contract
 

@@ -18,7 +18,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 from .match_sources.models import (
     MatchNormalized,
     RadarBracketMatch,
+    RadarBracketNode,
     TournamentPlacement,
+    TournamentVRSImpact,
     TournamentRadar,
     UpcomingMatchNormalized,
 )
@@ -32,6 +34,8 @@ MAX_SCHEDULE_MATCHES = 10
 MAX_SCHEDULE_TOTAL_MATCHES = 20
 MAX_TOURNAMENT_STANDINGS = 64
 TOURNAMENT_STANDINGS_PER_CARD = 8
+TOURNAMENT_VRS_PER_CARD = 8
+MAX_RADAR_BRACKET_NODES_PER_CARD = 12
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
 # PandaScore's CDN can take longer than two seconds to start a cold response.
@@ -59,6 +63,8 @@ WHITE = (244, 247, 251)
 MUTED = (150, 168, 191)
 CYAN = (22, 199, 255)
 AMBER = (255, 159, 28)
+VRS_UP = (73, 210, 126)
+VRS_DOWN = (245, 91, 91)
 STANDINGS_GOLD = (214, 181, 104)
 STANDINGS_SILVER = (190, 202, 214)
 STANDINGS_BRONZE = (178, 122, 82)
@@ -871,38 +877,218 @@ def _draw_radar_standings(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar:
         _aligned_text(draw, 305, y0 + 37, name.upper(), _fit_font(draw, name.upper(), 530, 34, 18), WHITE, "left")
 
 
+def _radar_bracket_section_label(matches: Sequence[RadarBracketNode]) -> str:
+    """Name a bracket side only when PandaScore's round labels agree."""
+    labels = " ".join(match.round_name or "" for match in matches).casefold()
+    has_upper = "upper" in labels or "верхн" in labels
+    has_lower = "lower" in labels or "нижн" in labels
+    if has_upper and not has_lower:
+        return "ВЕРХНЯЯ СЕТКА"
+    if has_lower and not has_upper:
+        return "НИЖНЯЯ СЕТКА"
+    if has_upper and has_lower:
+        return "ВЕРХНЯЯ И НИЖНЯЯ СЕТКИ"
+    return "СЕТКА ТУРНИРА"
+
+
+def _radar_round_label(matches: Sequence[RadarBracketNode]) -> str:
+    rounds = list(dict.fromkeys(match.round_name.strip() for match in matches if match.round_name))
+    if len(rounds) != 1:
+        return "РАУНД СЕТКИ"
+    translations = {
+        "opening round": "ОТКРЫВАЮЩИЙ РАУНД",
+        "upper semi-finals": "ВЕРХНИЕ ПОЛУФИНАЛЫ",
+        "upper semifinals": "ВЕРХНИЕ ПОЛУФИНАЛЫ",
+        "upper final": "ВЕРХНИЙ ФИНАЛ",
+        "lower round 1": "НИЖНИЙ РАУНД 1",
+        "lower semi-finals": "НИЖНИЕ ПОЛУФИНАЛЫ",
+        "lower semifinals": "НИЖНИЕ ПОЛУФИНАЛЫ",
+        "lower final": "НИЖНИЙ ФИНАЛ",
+        "semifinal": "ПОЛУФИНАЛ",
+        "semi-final": "ПОЛУФИНАЛ",
+        "quarterfinal": "ЧЕТВЕРТЬФИНАЛ",
+        "quarter-final": "ЧЕТВЕРТЬФИНАЛ",
+        "final": "ФИНАЛ",
+    }
+    round_name = rounds[0]
+    return translations.get(round_name.casefold(), round_name.upper())
+
+
+def _radar_bracket_columns(
+    matches: Sequence[RadarBracketNode],
+) -> tuple[list[list[RadarBracketNode]], dict[str, int]]:
+    """Lay explicit predecessor links out from left to right like a bracket."""
+    by_id = {match.match_id: match for match in matches}
+    predecessors = {
+        match.match_id: [match_id for match_id in match.previous_match_ids if match_id in by_id]
+        for match in matches
+    }
+    if not any(predecessors.values()):
+        split_at = math.ceil(len(matches) / 2)
+        columns = [list(matches[:split_at]), list(matches[split_at:])]
+        return [column for column in columns if column], {
+            match.match_id: 0 if index < split_at else 1
+            for index, match in enumerate(matches)
+        }
+
+    depth_cache: dict[str, int] = {}
+
+    def depth(match_id: str, trail: set[str]) -> int:
+        if match_id in depth_cache:
+            return depth_cache[match_id]
+        if match_id in trail:
+            return 0
+        parents = predecessors[match_id]
+        value = 0 if not parents else 1 + max(depth(parent, trail | {match_id}) for parent in parents)
+        depth_cache[match_id] = value
+        return value
+
+    columns_by_depth: dict[int, list[RadarBracketNode]] = {}
+    for match in matches:
+        columns_by_depth.setdefault(depth(match.match_id, set()), []).append(match)
+    ordered_depths = sorted(columns_by_depth)
+    return [columns_by_depth[value] for value in ordered_depths], {
+        match.match_id: ordered_depths.index(depth_cache[match.match_id])
+        for match in matches
+    }
+
+
+def _draw_radar_bracket_match(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    match: RadarBracketNode,
+    box: tuple[int, int, int, int],
+) -> None:
+    x0, y0, x1, y1 = box
+    card_height = y1 - y0
+    header_height = min(32, max(24, card_height // 4))
+    draw.rounded_rectangle(box, radius=18, fill=(*PANEL, 244), outline=(72, 109, 148, 150), width=2)
+    draw.rounded_rectangle((x0, y0, x1, y0 + header_height), radius=18, fill=(*PANEL_LIGHT, 246))
+    draw.rectangle((x0, y0 + header_height - 18, x1, y0 + header_height), fill=(*PANEL_LIGHT, 246))
+    draw.line((x0 + 14, y0 + header_height, x1 - 14, y0 + header_height), fill=(80, 119, 159, 160), width=1)
+
+    label = _radar_round_label([match])
+    _aligned_text(
+        draw,
+        x0 + 16,
+        y0 + max(5, (header_height - 18) // 2),
+        label,
+        _fit_font(draw, label, x1 - x0 - 32, 14, 9, display=True),
+        MUTED,
+        "left",
+    )
+    if (match.status or "").casefold() == "running":
+        _aligned_text(draw, x1 - 16, y0 + max(5, (header_height - 18) // 2), "LIVE", _font(13, display=True), AMBER, "right")
+
+    row_height = (card_height - header_height) // 2
+    logo_diameter = 34 if card_height < 112 else 40
+    name_x = x0 + logo_diameter + 27
+    name_width = x1 - name_x - 16
+    first_y = y0 + header_height + row_height // 2
+    second_y = y0 + header_height + row_height + row_height // 2
+    team1_name = match.team1_name or "TBD"
+    team2_name = match.team2_name or "TBD"
+    _draw_logo(
+        canvas,
+        draw,
+        (x0 + 22, first_y),
+        logo_diameter,
+        team1_name if match.team1_name else "?",
+        match.team1_logo_url,
+        CYAN,
+        match.team1_logo_fallback_url,
+    )
+    _draw_logo(
+        canvas,
+        draw,
+        (x0 + 22, second_y),
+        logo_diameter,
+        team2_name if match.team2_name else "?",
+        match.team2_logo_url,
+        AMBER,
+        match.team2_logo_fallback_url,
+    )
+    _aligned_text(
+        draw,
+        name_x,
+        first_y - 13,
+        team1_name.upper(),
+        _fit_font(draw, team1_name.upper(), name_width, 21 if card_height >= 112 else 18, 9),
+        WHITE,
+        "left",
+    )
+    _aligned_text(
+        draw,
+        name_x,
+        second_y - 13,
+        team2_name.upper(),
+        _fit_font(draw, team2_name.upper(), name_width, 21 if card_height >= 112 else 18, 9),
+        WHITE,
+        "left",
+    )
+    draw.line((x0 + 16, y0 + header_height + row_height, x1 - 16, y0 + header_height + row_height), fill=(80, 119, 159, 135), width=1)
+
+
 def _draw_radar_bracket(
     canvas: Image.Image,
     draw: ImageDraw.ImageDraw,
-    matches: Sequence[RadarBracketMatch],
+    matches: Sequence[RadarBracketNode],
     page_number: int,
     page_count: int,
 ) -> None:
-    _centered_text(draw, 540, 390, "ПОДТВЕРЖДЁННЫЕ ПАРЫ", _font(20, display=True), MUTED)
+    if not matches:
+        _centered_text(draw, 540, 560, "СЕТКА ТУРНИРА ПОКА НЕ ОПУБЛИКОВАНА", _font(22, display=True), MUTED)
+        return
+
+    _aligned_text(draw, 64, 366, _radar_bracket_section_label(matches), _font(22, display=True), WHITE, "left")
     if page_count > 1:
-        _centered_text(draw, 540, 420, f"{page_number}/{page_count}", _font(18, display=True), AMBER)
-    top = 450 if page_count > 1 else 425
-    for index, match in enumerate(matches):
-        y0 = top + index * 135
-        draw.rounded_rectangle((80, y0, 1000, y0 + 112), radius=22, fill=(*PANEL, 238))
-        _aligned_text(
-            draw, 120, y0 + 24, match.team1_name.upper(),
-            _fit_font(draw, match.team1_name.upper(), 340, 28, 14), WHITE, "left"
-        )
-        _aligned_text(
-            draw, 960, y0 + 24, match.team2_name.upper(),
-            _fit_font(draw, match.team2_name.upper(), 340, 28, 14), WHITE, "right"
-        )
-        _centered_text(draw, 540, y0 + 25, "VS", _font(26, display=True), AMBER)
-        label = (match.round_name or "СЕТКА ТУРНИРА").upper()
+        _aligned_text(draw, 1016, 368, f"{page_number}/{page_count}", _font(18, display=True), AMBER, "right")
+
+    columns, _ = _radar_bracket_columns(matches)
+    outer_left, outer_right = 56, 1024
+    column_gap = 20
+    column_width = (outer_right - outer_left - column_gap * (len(columns) - 1)) // len(columns)
+    cards: dict[str, tuple[int, int, int, int]] = {}
+    top, bottom = 442, 930
+    for column_index, column_matches in enumerate(columns):
+        x0 = outer_left + column_index * (column_width + column_gap)
+        x1 = x0 + column_width
+        label = _radar_round_label(column_matches)
         _centered_text(
             draw,
-            540,
-            y0 + 72,
+            (x0 + x1) // 2,
+            405,
             label,
-            _fit_font(draw, label, 700, 15, 10, display=True),
+            _fit_font(draw, label, column_width - 12, 15, 9, display=True),
             MUTED,
         )
+        row_gap = 14
+        available_height = bottom - top - row_gap * (len(column_matches) - 1)
+        card_height = min(128, available_height // len(column_matches))
+        used_height = card_height * len(column_matches) + row_gap * (len(column_matches) - 1)
+        y0 = top + (bottom - top - used_height) // 2
+        for match in column_matches:
+            cards[match.match_id] = (x0, y0, x1, y0 + card_height)
+            y0 += card_height + row_gap
+
+    for match in matches:
+        target = cards[match.match_id]
+        for previous_match_id in match.previous_match_ids:
+            previous = cards.get(previous_match_id)
+            if previous is None or previous[0] >= target[0]:
+                continue
+            start_x, start_y = previous[2], (previous[1] + previous[3]) // 2
+            end_x, end_y = target[0], (target[1] + target[3]) // 2
+            middle_x = (start_x + end_x) // 2
+            draw.line(
+                (start_x, start_y, middle_x, start_y, middle_x, end_y, end_x, end_y),
+                fill=(88, 131, 171, 170),
+                width=3,
+            )
+            draw.polygon([(end_x - 8, end_y - 6), (end_x, end_y), (end_x - 8, end_y + 6)], fill=(88, 131, 171, 190))
+
+    for match in matches:
+        _draw_radar_bracket_match(canvas, draw, match, cards[match.match_id])
 
 
 def _draw_radar_next_match(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar: TournamentRadar, timezone_name: str) -> None:
@@ -925,6 +1111,11 @@ def _draw_radar_next_match(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar
     _centered_text(draw, 540, 755, best_of, _font(22, display=True), MUTED)
 
 
+def _radar_bracket_nodes(radar: TournamentRadar) -> Sequence[RadarBracketNode]:
+    """Prefer the complete source structure; retain legacy confirmed-only payloads."""
+    return radar.bracket_structure or radar.bracket_matches
+
+
 def render_tournament_radar_card(
     radar: TournamentRadar,
     tournament_name: str,
@@ -942,7 +1133,13 @@ def render_tournament_radar_card(
     subtitles = {"bracket": "СЕТКА", "next_match": "БЛИЖАЙШИЙ МАТЧ"}
     _radar_header(canvas, draw, tournament_name, subtitles[chosen])
     if chosen == "bracket":
-        _draw_radar_bracket(canvas, draw, radar.bracket_matches[:4], 1, 1)
+        _draw_radar_bracket(
+            canvas,
+            draw,
+            _radar_bracket_nodes(radar)[:MAX_RADAR_BRACKET_NODES_PER_CARD],
+            1,
+            1,
+        )
     else:
         _draw_radar_next_match(canvas, draw, radar, timezone_name)
     facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
@@ -956,12 +1153,14 @@ def render_tournament_radar_cards(
     timezone_name: str,
     variant: str = "auto",
 ) -> list[bytes]:
-    """Render all confirmed bracket pairs as a numbered Telegram-ready album."""
+    """Render confirmed opening pairs and the source-confirmed bracket format."""
     if variant not in {"auto", "bracket", "next_match"}:
         raise MediaCardError("Unsupported radar card variant")
     if variant == "next_match" or (variant == "auto" and not radar.bracket_matches):
         return [render_tournament_radar_card(radar, tournament_name, timezone_name, "next_match")]
-    pages = [radar.bracket_matches[index:index + 4] for index in range(0, len(radar.bracket_matches), 4)]
+    nodes = _radar_bracket_nodes(radar)
+    page_size = MAX_RADAR_BRACKET_NODES_PER_CARD if radar.bracket_structure else 4
+    pages = [nodes[index:index + page_size] for index in range(0, len(nodes), page_size)]
     rendered: list[bytes] = []
     for page_number, matches in enumerate(pages, start=1):
         canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
@@ -1461,6 +1660,95 @@ def render_tournament_standings_cards(
         )
         for index, chunk in enumerate(chunks, start=1)
     ]
+
+
+def _vrs_delta_text(value: int) -> tuple[str, tuple[int, int, int]]:
+    if value > 0:
+        return f"+{value}", VRS_UP
+    if value < 0:
+        return f"−{abs(value)}", VRS_DOWN
+    return "—", MUTED
+
+
+def _vrs_rank_text(value: int) -> tuple[str, tuple[int, int, int]]:
+    if value > 0:
+        return f"↑ {value}", VRS_UP
+    if value < 0:
+        return f"↓ {abs(value)}", VRS_DOWN
+    return "—", MUTED
+
+
+def can_render_tournament_vrs(impacts: Sequence[TournamentVRSImpact]) -> bool:
+    return 1 <= len(impacts) <= MAX_TOURNAMENT_STANDINGS and all(
+        item.placement and item.team_name and item.source and item.before_version and item.after_version
+        for item in impacts
+    )
+
+
+def _render_tournament_vrs_page(
+    tournament_name: str,
+    impacts: Sequence[TournamentVRSImpact],
+    *,
+    source_label: str,
+    page_number: int,
+    page_count: int,
+) -> bytes:
+    canvas = _background(RESULT_CARD_SIZE, header_accent_y=98).convert("RGBA")
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    width = RESULT_CARD_SIZE[0]
+    _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
+    _centered_text(draw, width // 2, 182, "ВЛИЯНИЕ ТУРНИРА НА VRS", _font(40, display=True), WHITE)
+    title = tournament_name.upper()
+    _centered_text(draw, width // 2, 246, title, _fit_font(draw, title, 890, 30, 16, display=True), CYAN)
+    row_height, header_height = 68, 62
+    table_top = 340 + (TOURNAMENT_VRS_PER_CARD - len(impacts)) * 26
+    table = (44, table_top, 1036, table_top + header_height + row_height * len(impacts))
+    _chamfered_panel(draw, table, cut=20)
+    x0, y0, x1, y1 = table
+    place_divider, points_divider, rank_divider = 188, 710, 872
+    header_points = [(x0 + 20, y0), (x1 - 20, y0), (x1, y0 + 20), (x1, y0 + header_height),
+                     (x0, y0 + header_height), (x0, y0 + 20)]
+    draw.polygon(header_points, fill=(*STANDINGS_HEADER, 255))
+    draw.line(header_points + [header_points[0]], fill=(*STANDINGS_HEADER_LINE, 230), width=2)
+    for divider in (place_divider, points_divider, rank_divider):
+        draw.line((divider, y0 + 14, divider, y1 - 14), fill=(*STANDINGS_HEADER_LINE, 145), width=1)
+    _centered_text(draw, (x0 + place_divider) // 2, y0 + 17, "МЕСТО", _font(21, display=True), WHITE)
+    _aligned_text(draw, place_divider + 26, y0 + 17, "КОМАНДА", _font(21, display=True), WHITE, "left")
+    _centered_text(draw, (points_divider + rank_divider) // 2, y0 + 17, "VRS ОЧКИ", _font(19, display=True), WHITE)
+    _centered_text(draw, (rank_divider + x1) // 2, y0 + 17, "МЕСТО В РЕЙТИНГЕ", _font(16, display=True), WHITE)
+    for index, item in enumerate(impacts):
+        row_top = y0 + header_height + row_height * index
+        if index:
+            draw.line((x0 + 18, row_top, x1 - 18, row_top), fill=(*AMBER, 125), width=1)
+        highlight = _standings_row_color(item.placement)
+        _draw_standings_medal(draw, (x0 + place_divider) // 2, row_top, item.placement)
+        team_name = item.team_name.upper()
+        _aligned_text(draw, place_divider + 26, row_top + 15, team_name,
+                      _fit_font(draw, team_name, points_divider - place_divider - 48, 32, 14), highlight, "left")
+        points_text, points_color = _vrs_delta_text(item.points_delta)
+        rank_text, rank_color = _vrs_rank_text(item.rank_delta)
+        _centered_text(draw, (points_divider + rank_divider) // 2, row_top + 17, points_text,
+                       _fit_font(draw, points_text, 130, 30, 16, display=True), points_color)
+        _centered_text(draw, (rank_divider + x1) // 2, row_top + 17, rank_text,
+                       _fit_font(draw, rank_text, 140, 26, 14, display=True), rank_color)
+    if page_count > 1:
+        _centered_text(draw, width // 2, 972, f"СТРАНИЦА {page_number}/{page_count}", _font(20, display=True), MUTED)
+    source_text = f"ИСТОЧНИК: {source_label.upper()}"
+    _centered_text(draw, width // 2, 1012, source_text, _fit_font(draw, source_text, 700, 18, 12, display=True), MUTED)
+    return _as_png(canvas)
+
+
+def render_tournament_vrs_cards(
+    tournament_name: str,
+    impacts: Sequence[TournamentVRSImpact],
+    source_label: str = "Official VRS",
+) -> list[bytes]:
+    if not tournament_name.strip() or not source_label.strip() or not can_render_tournament_vrs(impacts):
+        raise MediaCardError("Tournament VRS requires complete impacts")
+    chunks = [impacts[index:index + TOURNAMENT_VRS_PER_CARD] for index in range(0, len(impacts), TOURNAMENT_VRS_PER_CARD)]
+    return [_render_tournament_vrs_page(tournament_name, chunk, source_label=source_label,
+                                        page_number=index, page_count=len(chunks))
+            for index, chunk in enumerate(chunks, start=1)]
 
 
 def render_results_card(

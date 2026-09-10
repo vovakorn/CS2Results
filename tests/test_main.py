@@ -1405,6 +1405,31 @@ def test_handler_returns_generic_fetch_error_and_redacts_logs(monkeypatch, caplo
     assert "SECRET" not in caplog.text
 
 
+@pytest.mark.parametrize("dry_run", [True, False])
+@pytest.mark.parametrize(
+    ("job", "fetcher"),
+    [
+        ("results", "get_new_finished_matches"),
+        ("schedule", "fetch_upcoming_matches"),
+        ("digest", "fetch_pandascore_finished_matches"),
+        ("radar_discovery", "fetch_upcoming_matches"),
+    ],
+)
+def test_source_failure_only_alerts_outside_dry_run(monkeypatch, job, fetcher, dry_run):
+    async def fail(*args, **kwargs):
+        raise RuntimeError("source unavailable")
+
+    alerts = []
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "test-chat", "teams": None}])
+    monkeypatch.setattr(main, fetcher, fail)
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
+
+    response = main.handler({"job": job, "dry_run": dry_run}, None)
+
+    assert response["statusCode"] == 502
+    assert len(alerts) == (0 if dry_run else 1)
+
+
 def test_invalid_dry_run_value_cannot_fall_through_to_production(monkeypatch):
     called = False
 
@@ -1822,6 +1847,20 @@ def test_radar_discovery_selects_each_tier1_tournament_once():
     assert candidates == [("100", "IEM Cologne 2026", main.datetime.fromisoformat("2026-08-31T09:00:00+00:00"))]
 
 
+def test_radar_discovery_keeps_full_tournament_name_instead_of_competition_key():
+    match = _upcoming().model_copy(
+        update={
+            "tournament_name": "FISSURE PLAYGROUND — SEASON 3 2026 — GROUP A",
+            "competition_key": "FISSURE Playground",
+            "source_refs": SourceReferences(tournament_id="fissure-3-group-a"),
+        }
+    )
+
+    candidates = main._radar_discovery_candidates([match])
+
+    assert candidates[0][1] == "FISSURE PLAYGROUND — SEASON 3 2026 — GROUP A"
+
+
 def test_radar_discovery_dry_run_previews_next_day_tournaments(monkeypatch):
     match = _upcoming().model_copy(
         update={
@@ -1982,6 +2021,7 @@ def test_radar_discovery_skips_tournament_with_unknown_start(monkeypatch):
     assert response["statusCode"] == 200
     assert body["messages_sent"] == 0
     assert body["skipped_reasons"] == {"tournament_start_unknown": 1}
+    assert body["radars"][0]["skipped_reason"] == "tournament_start_unknown"
 
 
 def test_automatic_radar_uses_stable_tournament_deduplication_key(monkeypatch):
@@ -2002,14 +2042,19 @@ def test_automatic_radar_uses_stable_tournament_deduplication_key(monkeypatch):
     async def fake_mark(*args, **kwargs):
         return None
 
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", False)
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
     monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
     monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent.append(args))
 
-    first = main._handle_radar_job("100", "IEM Cologne 2026", False, publication_key="auto", radar=radar)
-    second = main._handle_radar_job("100", "IEM Cologne 2026", False, publication_key="auto", radar=radar)
+    first = main._handle_radar_job(
+        "100", "IEM Cologne 2026", False, publication_key="auto", radar=radar
+    )
+    second = main._handle_radar_job(
+        "100", "IEM Cologne 2026", False, publication_key="auto", radar=radar
+    )
 
     assert json.loads(first["body"])["messages_sent"] == 1
     assert json.loads(second["body"])["duplicates_skipped"] == 1

@@ -23,6 +23,8 @@ flowchart LR
     H --> A[Analytics journal]
     A --> S
     X[Yandex Lockbox] --> H
+    H --> V[Official VRS adapter]
+    V --> S
 ```
 
 ## Компоненты
@@ -36,6 +38,7 @@ flowchart LR
 | `cs2bot/match_sources/match_fetcher.py` | Выбор источника, freshness gate, shadow-сравнение | Смешивать источники в одной выдаче |
 | `cs2bot/match_sources/storage.py` | Delivery state machine, outbox, processed keys, cooldown и Object Storage | Решать, какой контент публиковать |
 | `cs2bot/media_cards.py` | Детерминированный рендер PNG и безопасная загрузка логотипов | Выполнять Telegram-доставку |
+| `cs2bot/match_sources/sources/vrs_source.py` | Получение и нормализация versioned VRS snapshots | Смешивать источники или публиковать неполные данные |
 | `cs2bot/analytics.py` | Запись событий постов, подписчиков и кампаний | Блокировать основную публикацию при своей ошибке |
 | `cs2bot/social_oauth.py` | Отдельный OAuth handler для соцсетей и запись токенов в Lockbox | Участвовать в основном Telegram handler |
 | `cs2bot/instagram_publish.py`, `cs2bot/threads_publish.py` | Загрузка публичных карточек и вызовы Meta через Xray | Выбирать контент или разделять Telegram state |
