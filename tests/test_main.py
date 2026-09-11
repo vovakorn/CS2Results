@@ -108,6 +108,12 @@ def test_format_match_uses_normalized_fields():
     assert "✅" not in text
 
 
+def test_format_match_adds_team_hashtags():
+    text = main.format_match(_match(team1="Team Liquid", team2="Ninjas in Pyjamas"))
+
+    assert text.endswith("#CS2 #РезультатыМатчей #TeamLiquid #NinjasinPyjamas")
+
+
 def test_format_tournament_standings_lists_every_team_and_payout():
     text = main.format_tournament_standings(
         "IEM Cologne 2026",
@@ -2080,6 +2086,16 @@ def test_digest_photo_caption_has_result_count():
 
     assert "Итоги дня — 1 августа" in caption
     assert "2 результата" in caption
+
+
+def test_digest_photo_caption_adds_unique_team_hashtags():
+    caption = main.format_digest_photo_caption(
+        main.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
+        2,
+        ["Team Liquid", "NAVI", "Team Liquid"],
+    )
+
+    assert caption.endswith("#CS2 #ИтогиДня #TeamLiquid #NAVI")
 
 
 def test_schedule_truncates_only_between_complete_entries():

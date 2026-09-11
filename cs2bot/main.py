@@ -762,12 +762,40 @@ def format_match(match: Any) -> str:
         safe_url = _safe_match_url(match_url, source)
         if safe_url:
             source_label = f'<a href="{html.escape(safe_url, quote=True)}">{source_label}</a>'
-        pieces.extend(["", f"{source_label} · #CS2 #РезультатыМатчей"])
+        pieces.extend(["", f"{source_label} · {_result_hashtags(team1, team2)}"])
     else:
-        pieces.extend(["", "#CS2 #РезультатыМатчей"])
+        pieces.extend(["", _result_hashtags(team1, team2)])
 
     message = "\n".join(pieces)
     return _truncate_telegram_html(message, MAX_TELEGRAM_MESSAGE_LENGTH)
+
+
+def _team_hashtag(team_name: str) -> str | None:
+    """Convert a team display name into one compact, platform-safe hashtag."""
+    value = re.sub(r"[^\w]+", "", team_name, flags=re.UNICODE).strip("_")
+    return f"#{value}" if value else None
+
+
+def _team_hashtags(team_names: Iterable[str]) -> str:
+    hashtags: list[str] = []
+    seen: set[str] = set()
+    for team_name in team_names:
+        hashtag = _team_hashtag(team_name.strip())
+        if hashtag and hashtag.casefold() not in seen:
+            hashtags.append(hashtag)
+            seen.add(hashtag.casefold())
+    return " ".join(hashtags)
+
+
+def _result_hashtags(*team_names: str) -> str:
+    """Return the common result hashtags plus unique team hashtags."""
+    hashtags = ["#CS2", "#РезультатыМатчей"]
+    seen = {item.casefold() for item in hashtags}
+    for hashtag in _team_hashtags(team_names).split():
+        if hashtag.casefold() not in seen:
+            hashtags.append(hashtag)
+            seen.add(hashtag.casefold())
+    return " ".join(hashtags)
 
 
 def format_tournament_standings(
@@ -1386,7 +1414,11 @@ async def _fetch_schedule_contexts(
     )
 
 
-def format_digest_photo_caption(local_now: datetime, match_count: int) -> str:
+def format_digest_photo_caption(
+    local_now: datetime,
+    match_count: int,
+    team_names: Sequence[str] = (),
+) -> str:
     """Build a short caption while scores remain protected by the media spoiler."""
     noun = "результат" if match_count == 1 else "результата" if 2 <= match_count <= 4 else "результатов"
     return "\n".join(
@@ -1396,7 +1428,7 @@ def format_digest_photo_caption(local_now: datetime, match_count: int) -> str:
             "",
             "Источник: PandaScore",
             "",
-            "#CS2 #ИтогиДня",
+            "#CS2 #ИтогиДня" + (f" {_team_hashtags(team_names)}" if team_names else ""),
         ]
     )
 
@@ -1420,7 +1452,10 @@ def format_daily_digest(matches: Sequence[MatchNormalized], local_now: datetime)
                 "",
             ]
         )
-    footer = ["Источник: PandaScore", "", "#CS2 #ИтогиДня"]
+    team_hashtags = _team_hashtags(
+        name for match in sorted_matches for name in (match.team1_name, match.team2_name)
+    )
+    footer = ["Источник: PandaScore", "", "#CS2 #ИтогиДня" + (f" {team_hashtags}" if team_hashtags else "")]
     lines = list(header)
     omitted = 0
     for index, entry in enumerate(entries):
@@ -2265,7 +2300,11 @@ def _handle_content_job(
                         filename = f"cs2-schedule-{day_key}.png"
                         has_spoiler = False
                     else:
-                        caption = format_digest_photo_caption(local_now, len(selected))
+                        caption = format_digest_photo_caption(
+                            local_now,
+                            len(selected),
+                            [name for match in selected for name in (match.team1_name, match.team2_name)],
+                        )
                         filename = f"cs2-results-{day_key}.png"
                         has_spoiler = TELEGRAM_SPOILERS
                     if test_run_id and not caption.startswith("🧪 <b>Тестовая карточка</b>"):
