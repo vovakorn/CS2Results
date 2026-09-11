@@ -109,6 +109,95 @@ def test_final_card_requires_confirmed_final_data_and_is_square_png():
     assert not media_cards.can_render_final_card(_result())
 
 
+@pytest.mark.parametrize("map_count", [3, 4, 5])
+def test_final_card_adapts_to_three_four_and_five_maps(map_count):
+    maps = [
+        MapResult(name=name, score1=13, score2=9 + index)
+        for index, name in enumerate(("Mirage", "Dust II", "Nuke", "Ancient", "Inferno")[:map_count])
+    ]
+    match = _result().model_copy(update={
+        "is_final": True,
+        "winner_prize_usd": 500_000,
+        "maps": maps,
+    })
+
+    image = Image.open(io.BytesIO(media_cards.render_final_card(match)))
+
+    assert image.format == "PNG"
+    assert image.size == media_cards.RESULT_CARD_SIZE
+
+
+def test_final_card_draws_team_logos_beside_names(monkeypatch):
+    match = _result().model_copy(update={
+        "is_final": True,
+        "winner_prize_usd": 500_000,
+        "maps": [
+            MapResult(name="Mirage", score1=13, score2=9),
+            MapResult(name="Nuke", score1=13, score2=11),
+            MapResult(name="Ancient", score1=13, score2=10),
+        ],
+        "team1_logo_url": "https://cdn.pandascore.co/images/team/image/1/left.png",
+        "team1_logo_fallback_url": "https://cdn.pandascore.co/images/team/image/1/left-fallback.png",
+        "team2_logo_url": "https://cdn.pandascore.co/images/team/image/2/right.png",
+        "team2_logo_fallback_url": "https://cdn.pandascore.co/images/team/image/2/right-fallback.png",
+    })
+    logos = []
+
+    def capture_logo(canvas, draw, center, diameter, team_name, logo_url, accent, fallback_logo_url=None):
+        logos.append((center, diameter, team_name, logo_url, fallback_logo_url))
+
+    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
+    media_cards.render_final_card(match)
+
+    assert logos == [
+        ((108, 357), 76, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url),
+        ((972, 357), 76, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url),
+    ]
+
+
+def test_final_card_uses_initials_when_team_logos_are_unavailable(monkeypatch):
+    match = _result().model_copy(update={
+        "is_final": True,
+        "winner_prize_usd": 500_000,
+        "maps": [
+            MapResult(name="Mirage", score1=13, score2=9),
+            MapResult(name="Nuke", score1=13, score2=11),
+            MapResult(name="Ancient", score1=13, score2=10),
+        ],
+        "team1_logo_url": "https://cdn.pandascore.co/images/team/image/1/left.png",
+        "team2_logo_url": "https://cdn.pandascore.co/images/team/image/2/right.png",
+    })
+    monkeypatch.setattr(media_cards, "fetch_team_logo", lambda url: None)
+
+    image = Image.open(io.BytesIO(media_cards.render_final_card(match)))
+
+    assert image.size == media_cards.RESULT_CARD_SIZE
+
+
+def test_final_card_uses_one_gold_foil_header_accent(monkeypatch):
+    match = _result().model_copy(update={
+        "is_final": True,
+        "winner_prize_usd": 500_000,
+        "maps": [
+            MapResult(name="Mirage", score1=13, score2=9),
+            MapResult(name="Nuke", score1=13, score2=11),
+            MapResult(name="Ancient", score1=13, score2=10),
+        ],
+    })
+    original = media_cards._background
+    captured = {}
+
+    def capture_background(*args, **kwargs):
+        captured.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(media_cards, "_background", capture_background)
+    media_cards.render_final_card(match)
+
+    assert captured["header_accent_colors"] == (media_cards.GOLD_FOIL, media_cards.GOLD_FOIL)
+    assert captured["header_foil"] is True
+
+
 def test_tournament_standings_cards_render_all_placements_in_an_album():
     placements = [
         TournamentPlacement(
