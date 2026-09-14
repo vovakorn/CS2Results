@@ -113,6 +113,7 @@ class MatchNormalized(BaseModel):
     publisher_tier: str | None = Field(default=None, max_length=100)
     tournament_section: str | None = Field(default=None, max_length=200)
     is_final: bool = False
+    vrs_baseline_id: str | None = Field(default=None, max_length=500)
     tournament_parent: str | None = Field(default=None, max_length=500)
     tournament_placements: list[TournamentPlacement] = Field(default_factory=list, max_length=64)
     team1_name: str = Field(min_length=1, max_length=200)

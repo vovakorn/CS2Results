@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from io import BytesIO
 from typing import Any
 
 import requests
 from PIL import Image, ImageDraw
 
+from cs2bot.media_cards import render_schedule_card
+from cs2bot.match_sources.models import UpcomingMatchNormalized
 from cs2bot.threads_publish import ThreadsPublishError, publish_rendered_cards as publish_threads_rendered_cards
 from cs2bot.xray_proxy import XrayProxyError, xray_http_proxy
 
@@ -31,6 +34,8 @@ TEST_CAPTION = "Тест интеграции CS2Results с Instagram. ✅"
 THREADS_TEST_TEXT = "Тест интеграции CS2Results с Threads. ✅"
 THREADS_TEST_CARD_CAPTION = "Тестовая карточка CS2Results для Threads. ✅"
 THREADS_TEST_CARD_KEY = "manual_threads_test_v1"
+THREADS_VISUAL_TEST_CARD_CAPTION = "🧪 Тест отображения карточки расписания CS2Results в Threads."
+THREADS_VISUAL_TEST_CARD_KEY = "manual_threads_visual_test_v1"
 
 
 class SocialPublishError(RuntimeError):
@@ -219,16 +224,56 @@ def publish_threads_test_card(context: Any) -> dict[str, str]:
     return {"post_id": post_id}
 
 
+def _threads_visual_test_card() -> bytes:
+    """Render a representative schedule card with the production card renderer."""
+    match = UpcomingMatchNormalized(
+        match_id="threads-visual-test-1",
+        tournament_name="CS2Results — тестовая карточка",
+        competition_key="CS2Results",
+        team1_name="Team Spirit",
+        team2_name="Natus Vincere",
+        scheduled_at="2026-09-11T18:00:00+03:00",
+        best_of=3,
+        is_featured=True,
+    )
+    return render_schedule_card(
+        [match],
+        datetime.fromisoformat("2026-09-10T12:00:00+03:00"),
+        "Europe/Moscow",
+    )
+
+
+def publish_threads_visual_test_card(context: Any) -> dict[str, str]:
+    """Publish one explicit production-rendered card without scheduler side effects."""
+    try:
+        post_id = publish_threads_rendered_cards(
+            THREADS_VISUAL_TEST_CARD_KEY,
+            [_threads_visual_test_card()],
+            os.getenv("THREADS_VISUAL_TEST_CARD_CAPTION", THREADS_VISUAL_TEST_CARD_CAPTION),
+            context,
+        )
+    except ThreadsPublishError as exc:
+        raise SocialPublishError(str(exc)) from exc
+    return {"post_id": post_id}
+
+
 def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
     event = event if isinstance(event, dict) else {}
     job = event.get("job")
-    if job not in {"instagram_test_post", "threads_test_post", "threads_test_card"}:
+    if job not in {
+        "instagram_test_post",
+        "threads_test_post",
+        "threads_test_card",
+        "threads_visual_test_card",
+    }:
         return {"statusCode": 404, "body": json.dumps({"error": "unknown job"})}
     try:
         if job == "instagram_test_post":
             published = publish_instagram_test_post(context)
         elif job == "threads_test_post":
             published = publish_threads_test_post(context)
+        elif job == "threads_visual_test_card":
+            published = publish_threads_visual_test_card(context)
         else:
             published = publish_threads_test_card(context)
     except SocialPublishError as exc:

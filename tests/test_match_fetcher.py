@@ -5,7 +5,13 @@ from datetime import datetime, timezone
 import pytest
 
 from cs2bot.match_sources import match_fetcher
-from cs2bot.match_sources.models import MapResult, MatchNormalized, SourceUnavailableError, TournamentPlacement
+from cs2bot.match_sources.models import (
+    MapResult,
+    MatchNormalized,
+    SourceReferences,
+    SourceUnavailableError,
+    TournamentPlacement,
+)
 
 
 def _match(source="pandascore", match_id="1", tournament_name="IEM Cologne 2026"):
@@ -35,6 +41,7 @@ def test_auto_uses_pandascore_when_it_returns_matches(monkeypatch):
 def test_final_card_selection_replaces_primary_with_complete_liquipedia_final():
     primary = _match()
     primary.date = "2026-08-23T16:00:00Z"
+    primary.source_refs = SourceReferences(tournament_id="pandascore-tournament-42")
     final = _match(source="liquipedia", match_id="liquipedia-final")
     final.date = primary.date
     final.is_final = True
@@ -47,7 +54,8 @@ def test_final_card_selection_replaces_primary_with_complete_liquipedia_final():
 
     selected = match_fetcher._replace_with_liquipedia_finals([primary], [final])
 
-    assert selected == [final]
+    assert selected[0].match_id == final.match_id
+    assert selected[0].vrs_baseline_id == "pandascore-tournament-42"
 
 
 def test_final_card_selection_keeps_primary_when_liquipedia_final_is_incomplete():

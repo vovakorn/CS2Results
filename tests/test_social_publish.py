@@ -125,5 +125,31 @@ def test_handler_dispatches_threads_test_card(monkeypatch):
     assert json.loads(response["body"]) == {"ok": True, "post_id": "post-id"}
 
 
+def test_threads_visual_test_card_uses_production_renderer(monkeypatch):
+    rendered = b"production-card"
+    seen = {}
+    monkeypatch.setattr(social_publish, "render_schedule_card", lambda *args: rendered)
+
+    def fake_publish(publication_key, cards, caption, context):
+        seen.update(publication_key=publication_key, cards=cards, caption=caption, context=context)
+        return "post-id"
+
+    monkeypatch.setattr(social_publish, "publish_threads_rendered_cards", fake_publish)
+
+    assert social_publish.publish_threads_visual_test_card({"token": "iam"}) == {"post_id": "post-id"}
+    assert seen["publication_key"] == social_publish.THREADS_VISUAL_TEST_CARD_KEY
+    assert seen["cards"] == [rendered]
+    assert seen["caption"] == social_publish.THREADS_VISUAL_TEST_CARD_CAPTION
+
+
+def test_handler_dispatches_threads_visual_test_card(monkeypatch):
+    monkeypatch.setattr(social_publish, "publish_threads_visual_test_card", lambda context: {"post_id": "post-id"})
+
+    response = social_publish.handler({"job": "threads_visual_test_card"}, None)
+
+    assert response["statusCode"] == 200
+    assert json.loads(response["body"]) == {"ok": True, "post_id": "post-id"}
+
+
 def test_handler_rejects_non_test_job():
     assert social_publish.handler({}, None)["statusCode"] == 404

@@ -4,8 +4,7 @@ Threads delivery is an opt-in companion to Telegram and Instagram. Each platform
 has its own Object Storage claims, processed markers and result outbox channel;
 a confirmed post on one platform never marks another platform as delivered.
 
-Publisher развёрнут в production, но сейчас выключен
-`ENABLE_THREADS_PUBLISHING=0`; реальных Threads-постов он не создаёт.
+Publisher включён в production через `ENABLE_THREADS_PUBLISHING=1`.
 
 ## Required resources
 
@@ -35,11 +34,13 @@ Build the main function with the Xray binary:
 XRAY_ENABLED=1 scripts/build_function_zip.sh
 ```
 
-Keep `ENABLE_THREADS_PUBLISHING=0` until the candidate has passed its dry run
-and one uploaded public card URL has been checked without authentication.
+For a new environment, keep `ENABLE_THREADS_PUBLISHING=0` until the candidate
+has passed its dry run and one uploaded public card URL has been checked without
+authentication. Production is already enabled after those checks.
 
-The separate private `cs2-social-publish` test function offers
-`{"job":"threads_test_card"}` for one explicitly approved image-card test. It
+The separate private `cs2-threads-publish-test` function offers
+`{"job":"threads_test_card"}` for an explicitly approved connectivity test and
+`{"job":"threads_visual_test_card"}` for a production-rendered visual test. It
 needs the same Threads media variables, `XRAY_CONFIG_JSON`, the Threads Lockbox
 secret ID, Object Storage credentials and the `lockbox.payloadViewer` role. Do
 not add an API Gateway route for this function.

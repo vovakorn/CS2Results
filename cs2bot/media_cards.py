@@ -63,6 +63,9 @@ WHITE = (244, 247, 251)
 MUTED = (150, 168, 191)
 CYAN = (22, 199, 255)
 AMBER = (255, 159, 28)
+GOLD_FOIL = (222, 176, 64)
+GOLD_FOIL_HIGHLIGHT = (255, 226, 137)
+GOLD_FOIL_SHADOW = (147, 103, 26)
 VRS_UP = (73, 210, 126)
 VRS_DOWN = (245, 91, 91)
 STANDINGS_GOLD = (214, 181, 104)
@@ -119,7 +122,13 @@ def _header_accent_segments(width: int) -> tuple[tuple[int, int], tuple[int, int
     )
 
 
-def _background(size: tuple[int, int], *, header_accent_y: int = 58) -> Image.Image:
+def _background(
+    size: tuple[int, int],
+    *,
+    header_accent_y: int = 58,
+    header_accent_colors: tuple[tuple[int, int, int], tuple[int, int, int]] = (CYAN, AMBER),
+    header_foil: bool = False,
+) -> Image.Image:
     width, height = size
     image = Image.new("RGB", size, NAVY)
     pixels = image.load()
@@ -143,8 +152,19 @@ def _background(size: tuple[int, int], *, header_accent_y: int = 58) -> Image.Im
         width=2,
     )
     accent_segments = _header_accent_segments(width)
-    for (x0, x1), color in zip(accent_segments, (CYAN, AMBER), strict=True):
+    for (x0, x1), color in zip(accent_segments, header_accent_colors, strict=True):
         draw.line((x0, header_accent_y, x1, header_accent_y), fill=(*color, 220), width=8)
+        if header_foil:
+            draw.line(
+                (x0, header_accent_y - 2, x1, header_accent_y - 2),
+                fill=(*GOLD_FOIL_HIGHLIGHT, 210),
+                width=2,
+            )
+            draw.line(
+                (x0, header_accent_y + 3, x1, header_accent_y + 3),
+                fill=(*GOLD_FOIL_SHADOW, 190),
+                width=2,
+            )
     for index in range(7):
         x = -180 + index * 225
         draw.line((x, height, x + 520, 0), fill=(39, 75, 119, 25), width=2)
@@ -1425,12 +1445,16 @@ def _chamfered_panel(
     box: tuple[int, int, int, int],
     *,
     cut: int = 22,
+    accent: tuple[int, int, int] = AMBER,
+    foil: bool = False,
 ) -> None:
     x0, y0, x1, y1 = box
     points = [(x0 + cut, y0), (x1 - cut, y0), (x1, y0 + cut), (x1, y1 - cut),
               (x1 - cut, y1), (x0 + cut, y1), (x0, y1 - cut), (x0, y0 + cut)]
-    draw.polygon(points, fill=(10, 19, 29, 245), outline=AMBER)
-    draw.line(points + [points[0]], fill=AMBER, width=2)
+    draw.polygon(points, fill=(10, 19, 29, 245), outline=accent)
+    draw.line(points + [points[0]], fill=accent, width=2)
+    if foil:
+        draw.line(points + [points[0]], fill=(*GOLD_FOIL_HIGHLIGHT, 190), width=1)
 
 
 def _format_usd(value: int) -> str:
@@ -1452,48 +1476,86 @@ def render_final_card(match: MatchNormalized) -> bytes:
     if not can_render_final_card(match):
         raise MediaCardError("Final card requires confirmed final maps and winner payout")
 
-    canvas = _background(RESULT_CARD_SIZE, header_accent_y=82).convert("RGBA")
+    canvas = _background(
+        RESULT_CARD_SIZE,
+        header_accent_y=82,
+        header_accent_colors=(GOLD_FOIL, GOLD_FOIL),
+        header_foil=True,
+    ).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
     width = RESULT_CARD_SIZE[0]
     panel = (190, 54, 890, 122)
-    _chamfered_panel(draw, panel, cut=16)
+    _chamfered_panel(draw, panel, cut=16, accent=GOLD_FOIL, foil=True)
     title = match.tournament_name.upper()
     _centered_text(draw, width // 2, 68, title, _fit_font(draw, title, 620, 30, 16, display=True), WHITE)
-    _centered_text(draw, width // 2, 176, "ГРАНД-ФИНАЛ", _font(40, display=True), AMBER)
+    _centered_text(draw, width // 2, 176, "ГРАНД-ФИНАЛ", _font(40, display=True), GOLD_FOIL)
 
     score = f"{match.score1}:{match.score2}"
     score_font = _font(156, display=True)
-    _centered_text(draw, width // 2, 252, score, score_font, AMBER)
+    _centered_text(draw, width // 2, 252, score, score_font, GOLD_FOIL)
     winner_side = _winner_side(match)
-    name_width = 330
+    logo_diameter = 76
+    logo_y = 357
+    _draw_logo(
+        canvas,
+        draw,
+        (108, logo_y),
+        logo_diameter,
+        match.team1_name,
+        match.team1_logo_url,
+        GOLD_FOIL,
+        match.team1_logo_fallback_url,
+    )
+    _draw_logo(
+        canvas,
+        draw,
+        (972, logo_y),
+        logo_diameter,
+        match.team2_name,
+        match.team2_logo_url,
+        GOLD_FOIL,
+        match.team2_logo_fallback_url,
+    )
+    name_width = 270
     left_name, right_name = match.team1_name.upper(), match.team2_name.upper()
-    _aligned_text(draw, 66, 320, left_name, _fit_font(draw, left_name, name_width, 62, 20),
-                  AMBER if winner_side == "left" else WHITE, "left")
-    _aligned_text(draw, 1014, 320, right_name, _fit_font(draw, right_name, name_width, 62, 20),
-                  AMBER if winner_side == "right" else WHITE, "right")
+    _aligned_text(draw, 164, 326, left_name, _fit_font(draw, left_name, name_width, 52, 18),
+                  GOLD_FOIL if winner_side == "left" else WHITE, "left")
+    _aligned_text(draw, 916, 326, right_name, _fit_font(draw, right_name, name_width, 52, 18),
+                  GOLD_FOIL if winner_side == "right" else WHITE, "right")
 
-    table = (190, 470, 890, 470 + 76 * len(match.maps))
-    _chamfered_panel(draw, table)
+    row_height = {3: 126, 4: 95, 5: 76}[len(match.maps)]
+    table = (190, 470, 890, 470 + row_height * len(match.maps))
+    _chamfered_panel(draw, table, accent=GOLD_FOIL, foil=True)
     x0, y0, x1, _ = table
     divider_x = (x0 + x1) // 2
-    draw.line((divider_x, y0 + 16, divider_x, table[3] - 16), fill=(*AMBER, 180), width=2)
+    draw.line((divider_x, y0 + 16, divider_x, table[3] - 16), fill=(*GOLD_FOIL, 180), width=2)
+    map_size = {3: 44, 4: 40, 5: 36}[len(match.maps)]
+    score_size = {3: 46, 4: 42, 5: 38}[len(match.maps)]
     for index, item in enumerate(match.maps):
-        row_y = y0 + index * 76
+        row_y = y0 + index * row_height
         if index:
-            draw.line((x0 + 18, row_y, x1 - 18, row_y), fill=(*AMBER, 150), width=1)
-        _centered_text(draw, (x0 + divider_x) // 2, row_y + 18, item.name,
-                       _fit_font(draw, item.name, 280, 36, 16), WHITE)
-        _centered_text(draw, (divider_x + x1) // 2, row_y + 18, f"{item.score1}:{item.score2}", _font(38), AMBER)
+            draw.line((x0 + 18, row_y, x1 - 18, row_y), fill=(*GOLD_FOIL, 150), width=1)
+        text_y = row_y + max(14, (row_height - map_size) // 2 - 3)
+        _centered_text(draw, (x0 + divider_x) // 2, text_y, item.name,
+                       _fit_font(draw, item.name, 280, map_size, 16), WHITE)
+        _centered_text(
+            draw,
+            (divider_x + x1) // 2,
+            row_y + max(14, (row_height - score_size) // 2 - 3),
+            f"{item.score1}:{item.score2}",
+            _font(score_size),
+            GOLD_FOIL,
+        )
 
     prize_top = table[3] + 30
     prize = (190, prize_top, 890, prize_top + 86)
-    _chamfered_panel(draw, prize)
-    draw.line((divider_x, prize_top + 16, divider_x, prize_top + 70), fill=(*AMBER, 180), width=2)
+    _chamfered_panel(draw, prize, accent=GOLD_FOIL, foil=True)
+    draw.line((divider_x, prize_top + 16, divider_x, prize_top + 70), fill=(*GOLD_FOIL, 180), width=2)
     _centered_text(draw, (prize[0] + divider_x) // 2, prize_top + 28, "ПРИЗОВЫЕ ПОБЕДИТЕЛЯ",
-                   _fit_font(draw, "ПРИЗОВЫЕ ПОБЕДИТЕЛЯ", 300, 24, 13, display=True), AMBER)
+                   _fit_font(draw, "ПРИЗОВЫЕ ПОБЕДИТЕЛЯ", 300, 24, 13, display=True), GOLD_FOIL)
     amount = _format_usd(match.winner_prize_usd)
     _centered_text(draw, (divider_x + prize[2]) // 2, prize_top + 20, amount,
-                   _fit_font(draw, amount, 300, 54, 22, display=True), AMBER)
+                   _fit_font(draw, amount, 300, 54, 22, display=True), GOLD_FOIL)
     _centered_text(draw, width // 2, 1012, "ИСТОЧНИК: LIQUIPEDIA", _font(18, display=True), MUTED)
     return _as_png(canvas)
 
