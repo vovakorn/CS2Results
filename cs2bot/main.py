@@ -868,7 +868,11 @@ def format_tournament_vrs(tournament_name: str, impacts: Sequence[TournamentVRSI
 
 
 def _vrs_tournament_id(match: MatchNormalized) -> str | None:
-    return match.tournament_parent or (match.source_refs.tournament_id if match.source_refs else None)
+    return (
+        match.vrs_baseline_id
+        or match.tournament_parent
+        or (match.source_refs.tournament_id if match.source_refs else None)
+    )
 
 
 def _capture_vrs_baseline(tournament_id: str, *, dry_run: bool = False) -> str:
@@ -3081,25 +3085,16 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             legacy_channel_name=name,
                         )
                     ):
-                        if _can_publish_tournament_standings(match):
+                        if _enqueue_tournament_standings(match, channel_id, name):
                             standings_key = result_outbox_key(match, channel_id, "tournament_standings")
-                            created = asyncio.run(
-                                enqueue_result_delivery(
-                                    match,
-                                    channel_id,
-                                    name,
-                                    content_type="tournament_standings",
-                                )
+                            current_targets[standings_key] = PendingDelivery(
+                                key=standings_key,
+                                channel_id=channel_id,
+                                channel_name=name,
+                                match=match,
+                                created_at=queued_at,
+                                content_type="tournament_standings",
                             )
-                            if created:
-                                current_targets[standings_key] = PendingDelivery(
-                                    key=standings_key,
-                                    channel_id=channel_id,
-                                    channel_name=name,
-                                    match=match,
-                                    created_at=queued_at,
-                                    content_type="tournament_standings",
-                                )
                         skipped_duplicates += 1
                         continue
                     created = asyncio.run(enqueue_result_delivery(match, channel_id, name))
@@ -3313,27 +3308,18 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
         try:
             if asyncio.run(reconcile_channel_delivery(match, channel_id)):
-                if _can_publish_tournament_standings(match):
+                if _enqueue_tournament_standings(match, channel_id, name):
                     standings_key = result_outbox_key(match, channel_id, "tournament_standings")
-                    created = asyncio.run(
-                        enqueue_result_delivery(
-                            match,
-                            channel_id,
-                            name,
+                    pending_deliveries.append(
+                        PendingDelivery(
+                            key=standings_key,
+                            channel_id=channel_id,
+                            channel_name=name,
+                            match=match,
+                            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                             content_type="tournament_standings",
                         )
                     )
-                    if created:
-                        pending_deliveries.append(
-                            PendingDelivery(
-                                key=standings_key,
-                                channel_id=channel_id,
-                                channel_name=name,
-                                match=match,
-                                created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                                content_type="tournament_standings",
-                            )
-                        )
                 asyncio.run(delete_result_delivery(pending))
                 log_event(
                     logger,
@@ -3367,27 +3353,18 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             skipped_duplicates += 1
             try:
                 if asyncio.run(is_channel_processed(match, channel_id, legacy_channel_name=name)):
-                    if _can_publish_tournament_standings(match):
+                    if _enqueue_tournament_standings(match, channel_id, name):
                         standings_key = result_outbox_key(match, channel_id, "tournament_standings")
-                        created = asyncio.run(
-                            enqueue_result_delivery(
-                                match,
-                                channel_id,
-                                name,
+                        pending_deliveries.append(
+                            PendingDelivery(
+                                key=standings_key,
+                                channel_id=channel_id,
+                                channel_name=name,
+                                match=match,
+                                created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                                 content_type="tournament_standings",
                             )
                         )
-                        if created:
-                            pending_deliveries.append(
-                                PendingDelivery(
-                                    key=standings_key,
-                                    channel_id=channel_id,
-                                    channel_name=name,
-                                    match=match,
-                                    created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                                    content_type="tournament_standings",
-                                )
-                            )
                     asyncio.run(delete_result_delivery(pending))
             except Exception as exc:
                 log_event(
@@ -3601,27 +3578,18 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
         try:
             asyncio.run(mark_channel_processed(match, channel_id))
-            if _can_publish_tournament_standings(match):
+            if _enqueue_tournament_standings(match, channel_id, name):
                 standings_key = result_outbox_key(match, channel_id, "tournament_standings")
-                created = asyncio.run(
-                    enqueue_result_delivery(
-                        match,
-                        channel_id,
-                        name,
+                pending_deliveries.append(
+                    PendingDelivery(
+                        key=standings_key,
+                        channel_id=channel_id,
+                        channel_name=name,
+                        match=match,
+                        created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                         content_type="tournament_standings",
                     )
                 )
-                if created:
-                    pending_deliveries.append(
-                        PendingDelivery(
-                            key=standings_key,
-                            channel_id=channel_id,
-                            channel_name=name,
-                            match=match,
-                            created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-                            content_type="tournament_standings",
-                        )
-                    )
             asyncio.run(delete_result_delivery(pending))
             log_event(
                 logger,

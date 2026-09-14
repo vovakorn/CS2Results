@@ -90,6 +90,12 @@ def _replace_with_liquipedia_finals(
             merged.append(final)
             additions += 1
         else:
+            primary = merged[index]
+            primary_tournament_id = (
+                primary.source_refs.tournament_id if primary.source_refs else None
+            )
+            if primary_tournament_id:
+                final = final.model_copy(update={"vrs_baseline_id": primary_tournament_id})
             merged[index] = final
             replacements += 1
     logger.info(

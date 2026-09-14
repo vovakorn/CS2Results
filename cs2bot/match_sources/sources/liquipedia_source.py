@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 from urllib.parse import quote
 
@@ -21,6 +22,7 @@ LIQUIPEDIA_MATCH_QUERY = (
     "liquipediatiertype,publishertier,parent,match2opponents,match2games"
 )
 LIQUIPEDIA_PLACEMENT_QUERY = "placement,opponentname,opponenttemplate,prizemoney"
+TOURNAMENT_PLACEMENT_RE = re.compile(r"^(\d+)(?:\s*[-–]\s*\d+)?$")
 
 LIQUIPEDIA_TIER_MAP = {
     "1": "s",
@@ -89,6 +91,10 @@ def _normalize_games(value: Any) -> list[MapResult]:
     for game in games[:10]:
         if not isinstance(game, dict):
             continue
+        status = str(game.get("status") or "").strip().casefold()
+        result_type = str(game.get("resulttype") or "").strip().casefold()
+        if status == "notplayed" or result_type == "np":
+            continue
         map_name = game.get("map")
         scores = _json_value(game.get("scores"))
         score1 = score2 = None
@@ -100,15 +106,23 @@ def _normalize_games(value: Any) -> list[MapResult]:
     return maps
 
 
-def _is_grand_final(section: Any) -> bool:
-    """Accept only an explicit final stage, never infer one from a tournament name."""
+def _is_grand_final(section: Any, opponents: Any = None) -> bool:
+    """Accept an explicit final stage or explicit first/second-place opponents."""
     value = _optional_text(section)
-    if not value:
+    if value:
+        normalized = value.casefold().replace("-", " ")
+        if "final" in normalized and not any(
+            marker in normalized for marker in ("semi", "lower", "upper", "consolation", "qualifier")
+        ):
+            return True
+    if not isinstance(opponents, list) or len(opponents) != 2:
         return False
-    normalized = value.casefold().replace("-", " ")
-    if "final" not in normalized:
-        return False
-    return not any(marker in normalized for marker in ("semi", "lower", "upper", "consolation", "qualifier"))
+    placements = {
+        _optional_int(opponent.get("placement"))
+        for opponent in opponents
+        if isinstance(opponent, dict)
+    }
+    return placements == {1, 2}
 
 
 def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
@@ -162,7 +176,7 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         tournament_tier_type=_optional_text(item.get("liquipediatiertype")),
         publisher_tier=_optional_text(item.get("publishertier")),
         tournament_section=_optional_text(item.get("section")),
-        is_final=_is_grand_final(item.get("section")),
+        is_final=_is_grand_final(item.get("section"), opponents),
         team1_name=str(team1),
         team2_name=str(team2),
         score1=score1,
@@ -242,9 +256,12 @@ def _tournament_placements_from_response(data: Any) -> list[TournamentPlacement]
         if not isinstance(item, dict):
             return []
         placement = _optional_text(item.get("placement"))
+        placement_match = TOURNAMENT_PLACEMENT_RE.fullmatch(placement or "")
+        if placement_match is None:
+            continue
         team_name = _optional_text(item.get("opponentname")) or _optional_text(item.get("opponenttemplate"))
         prize_usd = _optional_int(item.get("prizemoney"))
-        if not placement or not team_name or prize_usd is None or prize_usd < 0:
+        if not team_name or prize_usd is None or prize_usd < 0:
             return []
         identity = MatchNormalized._identity_part(team_name)
         if not identity or identity in team_identities:
@@ -257,6 +274,12 @@ def _tournament_placements_from_response(data: Any) -> list[TournamentPlacement]
                 prize_usd=prize_usd,
             )
         )
+    placements.sort(
+        key=lambda item: (
+            int(TOURNAMENT_PLACEMENT_RE.fullmatch(item.placement).group(1)),
+            item.team_name.casefold(),
+        )
+    )
     return placements if 2 <= len(placements) <= 64 else []
 
 
