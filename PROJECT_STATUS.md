@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 11 сентября 2026 года.
+Обновлено: 15 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,8 +15,8 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 11 сентября 2026, версия `d4euekd0e0n4vnoj84ea`;
-  таймеры вызывают тег `production`. Предыдущая версия `d4evvfa8uh5rc5gacjk9`
+- Последний production-деплой: 15 сентября 2026, версия `d4eq0lng3paj3vvabnha`;
+  таймеры вызывают тег `production`. Предыдущая версия `d4e1un35qpaukeqnojag`
   закреплена тегом `rollback`.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
@@ -24,10 +24,10 @@ production и сверки фактического состояния. Теку
 - В production включены флаги `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
   `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
-- Полная release-проверка: 426 тестов, GitHub Actions на Python 3.11 и 3.12
+- Полная release-проверка: 440 тестов, GitHub Actions на Python 3.11 и 3.12
   и сборка архива основной функции. Candidate и production smoke прошли:
   `200`, `dry_run=true`, без startup-ошибок и публикаций. SHA-256 архива:
-  `c24c819c48be9d5a930a57355c2114bafd53184152b5ccd4f527af2b02992955`.
+  `77b0ef0ec235c1c3d6e554d4d5d6b437db10160cfd5f9d6d0fe1d1402e0328a0`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
@@ -36,7 +36,7 @@ production и сверки фактического состояния. Теку
 
 - `results` — каждые 15 минут.
 - `results retry_only` — каждые 5 минут, без запроса источников матчей.
-- `schedule` — ежедневно в 10:00 по Москве.
+- `schedule` — ежедневно в 09:00 по Москве.
 - `digest` — ежедневно в 23:00 по Москве.
 - `radar_discovery` — ежедневно в 12:00 по Москве; выбирает Tier-1 турниры
   следующего дня, проверяет фактический первый матч турнира и публикует только
