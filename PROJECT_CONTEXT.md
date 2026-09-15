@@ -1,6 +1,6 @@
 # CS2 Results Bot — краткий контекст
 
-Обновлено: 10 сентября 2026 года.
+Обновлено: 11 сентября 2026 года.
 
 Этот файл — короткая точка входа для новой задачи Codex. Подробности нужно читать
 по ссылкам только тогда, когда они относятся к запросу.
@@ -16,9 +16,10 @@ CS2 без информационного шума. Ближайшая прод�
 - Instagram и Threads OAuth подтверждены для `@cs2results`. Независимая
   Threads-доставка карточек через Xray, Lockbox и public media bucket включена
   в production (`ENABLE_THREADS_PUBLISHING=1`). Telegram proxy не участвует.
-  Private visual test подтвердил отображение branded PNG-карточки в Threads.
-- Последний production-деплой: 10 сентября 2026, версия `d4ecjei19q4qnu04ko84`;
-  таймеры вызывают тег `production`, предыдущая версия `d4eoos50gn0nm7eoi9gv`
+  Private visual test и реальные штатные scheduler-посты подтвердили доставку
+  branded PNG-карточек в Threads.
+- Последний production-деплой: 11 сентября 2026, версия `d4euekd0e0n4vnoj84ea`;
+  таймеры вызывают тег `production`, предыдущая версия `d4evvfa8uh5rc5gacjk9`
   закреплена тегом `rollback`.
 - Telegram Bot API направляется через `TELEGRAM_PROXY_URL` из отдельного
   Lockbox-секрета; подключение подтверждено запросом счётчика подписчиков и
@@ -27,7 +28,7 @@ CS2 без информационного шума. Ближайшая прод�
   (`ENABLE_LIQUIPEDIA_FINAL_CARDS=1`); Liquipedia fallback по-прежнему выключен.
 - Handler: `cs2bot.main.handler`.
 - Новые результаты проверяются каждые 15 минут; отдельный `retry_only` trigger
-  обрабатывает durable outbox каждые 5 минут. Расписание публикуется в 10:00,
+  обрабатывает durable outbox каждые 5 минут. Расписание публикуется в 09:00,
   турнирный радар ищется в 12:00, итог — в 23:00 по Москве.
 - Основной источник — PandaScore. Liquipedia работает в shadow-режиме;
   production fallback пока выключен.

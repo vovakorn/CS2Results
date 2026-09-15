@@ -4,7 +4,8 @@ Threads delivery is an opt-in companion to Telegram and Instagram. Each platform
 has its own Object Storage claims, processed markers and result outbox channel;
 a confirmed post on one platform never marks another platform as delivered.
 
-Publisher включён в production через `ENABLE_THREADS_PUBLISHING=1`.
+Publisher включён в production через `ENABLE_THREADS_PUBLISHING=1`; реальные
+штатные scheduler-посты подтверждены.
 
 ## Required resources
 
