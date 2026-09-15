@@ -40,6 +40,8 @@ def test_auto_uses_pandascore_when_it_returns_matches(monkeypatch):
 
 def test_final_card_selection_replaces_primary_with_complete_liquipedia_final():
     primary = _match()
+    primary.team1_logo_url = "https://cdn.pandascore.co/images/team/image/1/navi.png"
+    primary.team2_logo_url = "https://cdn.pandascore.co/images/team/image/2/faze.png"
     primary.date = "2026-08-23T16:00:00Z"
     primary.source_refs = SourceReferences(tournament_id="pandascore-tournament-42")
     final = _match(source="liquipedia", match_id="liquipedia-final")
@@ -56,6 +58,30 @@ def test_final_card_selection_replaces_primary_with_complete_liquipedia_final():
 
     assert selected[0].match_id == final.match_id
     assert selected[0].vrs_baseline_id == "pandascore-tournament-42"
+    assert selected[0].team1_logo_url == primary.team1_logo_url
+    assert selected[0].team2_logo_url == primary.team2_logo_url
+
+
+def test_final_card_selection_maps_logos_by_team_when_providers_reverse_sides():
+    primary = _match()
+    primary.team1_logo_url = "https://cdn.pandascore.co/images/team/image/1/navi.png"
+    primary.team2_logo_url = "https://cdn.pandascore.co/images/team/image/2/faze.png"
+    primary.date = "2026-08-23T16:00:00Z"
+    final = _match(source="liquipedia", match_id="liquipedia-final")
+    final.team1_name, final.team2_name = "FaZe", "NAVI"
+    final.date = primary.date
+    final.is_final = True
+    final.winner_prize_usd = 500_000
+    final.maps = [
+        MapResult(name="Mirage", score1=13, score2=9),
+        MapResult(name="Nuke", score1=11, score2=13),
+        MapResult(name="Ancient", score1=13, score2=10),
+    ]
+
+    selected = match_fetcher._replace_with_liquipedia_finals([primary], [final])
+
+    assert selected[0].team1_logo_url == primary.team2_logo_url
+    assert selected[0].team2_logo_url == primary.team1_logo_url
 
 
 def test_final_card_selection_keeps_primary_when_liquipedia_final_is_incomplete():

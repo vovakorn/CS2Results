@@ -63,9 +63,9 @@ WHITE = (244, 247, 251)
 MUTED = (150, 168, 191)
 CYAN = (22, 199, 255)
 AMBER = (255, 159, 28)
-GOLD_FOIL = (222, 176, 64)
-GOLD_FOIL_HIGHLIGHT = (255, 226, 137)
-GOLD_FOIL_SHADOW = (147, 103, 26)
+GOLD_FOIL = (205, 164, 71)
+GOLD_FOIL_HIGHLIGHT = (255, 220, 126)
+GOLD_FOIL_SHADOW = (126, 85, 24)
 VRS_UP = (73, 210, 126)
 VRS_DOWN = (245, 91, 91)
 STANDINGS_GOLD = (214, 181, 104)
@@ -1491,15 +1491,15 @@ def render_final_card(match: MatchNormalized) -> bytes:
     _centered_text(draw, width // 2, 176, "ГРАНД-ФИНАЛ", _font(40, display=True), GOLD_FOIL)
 
     score = f"{match.score1}:{match.score2}"
-    score_font = _font(156, display=True)
-    _centered_text(draw, width // 2, 252, score, score_font, GOLD_FOIL)
+    score_font = _font(150, display=True)
+    _centered_text(draw, width // 2, 244, score, score_font, GOLD_FOIL)
     winner_side = _winner_side(match)
-    logo_diameter = 76
-    logo_y = 357
+    logo_diameter = 104
+    logo_y = 350
     _draw_logo(
         canvas,
         draw,
-        (108, logo_y),
+        (238, logo_y),
         logo_diameter,
         match.team1_name,
         match.team1_logo_url,
@@ -1509,19 +1509,25 @@ def render_final_card(match: MatchNormalized) -> bytes:
     _draw_logo(
         canvas,
         draw,
-        (972, logo_y),
+        (842, logo_y),
         logo_diameter,
         match.team2_name,
         match.team2_logo_url,
         GOLD_FOIL,
         match.team2_logo_fallback_url,
     )
-    name_width = 270
+    name_width = 300
     left_name, right_name = match.team1_name.upper(), match.team2_name.upper()
-    _aligned_text(draw, 164, 326, left_name, _fit_font(draw, left_name, name_width, 52, 18),
-                  GOLD_FOIL if winner_side == "left" else WHITE, "left")
-    _aligned_text(draw, 916, 326, right_name, _fit_font(draw, right_name, name_width, 52, 18),
-                  GOLD_FOIL if winner_side == "right" else WHITE, "right")
+    _centered_text(
+        draw, 238, 414, left_name,
+        _fit_font(draw, left_name, name_width, 44, 18, display=True),
+        GOLD_FOIL if winner_side == "left" else WHITE,
+    )
+    _centered_text(
+        draw, 842, 414, right_name,
+        _fit_font(draw, right_name, name_width, 44, 18, display=True),
+        GOLD_FOIL if winner_side == "right" else WHITE,
+    )
 
     row_height = {3: 126, 4: 95, 5: 76}[len(match.maps)]
     table = (190, 470, 890, 470 + row_height * len(match.maps))

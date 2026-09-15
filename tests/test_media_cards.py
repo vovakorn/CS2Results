@@ -127,7 +127,7 @@ def test_final_card_adapts_to_three_four_and_five_maps(map_count):
     assert image.size == media_cards.RESULT_CARD_SIZE
 
 
-def test_final_card_draws_team_logos_beside_names(monkeypatch):
+def test_final_card_draws_team_logos_in_separate_team_columns(monkeypatch):
     match = _result().model_copy(update={
         "is_final": True,
         "winner_prize_usd": 500_000,
@@ -150,8 +150,8 @@ def test_final_card_draws_team_logos_beside_names(monkeypatch):
     media_cards.render_final_card(match)
 
     assert logos == [
-        ((108, 357), 76, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url),
-        ((972, 357), 76, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url),
+        ((238, 350), 104, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url),
+        ((842, 350), 104, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url),
     ]
 
 

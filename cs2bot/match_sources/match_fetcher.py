@@ -94,8 +94,35 @@ def _replace_with_liquipedia_finals(
             primary_tournament_id = (
                 primary.source_refs.tournament_id if primary.source_refs else None
             )
+            updates = {}
             if primary_tournament_id:
-                final = final.model_copy(update={"vrs_baseline_id": primary_tournament_id})
+                updates["vrs_baseline_id"] = primary_tournament_id
+            # Liquipedia is authoritative for final scores/maps, but its match
+            # payload does not always carry team artwork. Preserve the matching
+            # PandaScore artwork so a source replacement never degrades to
+            # initials. Match by normalized team identity because side order can
+            # differ between providers.
+            for final_side in (1, 2):
+                final_name = getattr(final, f"team{final_side}_name")
+                primary_side = next(
+                    (
+                        side
+                        for side in (1, 2)
+                        if MatchNormalized._identity_part(getattr(primary, f"team{side}_name"))
+                        == MatchNormalized._identity_part(final_name)
+                    ),
+                    None,
+                )
+                if primary_side is None:
+                    continue
+                for suffix in ("logo_url", "logo_fallback_url"):
+                    field = f"team{final_side}_{suffix}"
+                    if not getattr(final, field) and getattr(primary, f"team{primary_side}_{suffix}"):
+                        updates[field] = getattr(primary, f"team{primary_side}_{suffix}")
+            if not final.tournament_logo_url and primary.tournament_logo_url:
+                updates["tournament_logo_url"] = primary.tournament_logo_url
+            if updates:
+                final = final.model_copy(update=updates)
             merged[index] = final
             replacements += 1
     logger.info(

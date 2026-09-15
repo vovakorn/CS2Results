@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 10 сентября 2026 года.
+Обновлено: 11 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,8 +15,8 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 10 сентября 2026, версия `d4ecjei19q4qnu04ko84`;
-  таймеры вызывают тег `production`. Предыдущая версия `d4eoos50gn0nm7eoi9gv`
+- Последний production-деплой: 11 сентября 2026, версия `d4euekd0e0n4vnoj84ea`;
+  таймеры вызывают тег `production`. Предыдущая версия `d4evvfa8uh5rc5gacjk9`
   закреплена тегом `rollback`.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
@@ -136,10 +136,10 @@ production и сверки фактического состояния. Теку
   outbox-канал `instagram`; Telegram proxy и его доставка не изменялись.
 - Threads publisher с отдельными content-claims и durable outbox-каналом
   `threads` включён в основной production-функции 10 сентября 2026, версия
-  `d4ecjei19q4qnu04ko84` (`ENABLE_THREADS_PUBLISHING=1`). Candidate и production
-  smoke вернули `200` без реальных scheduler-постов. Отдельная private функция
-  `cs2-threads-publish-test` успешно опубликовала branded PNG через тот же
-  renderer, Xray, Lockbox и public media bucket; Telegram и Instagram не
+  `d4ecjei19q4qnu04ko84` (`ENABLE_THREADS_PUBLISHING=1`). После включения
+  подтверждены реальные штатные scheduler-посты. Отдельная private функция
+  `cs2-threads-publish-test` также успешно опубликовала branded PNG через тот
+  же renderer, Xray, Lockbox и public media bucket; Telegram и Instagram не
   затрагивались.
 - Новый release-процесс применён 6 сентября: deploy-скрипт копирует environment
   variables и Lockbox bindings из production, candidate собирается один раз,
