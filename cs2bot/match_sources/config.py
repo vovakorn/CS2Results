@@ -15,6 +15,7 @@ DEFAULT_TIER1_TOURNAMENT_PATTERNS = [
     "Esports World Cup",
     "FISSURE Playground",
     "CS Asia Championships",
+    "StarLadder StarSeries",
     "Major",
 ]
 DEFAULT_FEATURED_TIER2_TOURNAMENT_PATTERNS = [
@@ -22,7 +23,6 @@ DEFAULT_FEATURED_TIER2_TOURNAMENT_PATTERNS = [
     "Thunderpick World Championship",
     "BetBoom Dacha",
     "YaLLa Compass",
-    "StarLadder",
     "RES Regional",
     "Skyesports Masters",
 ]
@@ -40,6 +40,7 @@ DEFAULT_TRUSTED_LAN_TOURNAMENT_PATTERNS = [
     "Esports World Cup",
     "FISSURE Playground",
     "CS Asia Championships",
+    "StarLadder StarSeries",
 ]
 DEFAULT_TRUSTED_LAN_TOURNAMENT_PHASE_PATTERNS = {
     "BLAST Bounty": ["Finals", "Playoffs"],

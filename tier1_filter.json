@@ -9,6 +9,7 @@
     "Esports World Cup",
     "FISSURE Playground",
     "CS Asia Championships",
+    "StarLadder StarSeries",
     "Major"
   ],
   "featured_tier2_tournament_patterns": [
@@ -16,7 +17,6 @@
     "Thunderpick World Championship",
     "BetBoom Dacha",
     "YaLLa Compass",
-    "StarLadder",
     "RES Regional",
     "Skyesports Masters"
   ],
@@ -35,7 +35,8 @@
     "BLAST Rivals",
     "Esports World Cup",
     "FISSURE Playground",
-    "CS Asia Championships"
+    "CS Asia Championships",
+    "StarLadder StarSeries"
   ],
   "trusted_lan_tournament_phase_patterns": {
     "BLAST Bounty": [
