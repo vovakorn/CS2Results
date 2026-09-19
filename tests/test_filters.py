@@ -121,6 +121,16 @@ def test_trusted_lan_tournament_passes_without_location():
     assert is_tier1_lan(match) == (True, None)
 
 
+def test_starladder_starseries_lan_passes_without_source_location():
+    match = _match(
+        tournament_name="StarLadder StarSeries — Fall 2026 — Playoffs",
+        location=None,
+    )
+
+    assert is_tier1_candidate(match) is True
+    assert is_tier1_lan(match) == (True, None)
+
+
 def test_blast_bounty_finals_pass_without_location():
     match = _match(
         tournament_name="BLAST Bounty — 2026 Season 2 Finals — Playoffs",
