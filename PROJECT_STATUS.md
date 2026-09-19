@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 15 сентября 2026 года.
+Обновлено: 19 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,9 +15,9 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 15 сентября 2026, версия `d4eq0lng3paj3vvabnha`;
-  таймеры вызывают тег `production`. Предыдущая версия `d4e1un35qpaukeqnojag`
-  закреплена тегом `rollback`.
+- Последний production-деплой: 19 сентября 2026, версия `d4elr8duk6l9pj4amk2u`
+  из Git `0a724ec`; таймеры вызывают тег `production`. Предыдущая версия
+  `d4eq0lng3paj3vvabnha` закреплена тегом `rollback`.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
@@ -31,6 +31,19 @@ production и сверки фактического состояния. Теку
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
+
+## Релиз 19 сентября 2026 — результаты StarLadder
+
+- PR #118 добавил StarLadder StarSeries в Tier-1 и доверенный LAN-фильтр,
+  сохранив исключение qualifier-стадий. Причина пропусков: PandaScore отдавал
+  завершённые tier-A матчи без локации, из-за чего они получали
+  `lan_unconfirmed` до общей очереди доставок.
+- Полный локальный набор: 440 passed; отдельный loopback-тест прошёл вне
+  sandbox. GitHub Actions на Python 3.11 и 3.12 прошли.
+- Candidate `d4elr8duk6l9pj4amk2u` и production smoke прошли без публикаций;
+  rollback закреплён за `d4eq0lng3paj3vvabnha`.
+- Штатный production dry-run после promote отобрал шесть матчей StarLadder,
+  включая Vitality — FURIA и NRG — Aurora, для всех трёх площадок.
 
 ## Расписание jobs
 
