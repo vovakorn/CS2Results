@@ -182,7 +182,7 @@ def _meta_proxy() -> Iterator[dict[str, str] | None]:
         raise ThreadsPublishError("Xray client is unavailable") from exc
 
 
-def publish_cards(image_urls: Sequence[str], caption: str, context: Any) -> str:
+def publish_cards(image_urls: Sequence[str], caption: str, context: Any, reply_to_id: str | None = None) -> str:
     """Create and publish one image or a Threads carousel; return only post ID."""
     if not image_urls or len(image_urls) > MAX_CAROUSEL_ITEMS:
         raise ThreadsPublishError("Threads publication must contain between one and twenty cards")
@@ -198,6 +198,7 @@ def publish_cards(image_urls: Sequence[str], caption: str, context: Any) -> str:
                     "image_url": image_urls[0],
                     "text": _caption(caption),
                     "access_token": access_token,
+                    **({"reply_to_id": reply_to_id} if reply_to_id else {}),
                 },
                 proxy,
             )
@@ -223,6 +224,7 @@ def publish_cards(image_urls: Sequence[str], caption: str, context: Any) -> str:
                     "children": ",".join(child_ids),
                     "text": _caption(caption),
                     "access_token": access_token,
+                    **({"reply_to_id": reply_to_id} if reply_to_id else {}),
                 },
                 proxy,
             )
@@ -240,6 +242,7 @@ def publish_rendered_cards(
     cards: Sequence[bytes],
     caption: str,
     context: Any,
+    reply_to_id: str | None = None,
 ) -> str:
     """Upload cards before Meta work; the resulting URLs remain stable for the claim."""
-    return publish_cards(upload_public_cards(publication_key, cards), caption, context)
+    return publish_cards(upload_public_cards(publication_key, cards), caption, context, reply_to_id)
