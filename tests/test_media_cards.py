@@ -127,7 +127,7 @@ def test_final_card_adapts_to_three_four_and_five_maps(map_count):
     assert image.size == media_cards.RESULT_CARD_SIZE
 
 
-def test_final_card_draws_team_logos_in_separate_team_columns(monkeypatch):
+def test_final_card_places_compact_logos_above_team_names(monkeypatch):
     match = _result().model_copy(update={
         "is_final": True,
         "winner_prize_usd": 500_000,
@@ -143,19 +143,30 @@ def test_final_card_draws_team_logos_in_separate_team_columns(monkeypatch):
     })
     logos = []
 
-    def capture_logo(canvas, draw, center, diameter, team_name, logo_url, accent, fallback_logo_url=None):
-        logos.append((center, diameter, team_name, logo_url, fallback_logo_url))
+    def capture_logo(
+        canvas,
+        draw,
+        center,
+        diameter,
+        team_name,
+        logo_url,
+        accent,
+        fallback_logo_url=None,
+        *,
+        content_scale=0.64,
+    ):
+        logos.append((center, diameter, team_name, logo_url, fallback_logo_url, content_scale))
 
     monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
     media_cards.render_final_card(match)
 
     assert logos == [
-        ((238, 350), 104, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url),
-        ((842, 350), 104, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url),
+        ((220, 288), 72, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url, 0.76),
+        ((860, 288), 72, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url, 0.76),
     ]
 
 
-def test_final_card_uses_initials_when_team_logos_are_unavailable(monkeypatch):
+def test_final_card_renders_when_team_logos_are_unavailable(monkeypatch):
     match = _result().model_copy(update={
         "is_final": True,
         "winner_prize_usd": 500_000,
@@ -194,7 +205,7 @@ def test_final_card_uses_one_gold_foil_header_accent(monkeypatch):
     monkeypatch.setattr(media_cards, "_background", capture_background)
     media_cards.render_final_card(match)
 
-    assert captured["header_accent_colors"] == (media_cards.GOLD_FOIL, media_cards.GOLD_FOIL)
+    assert captured["header_accent_colors"] == (media_cards.FINAL_GOLD, media_cards.FINAL_GOLD)
     assert captured["header_foil"] is True
 
 
