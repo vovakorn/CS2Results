@@ -110,9 +110,73 @@ from .match_sources.storage import (
     write_vrs_snapshot,
     safe_storage_part,
     StorageUnavailableError,
+    reserve_threads_chain_append,
+    confirm_threads_chain_append,
+    release_threads_chain_append,
+    block_threads_chain_append,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ThreadsChainBusyError(ThreadsPublishError):
+    """A prior append is in progress or the chain needs manual recovery."""
+
+
+def _threads_tournament_key(match: Any) -> str:
+    refs = getattr(match, "source_refs", None)
+    tournament_id = getattr(refs, "tournament_id", None) if refs else None
+    if tournament_id:
+        return f"threads:{getattr(match, 'source', 'pandascore')}:{tournament_id}"
+    parent = getattr(match, "tournament_parent", None)
+    if parent:
+        return f"threads:{getattr(match, 'source', 'pandascore')}:{parent}"
+    return f"threads:{getattr(match, 'source', 'pandascore')}:{getattr(match, 'competition_key', None) or getattr(match, 'tournament_name', 'unknown')}"
+
+
+def _group_threads_content(job: str, matches: Sequence[Any], day_key: str) -> dict[str, list[Any]]:
+    groups: dict[str, list[Any]] = {}
+    if job == "schedule":
+        for upcoming in matches:
+            refs = getattr(upcoming, "source_refs", None)
+            stable_id = getattr(refs, "tournament_id", None) if refs else None
+            label = getattr(upcoming, "competition_key", None) or upcoming.tournament_name
+            key = f"threads:{upcoming.source}:{stable_id or label}"
+            groups.setdefault(key, []).append(upcoming)
+    elif job == "digest":
+        for match in matches:
+            groups.setdefault(_threads_tournament_key(match), []).append(match)
+    else:
+        groups[f"threads:daily:{job}:{day_key}"] = list(matches)
+    return groups
+
+
+def _publish_threads_chain(tournament_key: str, publication_key: str,
+                           cards: Sequence[bytes], caption: str, context: Any) -> str:
+    append = asyncio.run(reserve_threads_chain_append(tournament_key))
+    if append is None:
+        raise ThreadsChainBusyError("Threads tournament chain is blocked or another append is active")
+    try:
+        post_id = publish_threads_rendered_cards(
+            publication_key, cards, caption, context, append.reply_to_id
+        )
+    except ThreadsDeliveryUncertainError:
+        asyncio.run(block_threads_chain_append(append))
+        raise
+    except Exception:
+        asyncio.run(release_threads_chain_append(append))
+        raise
+    try:
+        asyncio.run(confirm_threads_chain_append(append, post_id))
+    except Exception as exc:
+        try:
+            asyncio.run(block_threads_chain_append(append))
+        except Exception:
+            pass
+        raise ThreadsDeliveryUncertainError(
+            "Threads post was published but its chain tail could not be confirmed"
+        ) from exc
+    return post_id
 logger.setLevel(logging.INFO)
 # Cloud Functions may install a handler on stderr that is not forwarded to
 # Cloud Logging for application output. Ensure the root logger also emits the
@@ -1760,12 +1824,21 @@ def _deliver_social_tournament_standings(
             return "duplicate"
         cards = render_tournament_standings_cards(match.tournament_name, match.tournament_placements)
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
-        publisher(
-            f"{platform}_standings_{safe_storage_part(match.tournament_parent or match.match_uid)}",
-            cards,
-            _instagram_caption(format_tournament_standings(match.tournament_name, match.tournament_placements)),
-            context,
-        )
+        if platform == "threads":
+            _publish_threads_chain(
+                _threads_tournament_key(match),
+                f"{platform}_standings_{safe_storage_part(match.tournament_parent or match.match_uid)}",
+                cards,
+                _instagram_caption(format_tournament_standings(match.tournament_name, match.tournament_placements)),
+                context,
+            )
+        else:
+            publisher(
+                f"{platform}_standings_{safe_storage_part(match.tournament_parent or match.match_uid)}",
+                cards,
+                _instagram_caption(format_tournament_standings(match.tournament_name, match.tournament_placements)),
+                context,
+            )
         confirmed = True
         asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_content_processed(content_uid, "tournament_standings"))
@@ -1847,12 +1920,21 @@ def _deliver_social_tournament_vrs(
             return "duplicate"
         cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source)
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
-        publisher(
-            f"{platform}_vrs_{safe_storage_part(_vrs_tournament_id(pending.match) or pending.match.match_uid)}",
-            cards,
-            _instagram_caption(format_tournament_vrs(pending.match.tournament_name, impacts)),
-            context,
-        )
+        if platform == "threads":
+            _publish_threads_chain(
+                _threads_tournament_key(pending.match),
+                f"{platform}_vrs_{safe_storage_part(_vrs_tournament_id(pending.match) or pending.match.match_uid)}",
+                cards,
+                _instagram_caption(format_tournament_vrs(pending.match.tournament_name, impacts)),
+                context,
+            )
+        else:
+            publisher(
+                f"{platform}_vrs_{safe_storage_part(_vrs_tournament_id(pending.match) or pending.match.match_uid)}",
+                cards,
+                _instagram_caption(format_tournament_vrs(pending.match.tournament_name, impacts)),
+                context,
+            )
         confirmed = True
         asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_content_processed(content_uid, "tournament_vrs_standings"))
@@ -1865,6 +1947,11 @@ def _deliver_social_tournament_vrs(
             asyncio.run(delete_result_delivery(pending))
         except Exception:
             pass
+        if platform == "threads":
+            _notify_admin(
+                "threads_tournament_chain_uncertain",
+                f"Threads не подтвердил публикацию VRS для турнира {pending.match.tournament_name}; цепочка заблокирована до ручной проверки.",
+            )
         return "uncertain"
     except Exception as exc:
         if claim is not None and not confirmed:
@@ -1903,6 +1990,7 @@ def _deliver_threads_content(
     caption: str,
     context: Any,
     test_run_id: str | None,
+    tournament_key: str | None = None,
 ) -> tuple[int, int, int]:
     """Deliver a daily Threads issue independently from Telegram and Instagram."""
     if not threads_publishing_enabled():
@@ -1911,6 +1999,8 @@ def _deliver_threads_content(
         log_event(logger, logging.WARNING, "threads_card_unavailable", job=job)
         return 0, 0, 1
     content_uid = f"threads_{job}_{day_key}"
+    if tournament_key:
+        content_uid = f"{content_uid}_{safe_storage_part(tournament_key)}"
     if test_run_id:
         content_uid = f"{content_uid}_test_{test_run_id}"
     claim = None
@@ -1922,7 +2012,13 @@ def _deliver_threads_content(
         if claim is None:
             return 0, 1, 0
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
-        publish_threads_rendered_cards(content_uid, cards, _instagram_caption(caption), context)
+        _publish_threads_chain(
+            tournament_key or f"threads:daily:{job}:{day_key}",
+            content_uid,
+            cards,
+            _instagram_caption(caption),
+            context,
+        )
         confirmed = True
         asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_content_processed(content_uid, job))
@@ -1979,7 +2075,8 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
             else render_result_card(match)
         )
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
-        publish_threads_rendered_cards(
+        _publish_threads_chain(
+            _threads_tournament_key(match),
             f"threads_result_{safe_storage_part(match.match_uid)}",
             [card],
             _instagram_caption(format_match(match)),
@@ -2416,14 +2513,23 @@ def _handle_content_job(
     threads_duplicates = 0
     threads_failures = 0
     if threads_enabled and not dry_run:
-        threads_sent, threads_duplicates, threads_failures = _deliver_threads_content(
-            job=job,
-            day_key=day_key,
-            cards=social_media_cards,
-            caption=text,
-            context=None,
-            test_run_id=test_run_id,
-        )
+        groups = _group_threads_content(job, selected, day_key)
+        for tournament_key, members in groups.items():
+            if job == "schedule":
+                cards = render_schedule_cards(members, local_now, DISPLAY_TIMEZONE)
+                caption = f"Расписание турнира: {members[0].tournament_name}"
+            elif job == "digest":
+                cards = [render_results_card(members, local_now)]
+                caption = f"Результаты турнира: {members[0].tournament_name}"
+            else:
+                cards, caption = social_media_cards, text
+            s, d, f = _deliver_threads_content(
+                job=job, day_key=day_key, cards=cards, caption=caption,
+                context=None, test_run_id=test_run_id, tournament_key=tournament_key,
+            )
+            threads_sent += s
+            threads_duplicates += d
+            threads_failures += f
 
     if failures:
         _notify_admin("delivery_failed", f"Не доставлен выпуск «{job}»: ошибок {failures}.")
@@ -2509,7 +2615,11 @@ def _handle_radar_job(
 
     media_cards: list[bytes] = []
     media_card_error: str | None = None
-    if TELEGRAM_MEDIA_CARDS:
+    try:
+        threads_enabled = threads_publishing_enabled()
+    except ThreadsPublishError:
+        threads_enabled = False
+    if TELEGRAM_MEDIA_CARDS or threads_enabled:
         try:
             media_cards = render_tournament_radar_cards(
                 radar, tournament_name, DISPLAY_TIMEZONE, card_variant
@@ -2550,7 +2660,7 @@ def _handle_radar_job(
                 duplicates += 1
                 continue
             claim = asyncio.run(mark_delivery_claim_attempting(claim))
-            if media_cards:
+            if media_cards and TELEGRAM_MEDIA_CARDS:
                 caption = f"🏆 <b>Турнирный радар</b>\n{html.escape(tournament_name)}\n\nИсточник: PandaScore"
                 if test_run_id:
                     caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
@@ -2623,12 +2733,24 @@ def _handle_radar_job(
                 error=_safe_error_message(exc),
             )
 
+    threads_sent = threads_duplicates = threads_failures = 0
+    if threads_enabled and media_cards and not dry_run:
+        threads_sent, threads_duplicates, threads_failures = _deliver_threads_content(
+            job="radar", day_key=day_key, cards=media_cards,
+            caption=f"🏆 Турнирный радар — {tournament_name}", context=None,
+            test_run_id=test_run_id,
+            tournament_key=f"threads:pandascore:{tournament_id}",
+        )
+
     body = {
         "job": "radar",
         "tournament_id": tournament_id,
         "messages_sent": sent,
         "duplicates_skipped": duplicates,
         "delivery_failures": failures,
+        "threads_messages_sent": threads_sent,
+        "threads_duplicates_skipped": threads_duplicates,
+        "threads_delivery_failures": threads_failures,
         "dry_run": dry_run,
     }
     if dry_run:

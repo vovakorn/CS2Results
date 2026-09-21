@@ -37,6 +37,11 @@ from cs2bot.match_sources.storage import (
     read_cached_logo,
     StorageUnavailableError,
     write_cached_logo,
+    reserve_threads_chain_append,
+    confirm_threads_chain_append,
+    release_threads_chain_append,
+    block_threads_chain_append,
+    restore_threads_chain_tail,
 )
 
 
@@ -82,7 +87,7 @@ class FakeS3:
                 {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
                 "GetObject",
             )
-        return {"Body": io.BytesIO(self.objects[Key]["Body"])}
+        return {"Body": io.BytesIO(self.objects[Key]["Body"]), "ETag": self.objects[Key]["ETag"]}
 
     def list_objects_v2(self, Bucket, Prefix, MaxKeys, ContinuationToken=None):
         keys = sorted(key for key in self.objects if key.startswith(Prefix))[:MaxKeys]
@@ -94,6 +99,49 @@ class FakeS3:
     def delete_object(self, Bucket, Key):
         self.objects.pop(Key, None)
         return {}
+
+
+def test_threads_chain_reserves_root_then_replies_and_advances_tail():
+    s3 = FakeS3()
+    root = asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
+    assert root.reply_to_id is None
+    asyncio.run(confirm_threads_chain_append(root, "post-1", client=s3, bucket="bucket"))
+    reply = asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
+    assert reply.reply_to_id == "post-1"
+    asyncio.run(confirm_threads_chain_append(reply, "post-2", client=s3, bucket="bucket"))
+    following = asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
+    assert following.reply_to_id == "post-2"
+
+
+def test_threads_chain_blocks_competing_append_and_uncertain_chain():
+    s3 = FakeS3()
+    async def race():
+        return await asyncio.gather(
+            reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"),
+            reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"),
+        )
+    contenders = asyncio.run(race())
+    assert sum(item is not None for item in contenders) == 1
+    first = next(item for item in contenders if item is not None)
+    asyncio.run(block_threads_chain_append(first, client=s3, bucket="bucket"))
+    assert asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket")) is None
+    assert asyncio.run(reserve_threads_chain_append("threads:pandascore:456", client=s3, bucket="bucket")) is not None
+
+
+def test_threads_chain_releases_definite_failure_reservation():
+    s3 = FakeS3()
+    first = asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
+    asyncio.run(release_threads_chain_append(first, client=s3, bucket="bucket"))
+    retry = asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
+    assert retry.reply_to_id is None
+
+
+def test_threads_chain_manual_restore_clears_stale_reservation():
+    s3 = FakeS3()
+    asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
+    asyncio.run(restore_threads_chain_tail("threads:pandascore:123", "verified-post", client=s3, bucket="bucket"))
+    resumed = asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
+    assert resumed.reply_to_id == "verified-post"
 
 
 class PaginatedFakeS3(FakeS3):

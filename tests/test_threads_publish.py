@@ -50,6 +50,38 @@ def test_publish_cards_creates_carousel_then_publishes(monkeypatch):
     assert calls[3][0].endswith("/threads_publish")
 
 
+def test_publish_image_reply_sets_reply_to_id(monkeypatch):
+    monkeypatch.setattr(threads_publish, "_threads_credentials", lambda context: ("token", "user"))
+    class Proxy:
+        def __enter__(self): return None
+        def __exit__(self, *args): return False
+    calls = []
+    def fake_post(url, data, proxy):
+        calls.append((url, data))
+        return {"id": "post-id" if url.endswith("/threads_publish") else "container-id"}
+    monkeypatch.setattr(threads_publish, "_meta_proxy", lambda: Proxy())
+    monkeypatch.setattr(threads_publish, "_meta_post", fake_post)
+    assert threads_publish.publish_cards(["https://a/1.png"], "caption", None, "parent-id") == "post-id"
+    assert calls[0][1]["reply_to_id"] == "parent-id"
+
+
+def test_publish_carousel_reply_sets_parent_reply_to_id(monkeypatch):
+    monkeypatch.setattr(threads_publish, "_threads_credentials", lambda context: ("token", "user"))
+    class Proxy:
+        def __enter__(self): return None
+        def __exit__(self, *args): return False
+    calls = []
+    def fake_post(url, data, proxy):
+        calls.append((url, data))
+        return {"id": f"id-{len(calls)}"}
+    monkeypatch.setattr(threads_publish, "_meta_proxy", lambda: Proxy())
+    monkeypatch.setattr(threads_publish, "_meta_post", fake_post)
+    threads_publish.publish_cards(["https://a/1.png", "https://a/2.png"], "caption", None, "parent-id")
+    assert calls[2][1]["media_type"] == "CAROUSEL"
+    assert calls[2][1]["reply_to_id"] == "parent-id"
+    assert "reply_to_id" not in calls[0][1]
+
+
 def test_publish_cards_releases_safe_error_before_publish(monkeypatch):
     monkeypatch.setattr(threads_publish, "_threads_credentials", lambda context: ("token", "user"))
 

@@ -51,6 +51,14 @@ class PendingDelivery:
     vrs_impacts: tuple[TournamentVRSImpact, ...] = ()
 
 
+@dataclass(frozen=True)
+class ThreadsChainAppend:
+    tournament_key: str
+    append_id: str
+    reply_to_id: str | None
+    etag: str
+
+
 RESULT_OUTBOX_PREFIX = "outbox/results/"
 VRS_SNAPSHOT_PREFIX = "vrs-snapshots/"
 TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
@@ -1234,3 +1242,107 @@ async def mark_content_processed(
         await asyncio.to_thread(_put)
     except ClientError as exc:
         raise StorageUnavailableError(f"content put_object failed for {key}") from exc
+
+
+def _threads_chain_key(tournament_key: str) -> str:
+    digest = hashlib.sha256(tournament_key.encode("utf-8")).hexdigest()
+    return f"threads/chains/{digest}.json"
+
+
+async def reserve_threads_chain_append(tournament_key: str, client: Any | None = None, bucket: str | None = None) -> ThreadsChainAppend | None:
+    """Atomically lock one tournament chain and return its confirmed parent ID."""
+    s3, bucket_name = client or _client(), bucket or _bucket()
+    key, append_id = _threads_chain_key(tournament_key), uuid.uuid4().hex
+    for _ in range(CLAIM_CREATE_MAX_ATTEMPTS):
+        try:
+            existing = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+            state = json.loads(existing["Body"].read())
+            etag = existing.get("ETag")
+        except ClientError as exc:
+            if not _is_not_found(exc):
+                raise StorageUnavailableError("Threads chain state read failed") from exc
+            state, etag = {"tail_id": None}, None
+        except (ValueError, KeyError, TypeError) as exc:
+            raise StorageUnavailableError("Threads chain state is invalid") from exc
+        if state.get("blocked") or state.get("reservation"):
+            return None
+        reply_to_id = state.get("tail_id")
+        state["reservation"] = append_id
+        put_kwargs = {
+            "Bucket": bucket_name, "Key": key,
+            "Body": json.dumps(state, ensure_ascii=False, sort_keys=True).encode(),
+            "ContentType": "application/json",
+        }
+        put_kwargs["IfNoneMatch" if etag is None else "IfMatch"] = "*" if etag is None else etag
+        try:
+            response = await asyncio.to_thread(s3.put_object, **put_kwargs)
+            return ThreadsChainAppend(tournament_key, append_id, reply_to_id, response.get("ETag") or "")
+        except ClientError as exc:
+            if _is_precondition_failed(exc):
+                continue
+            raise StorageUnavailableError("Threads chain reservation failed") from exc
+    raise StorageUnavailableError("Threads chain reservation did not stabilize")
+
+
+async def _update_threads_chain(append: ThreadsChainAppend, *, tail_id: str | None = None,
+                                blocked: bool = False, client: Any | None = None,
+                                bucket: str | None = None) -> None:
+    s3, bucket_name = client or _client(), bucket or _bucket()
+    key = _threads_chain_key(append.tournament_key)
+    try:
+        response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+        state = json.loads(response["Body"].read())
+        etag = response.get("ETag")
+    except Exception as exc:
+        raise StorageUnavailableError("Threads chain state read failed") from exc
+    if state.get("reservation") != append.append_id:
+        raise StorageUnavailableError("Threads chain reservation was lost")
+    state.pop("reservation", None)
+    if tail_id is not None:
+        state["tail_id"] = tail_id
+    if blocked:
+        state["blocked"] = True
+    try:
+        await asyncio.to_thread(
+            s3.put_object, Bucket=bucket_name, Key=key,
+            Body=json.dumps(state, ensure_ascii=False, sort_keys=True).encode(),
+            ContentType="application/json", IfMatch=etag,
+        )
+    except ClientError as exc:
+        raise StorageUnavailableError("Threads chain state update failed") from exc
+
+
+async def confirm_threads_chain_append(append: ThreadsChainAppend, post_id: str, client: Any | None = None, bucket: str | None = None) -> None:
+    await _update_threads_chain(append, tail_id=post_id, client=client, bucket=bucket)
+
+
+async def release_threads_chain_append(append: ThreadsChainAppend, client: Any | None = None, bucket: str | None = None) -> None:
+    await _update_threads_chain(append, client=client, bucket=bucket)
+
+
+async def block_threads_chain_append(append: ThreadsChainAppend, client: Any | None = None, bucket: str | None = None) -> None:
+    await _update_threads_chain(append, blocked=True, client=client, bucket=bucket)
+
+
+async def restore_threads_chain_tail(tournament_key: str, tail_id: str, client: Any | None = None, bucket: str | None = None) -> None:
+    """Resume a blocked chain after the operator verifies its actual tail ID."""
+    if not tail_id:
+        raise ValueError("A confirmed Threads post ID is required")
+    s3, bucket_name = client or _client(), bucket or _bucket()
+    key = _threads_chain_key(tournament_key)
+    try:
+        response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+        state = json.loads(response["Body"].read())
+        etag = response["ETag"]
+    except Exception as exc:
+        raise StorageUnavailableError("Threads chain state read failed") from exc
+    state.pop("reservation", None)
+    state.update(tail_id=tail_id, blocked=False)
+    try:
+        await asyncio.to_thread(
+            s3.put_object, Bucket=bucket_name, Key=key,
+            Body=json.dumps(state, ensure_ascii=False, sort_keys=True).encode(),
+            ContentType="application/json", IfMatch=etag,
+        )
+    except ClientError as exc:
+        raise StorageUnavailableError("Threads chain restore failed") from exc

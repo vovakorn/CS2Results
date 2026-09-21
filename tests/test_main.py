@@ -16,7 +16,7 @@ from cs2bot.match_sources.models import (
     TournamentRadar,
     UpcomingMatchNormalized,
 )
-from cs2bot.match_sources.storage import DeliveryClaim, PendingDelivery
+from cs2bot.match_sources.storage import DeliveryClaim, PendingDelivery, ThreadsChainAppend
 
 
 async def _async(value):
@@ -60,6 +60,25 @@ def configured_runtime(monkeypatch):
     monkeypatch.setattr(main, "is_telegram_media_degraded", not_processed)
     monkeypatch.setattr(main, "mark_telegram_media_degraded", no_op)
     monkeypatch.setattr(main, "clear_telegram_media_degraded", no_op)
+
+    thread_tails = {}
+    thread_reservations = set()
+    async def reserve_thread(key):
+        if key in thread_reservations:
+            return None
+        thread_reservations.add(key)
+        return ThreadsChainAppend(key, f"append-{len(thread_reservations)}", thread_tails.get(key), '"etag"')
+    async def confirm_thread(append, post_id):
+        thread_tails[append.tournament_key] = post_id
+        thread_reservations.discard(append.tournament_key)
+    async def release_thread(append):
+        thread_reservations.discard(append.tournament_key)
+    async def block_thread(append):
+        thread_reservations.add(append.tournament_key)
+    monkeypatch.setattr(main, "reserve_threads_chain_append", reserve_thread)
+    monkeypatch.setattr(main, "confirm_threads_chain_append", confirm_thread)
+    monkeypatch.setattr(main, "release_threads_chain_append", release_thread)
+    monkeypatch.setattr(main, "block_threads_chain_append", block_thread)
 
 
 def _match(match_id="1", team1="NAVI", team2="FaZe"):
@@ -222,10 +241,44 @@ def test_tournament_standings_are_delivered_to_each_social_platform(
     monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: [b"card"])
     monkeypatch.setattr(main, publisher_name, lambda *args: published.append(args))
     monkeypatch.setattr(main, "mark_content_processed", lambda uid, kind: _async(marked.append((uid, kind))))
+    if platform == "threads":
+        monkeypatch.setattr(
+            main, "reserve_threads_chain_append",
+            lambda key: _async(ThreadsChainAppend(key, "append", "previous-post", '"etag"')),
+        )
 
     assert delivery(pending, None) == "sent"
     assert published and published[0][0] == f"{platform}_standings_BLAST_Open_Porto_2026"
+    if platform == "threads":
+        assert published[0][4] == "previous-post"
     assert marked == [(f"tournament-standings-v1:{platform}:BLAST/Open/Porto/2026", "tournament_standings")]
+
+
+def test_threads_vrs_publication_replies_to_the_tournament_tail(monkeypatch):
+    impact = main.TournamentVRSImpact(
+        placement="1", team_name="NAVI", team_id="team-1",
+        before_points=1800, after_points=1900, before_rank=2, after_rank=1,
+        points_delta=100, rank_delta=1, source="Valve VRS",
+        before_version="before", after_version="after",
+    )
+    match = _match().model_copy(update={"vrs_baseline_id": "tournament-1"})
+    pending = PendingDelivery(
+        key="outbox/results/threads_vrs.json", channel_id="threads",
+        channel_name="threads", match=match, created_at="2026-09-01T00:00:00Z",
+        content_type="tournament_vrs_standings", vrs_impacts=(impact,),
+    )
+    published = []
+    monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(DeliveryClaim("vrs", "claim", "id")))
+    monkeypatch.setattr(main, "render_tournament_vrs_cards", lambda *args: [b"vrs-card"])
+    monkeypatch.setattr(main, "publish_threads_rendered_cards", lambda *args: (published.append(args), "vrs-post")[1])
+    monkeypatch.setattr(
+        main, "reserve_threads_chain_append",
+        lambda key: _async(ThreadsChainAppend(key, "append", "standings-post", '"etag"')),
+    )
+    monkeypatch.setattr(main, "mark_content_processed", lambda *args: _async(None))
+
+    assert main._deliver_threads_tournament_vrs(pending, None) == "sent"
+    assert published[0][4] == "standings-post"
 
 
 def test_instagram_content_delivery_has_separate_content_uid(monkeypatch):
@@ -2696,3 +2749,83 @@ def test_invalid_yandex_timer_payload_is_rejected():
     response = main.handler(event, None)
 
     assert response["statusCode"] == 400
+
+
+def test_threads_chain_publishes_root_then_reply_and_keeps_tournaments_independent(monkeypatch):
+    tails = {}
+    active = set()
+    calls = []
+
+    async def reserve(key):
+        if key in active:
+            return None
+        active.add(key)
+        return ThreadsChainAppend(key, f"a-{len(calls)}", tails.get(key), '"etag"')
+
+    async def confirm(append, post_id):
+        tails[append.tournament_key] = post_id
+        active.remove(append.tournament_key)
+
+    async def clear(append):
+        active.discard(append.tournament_key)
+
+    monkeypatch.setattr(main, "reserve_threads_chain_append", reserve)
+    monkeypatch.setattr(main, "confirm_threads_chain_append", confirm)
+    monkeypatch.setattr(main, "release_threads_chain_append", clear)
+    monkeypatch.setattr(main, "block_threads_chain_append", clear)
+
+    def publisher(key, cards, caption, context, reply_to_id=None):
+        calls.append((key, reply_to_id))
+        return f"post-{len(calls)}"
+
+    monkeypatch.setattr(main, "publish_threads_rendered_cards", publisher)
+    main._publish_threads_chain("threads:pandascore:one", "card-1", [b"1"], "one", None)
+    main._publish_threads_chain("threads:pandascore:two", "card-2", [b"2"], "two", None)
+    main._publish_threads_chain("threads:pandascore:one", "card-3", [b"3"], "one", None)
+    assert calls == [("card-1", None), ("card-2", None), ("card-3", "post-1")]
+
+
+def test_threads_chain_uncertain_append_blocks_only_its_tournament(monkeypatch):
+    active = set()
+
+    async def reserve(key):
+        if key in active:
+            return None
+        active.add(key)
+        return ThreadsChainAppend(key, key, None, '"etag"')
+
+    async def block(append):
+        active.add(append.tournament_key)
+
+    async def clear(append):
+        active.discard(append.tournament_key)
+
+    monkeypatch.setattr(main, "reserve_threads_chain_append", reserve)
+    monkeypatch.setattr(main, "block_threads_chain_append", block)
+    monkeypatch.setattr(main, "release_threads_chain_append", clear)
+    monkeypatch.setattr(main, "publish_threads_rendered_cards", lambda *args: (_ for _ in ()).throw(main.ThreadsDeliveryUncertainError("unknown")))
+
+    with pytest.raises(main.ThreadsDeliveryUncertainError):
+        main._publish_threads_chain("threads:pandascore:one", "one", [b"1"], "one", None)
+    assert "threads:pandascore:one" in active
+    assert "threads:pandascore:two" not in active
+
+
+def test_threads_schedule_groups_cards_by_stable_tournament_id():
+    first = _upcoming().model_copy(update={
+        "match_id": "match-1", "source_refs": SourceReferences(tournament_id="tournament-1"),
+    })
+    second = _upcoming().model_copy(update={
+        "match_id": "match-2", "source_refs": SourceReferences(tournament_id="tournament-1"),
+    })
+    other = _upcoming().model_copy(update={
+        "match_id": "match-3", "tournament_name": "ESL Pro League",
+        "competition_key": "ESL Pro League",
+        "source_refs": SourceReferences(tournament_id="tournament-2"),
+    })
+
+    groups = main._group_threads_content("schedule", [first, second, other], "2026-09-21")
+
+    assert list(groups) == ["threads:pandascore:tournament-1", "threads:pandascore:tournament-2"]
+    assert [item.match_id for item in groups["threads:pandascore:tournament-1"]] == ["match-1", "match-2"]
+    assert [item.match_id for item in groups["threads:pandascore:tournament-2"]] == ["match-3"]
