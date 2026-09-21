@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 19 сентября 2026 года.
+Обновлено: 21 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,19 +15,19 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 19 сентября 2026, версия `d4elr8duk6l9pj4amk2u`
-  из Git `0a724ec`; таймеры вызывают тег `production`. Предыдущая версия
-  `d4eq0lng3paj3vvabnha` закреплена тегом `rollback`.
+- Последний production-деплой: 21 сентября 2026, версия `d4e6set117m1e71tpos3`
+  из Git `7f387dd`; таймеры вызывают тег `production`. Предыдущая версия
+  `d4elr8duk6l9pj4amk2u` закреплена тегом `rollback`.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
 - В production включены флаги `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
   `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
-- Полная release-проверка: 440 тестов, GitHub Actions на Python 3.11 и 3.12
+- Полная release-проверка: 441 тест, GitHub Actions на Python 3.11 и 3.12
   и сборка архива основной функции. Candidate и production smoke прошли:
   `200`, `dry_run=true`, без startup-ошибок и публикаций. SHA-256 архива:
-  `77b0ef0ec235c1c3d6e554d4d5d6b437db10160cfd5f9d6d0fe1d1402e0328a0`.
+  `5eccec9a211b244e18f066179484fe497cd0b93a642aea4a30a4de0fd9933f6c`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
