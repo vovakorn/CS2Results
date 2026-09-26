@@ -506,6 +506,7 @@ def _draw_logo(
     fallback_logo_url: str | None = None,
     *,
     content_scale: float = 0.64,
+    download_timeout: float | None = None,
 ) -> None:
     x, y = center
     logo = None
@@ -513,7 +514,10 @@ def _draw_logo(
     logo_urls = list(dict.fromkeys(url for url in (logo_url, fallback_logo_url) if url))
     for candidate_url in logo_urls:
         try:
-            logo = fetch_team_logo(candidate_url)
+            logo = (
+                fetch_team_logo(candidate_url, timeout=download_timeout)
+                if download_timeout is not None else fetch_team_logo(candidate_url)
+            )
         except MediaCardError as exc:
             failures.append(str(exc))
             continue

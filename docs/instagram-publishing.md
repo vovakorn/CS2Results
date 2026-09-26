@@ -1,5 +1,8 @@
 # Instagram publishing
 
+For the default-off schedule Reel workflow and its release gate, see
+[`schedule-reels.md`](schedule-reels.md).
+
 Instagram delivery is an opt-in companion to Telegram.  It has independent
 Object Storage claims and processed markers, so a confirmed Telegram post does
 not mark an Instagram post as delivered (or vice versa).
