@@ -76,6 +76,11 @@ VRS_DOWN = (245, 91, 91)
 STANDINGS_GOLD = (214, 181, 104)
 STANDINGS_SILVER = (190, 202, 214)
 STANDINGS_BRONZE = (178, 122, 82)
+STANDINGS_METAL_PALETTES = {
+    STANDINGS_GOLD: ((156, 111, 44), (222, 188, 107), (255, 237, 174)),
+    STANDINGS_SILVER: ((129, 148, 165), (199, 211, 222), (250, 253, 255)),
+    STANDINGS_BRONZE: ((135, 83, 51), (193, 139, 96), (244, 194, 143)),
+}
 STANDINGS_MEDAL_TEXT = (20, 31, 43)
 STANDINGS_HEADER = (28, 55, 83)
 STANDINGS_HEADER_LINE = (94, 137, 174)
@@ -1701,13 +1706,37 @@ def _standings_row_color(placement: str) -> tuple[int, int, int]:
     return WHITE
 
 
+def _metallic_shade(
+    shadow: tuple[int, int, int],
+    base: tuple[int, int, int],
+    highlight: tuple[int, int, int],
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    *,
+    text: bool = False,
+) -> tuple[int, int, int]:
+    """A soft diagonal reflection, with enough base color to keep text legible."""
+    across = x / max(1, width - 1)
+    down = y / max(1, height - 1)
+    band_center = (0.16 + 0.63 * across) if text else (0.12 + 0.72 * across)
+    band_width = 0.22 if text else 0.19
+    reflection = math.exp(-((down - band_center) / band_width) ** 2)
+    reflection *= 0.50 if text else 0.68
+    shade = (0.16 + 0.11 * down) if text else (0.17 + 0.26 * down + 0.08 * across)
+    resting = tuple(round(a + (b - a) * shade) for a, b in zip(base, shadow))
+    return tuple(round(a + (b - a) * reflection) for a, b in zip(resting, highlight))
+
+
 def _draw_standings_medal(
+    canvas: Image.Image,
     draw: ImageDraw.ImageDraw,
     center_x: int,
     row_top: int,
     placement: str,
 ) -> None:
-    """Give podium placements a quiet filled medal badge in the place column."""
+    """Give podium badges a restrained metal highlight without changing their shape."""
     color = _standings_row_color(placement)
     if color == WHITE:
         _centered_text(
@@ -1724,11 +1753,26 @@ def _draw_standings_medal(
     badge_width = 46 if is_single_place else 84
     badge_height = 46 if is_single_place else 44
     badge_top = row_top + (68 - badge_height) // 2
-    badge_box = (center_x - badge_width // 2, badge_top, center_x + badge_width // 2, badge_top + badge_height)
+    badge_left = center_x - badge_width // 2
+    badge_box = (badge_left, badge_top, badge_left + badge_width - 1, badge_top + badge_height - 1)
+    shadow, base, highlight = STANDINGS_METAL_PALETTES[color]
+    metal = Image.new("RGBA", (badge_width, badge_height))
+    pixels = metal.load()
+    for y in range(badge_height):
+        for x in range(badge_width):
+            pixels[x, y] = (*_metallic_shade(shadow, base, highlight, x, y, badge_width, badge_height), 255)
+    mask = Image.new("L", metal.size, 0)
+    mask_draw = ImageDraw.Draw(mask)
     if is_single_place:
-        draw.ellipse(badge_box, fill=color)
+        mask_draw.ellipse((0, 0, badge_width - 1, badge_height - 1), fill=255)
     else:
-        draw.rounded_rectangle(badge_box, radius=badge_height // 2, fill=color)
+        mask_draw.rounded_rectangle((0, 0, badge_width - 1, badge_height - 1), radius=badge_height // 2, fill=255)
+    metal.putalpha(mask)
+    canvas.alpha_composite(metal, (badge_left, badge_top))
+    if is_single_place:
+        draw.arc(badge_box, 195, 325, fill=(*highlight, 170), width=1)
+    else:
+        draw.rounded_rectangle(badge_box, radius=badge_height // 2, outline=(*shadow, 145), width=1)
     _centered_text(
         draw,
         center_x,
@@ -1737,6 +1781,39 @@ def _draw_standings_medal(
         _fit_font(draw, placement, badge_width - 12, 28, 14, display=True),
         STANDINGS_MEDAL_TEXT,
     )
+
+
+def _draw_standings_metal_text(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    anchor_x: int,
+    y: int,
+    value: str,
+    font: ImageFont.FreeTypeFont,
+    color: tuple[int, int, int],
+    *,
+    centered: bool = False,
+) -> None:
+    """Apply a soft angled sheen to podium names and prizes."""
+    shadow, base, highlight = STANDINGS_METAL_PALETTES[color]
+    bounds = draw.textbbox((0, 0), value, font=font)
+    x = anchor_x - (bounds[2] - bounds[0]) / 2 if centered else anchor_x - bounds[0]
+    left, top, right, bottom = draw.textbbox((x, y), value, font=font)
+    left, top, right, bottom = int(left), int(top), int(right) + 1, int(bottom) + 1
+    if right <= left or bottom <= top:
+        return
+    mask = Image.new("L", (right - left, bottom - top), 0)
+    ImageDraw.Draw(mask).text((x - left, y - top), value, font=font, fill=255)
+    metal = Image.new("RGBA", mask.size)
+    pixels = metal.load()
+    for line_y in range(mask.height):
+        for line_x in range(mask.width):
+            pixels[line_x, line_y] = (
+                *_metallic_shade(shadow, base, highlight, line_x, line_y, mask.width, mask.height, text=True),
+                255,
+            )
+    metal.putalpha(mask)
+    canvas.alpha_composite(metal, (left, top))
 
 
 def _render_tournament_standings_page(
@@ -1794,26 +1871,21 @@ def _render_tournament_standings_page(
         if index:
             draw.line((x0 + 18, row_top, x1 - 18, row_top), fill=(*AMBER, 125), width=1)
         highlight = _standings_row_color(item.placement)
-        _draw_standings_medal(draw, (x0 + place_divider) // 2, row_top, item.placement)
+        _draw_standings_medal(canvas, draw, (x0 + place_divider) // 2, row_top, item.placement)
         team_name = item.team_name.upper()
-        _aligned_text(
-            draw,
-            place_divider + 30,
-            row_top + 15,
-            team_name,
-            _fit_font(draw, team_name, prize_divider - place_divider - 58, 36, 16),
-            highlight,
-            "left",
-        )
+        team_font = _fit_font(draw, team_name, prize_divider - place_divider - 58, 36, 16)
+        if highlight in STANDINGS_METAL_PALETTES:
+            _draw_standings_metal_text(canvas, draw, place_divider + 30, row_top + 15,
+                                        team_name, team_font, highlight)
+        else:
+            _aligned_text(draw, place_divider + 30, row_top + 15, team_name, team_font, highlight, "left")
         amount = _format_usd(item.prize_usd or 0)
-        _centered_text(
-            draw,
-            (prize_divider + x1) // 2,
-            row_top + 18,
-            amount,
-            _fit_font(draw, amount, 225, 30, 15, display=True),
-            highlight,
-        )
+        amount_font = _fit_font(draw, amount, 225, 30, 15, display=True)
+        if highlight in STANDINGS_METAL_PALETTES:
+            _draw_standings_metal_text(canvas, draw, (prize_divider + x1) // 2, row_top + 18,
+                                        amount, amount_font, highlight, centered=True)
+        else:
+            _centered_text(draw, (prize_divider + x1) // 2, row_top + 18, amount, amount_font, highlight)
 
     if page_count > 1:
         _centered_text(draw, width // 2, 972, f"СТРАНИЦА {page_number}/{page_count}", _font(20, display=True), MUTED)
@@ -1851,16 +1923,53 @@ def _vrs_delta_text(value: int) -> tuple[str, tuple[int, int, int]]:
     if value > 0:
         return f"+{value}", VRS_UP
     if value < 0:
-        return f"−{abs(value)}", VRS_DOWN
-    return "—", MUTED
+        return f"-{abs(value)}", VRS_DOWN
+    return "0", MUTED
 
 
 def _vrs_rank_text(value: int) -> tuple[str, tuple[int, int, int]]:
     if value > 0:
-        return f"↑ {value}", VRS_UP
+        return str(value), VRS_UP
     if value < 0:
-        return f"↓ {abs(value)}", VRS_DOWN
-    return "—", MUTED
+        return str(abs(value)), VRS_DOWN
+    return "0", MUTED
+
+
+def _draw_vrs_rank_arrow(
+    draw: ImageDraw.ImageDraw,
+    center_x: int,
+    center_y: int,
+    *,
+    up: bool,
+    color: tuple[int, int, int],
+) -> None:
+    if up:
+        draw.line((center_x, center_y + 11, center_x, center_y - 8), fill=color, width=4)
+        draw.polygon(
+            [(center_x - 7, center_y - 5), (center_x, center_y - 14), (center_x + 7, center_y - 5)],
+            fill=color,
+        )
+    else:
+        draw.line((center_x, center_y - 11, center_x, center_y + 8), fill=color, width=4)
+        draw.polygon(
+            [(center_x - 7, center_y + 5), (center_x, center_y + 14), (center_x + 7, center_y + 5)],
+            fill=color,
+        )
+
+
+def _vrs_snapshot_date(effective_at: str | None, version: str) -> str | None:
+    """Use the official effective date, including for older queued Valve snapshots."""
+    if effective_at:
+        raw_date = effective_at
+    else:
+        match = re.search(r"standings_[a-z]+_(\d{4})_(\d{2})_(\d{2})\.md(?::|$)", version)
+        if not match:
+            return None
+        raw_date = "-".join(match.groups())
+    try:
+        return datetime.fromisoformat(raw_date.replace("Z", "+00:00")).strftime("%d.%m.%Y")
+    except ValueError:
+        return None
 
 
 def can_render_tournament_vrs(impacts: Sequence[TournamentVRSImpact]) -> bool:
@@ -1882,9 +1991,13 @@ def _render_tournament_vrs_page(
     draw = ImageDraw.Draw(canvas, "RGBA")
     width = RESULT_CARD_SIZE[0]
     _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
-    _centered_text(draw, width // 2, 182, "ВЛИЯНИЕ ТУРНИРА НА VRS", _font(40, display=True), WHITE)
+    _centered_text(draw, width // 2, 182, "VRS ПОСЛЕ ТУРНИРА", _font(42, display=True), WHITE)
     title = tournament_name.upper()
     _centered_text(draw, width // 2, 246, title, _fit_font(draw, title, 890, 30, 16, display=True), CYAN)
+    before_date = _vrs_snapshot_date(impacts[0].before_effective_at, impacts[0].before_version)
+    after_date = _vrs_snapshot_date(impacts[0].after_effective_at, impacts[0].after_version)
+    if before_date and after_date:
+        _centered_text(draw, width // 2, 298, f"ДО {before_date}  |  ПОСЛЕ {after_date}", _font(20, display=True), MUTED)
     row_height, header_height = 68, 62
     table_top = 340 + (TOURNAMENT_VRS_PER_CARD - len(impacts)) * 26
     table = (44, table_top, 1036, table_top + header_height + row_height * len(impacts))
@@ -1899,14 +2012,14 @@ def _render_tournament_vrs_page(
         draw.line((divider, y0 + 14, divider, y1 - 14), fill=(*STANDINGS_HEADER_LINE, 145), width=1)
     _centered_text(draw, (x0 + place_divider) // 2, y0 + 17, "МЕСТО", _font(21, display=True), WHITE)
     _aligned_text(draw, place_divider + 26, y0 + 17, "КОМАНДА", _font(21, display=True), WHITE, "left")
-    _centered_text(draw, (points_divider + rank_divider) // 2, y0 + 17, "VRS ОЧКИ", _font(19, display=True), WHITE)
-    _centered_text(draw, (rank_divider + x1) // 2, y0 + 17, "МЕСТО В РЕЙТИНГЕ", _font(16, display=True), WHITE)
+    _centered_text(draw, (points_divider + rank_divider) // 2, y0 + 17, "ИЗМ. ОЧКОВ", _font(18, display=True), WHITE)
+    _centered_text(draw, (rank_divider + x1) // 2, y0 + 17, "ИЗМ. МЕСТА", _font(18, display=True), WHITE)
     for index, item in enumerate(impacts):
         row_top = y0 + header_height + row_height * index
         if index:
             draw.line((x0 + 18, row_top, x1 - 18, row_top), fill=(*AMBER, 125), width=1)
         highlight = _standings_row_color(item.placement)
-        _draw_standings_medal(draw, (x0 + place_divider) // 2, row_top, item.placement)
+        _draw_standings_medal(canvas, draw, (x0 + place_divider) // 2, row_top, item.placement)
         team_name = item.team_name.upper()
         _aligned_text(draw, place_divider + 26, row_top + 15, team_name,
                       _fit_font(draw, team_name, points_divider - place_divider - 48, 32, 14), highlight, "left")
@@ -1914,8 +2027,20 @@ def _render_tournament_vrs_page(
         rank_text, rank_color = _vrs_rank_text(item.rank_delta)
         _centered_text(draw, (points_divider + rank_divider) // 2, row_top + 17, points_text,
                        _fit_font(draw, points_text, 130, 30, 16, display=True), points_color)
-        _centered_text(draw, (rank_divider + x1) // 2, row_top + 17, rank_text,
-                       _fit_font(draw, rank_text, 140, 26, 14, display=True), rank_color)
+        rank_center_x = (rank_divider + x1) // 2
+        rank_font = _fit_font(draw, rank_text, 102, 30, 16, display=True)
+        if item.rank_delta:
+            number_box = draw.textbbox((0, 0), rank_text, font=rank_font)
+            number_width = number_box[2] - number_box[0]
+            group_left = rank_center_x - (16 + 12 + number_width) // 2
+            _draw_vrs_rank_arrow(
+                draw, group_left + 8, row_top + 34,
+                up=item.rank_delta > 0, color=rank_color,
+            )
+            number_center_x = group_left + 16 + 12 + number_width // 2
+        else:
+            number_center_x = rank_center_x
+        _centered_text(draw, number_center_x, row_top + 17, rank_text, rank_font, rank_color)
     if page_count > 1:
         _centered_text(draw, width // 2, 972, f"СТРАНИЦА {page_number}/{page_count}", _font(20, display=True), MUTED)
     source_text = f"ИСТОЧНИК: {source_label.upper()}"

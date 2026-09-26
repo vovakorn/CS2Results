@@ -72,6 +72,8 @@ class TournamentVRSImpact(BaseModel):
     source: str = Field(min_length=1, max_length=200)
     before_version: str = Field(min_length=1, max_length=200)
     after_version: str = Field(min_length=1, max_length=200)
+    before_effective_at: str | None = Field(default=None, max_length=100)
+    after_effective_at: str | None = Field(default=None, max_length=100)
 
 
 class MatchDetails(BaseModel):

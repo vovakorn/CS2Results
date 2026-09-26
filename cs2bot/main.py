@@ -916,7 +916,7 @@ def _enqueue_tournament_standings(match: MatchNormalized, channel_id: str, chann
 def format_tournament_vrs(tournament_name: str, impacts: Sequence[TournamentVRSImpact]) -> str:
     if not tournament_name.strip() or not can_render_tournament_vrs(impacts):
         raise ValueError("Tournament VRS requires complete impacts")
-    lines = [f"📈 <b>Влияние турнира на VRS — {html.escape(tournament_name)}</b>", "", "<b>Изменения рейтинга:</b>"]
+    lines = [f"📈 <b>VRS после турнира — {html.escape(tournament_name)}</b>", "", "<b>Изменения рейтинга:</b>"]
     for item in impacts:
         points = f"+{item.points_delta}" if item.points_delta > 0 else f"−{abs(item.points_delta)}" if item.points_delta < 0 else "—"
         rank = f"↑ {item.rank_delta}" if item.rank_delta > 0 else f"↓ {abs(item.rank_delta)}" if item.rank_delta < 0 else "—"
