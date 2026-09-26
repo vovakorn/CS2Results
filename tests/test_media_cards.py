@@ -244,7 +244,7 @@ def test_tournament_standings_use_subtle_podium_colors_for_top_four():
     assert media_cards._standings_row_color("3-4") == media_cards.STANDINGS_BRONZE
 
 
-def test_tournament_standings_draws_filled_podium_medals_and_a_distinct_header():
+def test_tournament_standings_draws_metallic_podium_medals_and_a_distinct_header():
     placements = [
         TournamentPlacement(placement="1", team_name="Spirit", prize_usd=150_000),
         TournamentPlacement(placement="2", team_name="MOUZ", prize_usd=60_000),
@@ -258,9 +258,16 @@ def test_tournament_standings_draws_filled_podium_medals_and_a_distinct_header()
     table_top = 340 + (media_cards.TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
     first_row_top = table_top + 62
 
-    assert image.getpixel((128, first_row_top + 24)) == media_cards.STANDINGS_GOLD
-    assert image.getpixel((128, first_row_top + 68 + 24)) == media_cards.STANDINGS_SILVER
-    assert image.getpixel((122, first_row_top + 2 * 68 + 24)) == media_cards.STANDINGS_BRONZE
+    for index in range(4):
+        row_top = first_row_top + index * 68
+        shadow = image.getpixel((146, row_top + 13))
+        sheen = image.getpixel((146, row_top + 22))
+        assert sum(sheen) > sum(shadow)
+    assert image.getpixel((146, first_row_top + 22)) != image.getpixel((146, first_row_top + 68 + 22))
+    assert image.getpixel((146, first_row_top + 68 + 22)) != image.getpixel((146, first_row_top + 2 * 68 + 22))
+    assert image.getpixel((136, first_row_top + 17)) != image.getpixel((156, first_row_top + 17))
+    bronze_row_top = first_row_top + 2 * 68
+    assert image.getpixel((120, bronze_row_top + 23)) != image.getpixel((172, bronze_row_top + 23))
     assert image.getpixel((540, table_top + 30)) == media_cards.STANDINGS_HEADER
     assert image.getpixel((540, table_top)) == media_cards.STANDINGS_HEADER_LINE
     assert image.getpixel((540, table_top + 62)) == media_cards.STANDINGS_HEADER_LINE

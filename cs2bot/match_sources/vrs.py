@@ -110,6 +110,8 @@ def calculate_impacts(
             source=after.source,
             before_version=before.version,
             after_version=after.version,
+            before_effective_at=before.effective_at,
+            after_effective_at=after.effective_at,
         ))
     if not impacts:
         raise VRSDataError("VRS impact has no tournament teams")
