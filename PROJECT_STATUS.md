@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 21 сентября 2026 года.
+Обновлено: 26 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,22 +15,38 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 21 сентября 2026, версия `d4e6set117m1e71tpos3`
-  из Git `7f387dd`; таймеры вызывают тег `production`. Предыдущая версия
-  `d4elr8duk6l9pj4amk2u` закреплена тегом `rollback`.
+- Последний production-деплой: 26 сентября 2026, версия `d4e12jpmf5nth90bh5k8`
+  из Git `1145d17`; метаданные версии называют предыдущей
+  `d4eu28qtrl5f784qf2p7`. Тег `production` проверен 26 сентября.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
 - В production включены флаги `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
   `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
 - Пять timer trigger вызывают тег `production`, а не `$latest`.
-- Полная release-проверка: 441 тест, GitHub Actions на Python 3.11 и 3.12
-  и сборка архива основной функции. Candidate и production smoke прошли:
-  `200`, `dry_run=true`, без startup-ошибок и публикаций. SHA-256 архива:
-  `5eccec9a211b244e18f066179484fe497cd0b93a642aea4a30a4de0fd9933f6c`.
+- SHA-256 архива активной версии по метаданным Cloud Functions:
+  `c4512393e671f8b6b2141393cc5ad7dd5cc37ec0510b502f48298cdf49baf05e`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
+
+## Релиз 21 сентября 2026 — цепочки турниров в Threads
+
+- PR #122, Git `6a7ae9a`: радар, расписание, результаты матчей, итоговая таблица
+  и VRS одного ключа турнира образуют линейную цепочку. Первая новая публикация —
+  корень; последующие используют подтверждённый post ID как `reply_to_id`.
+  Расписание и вечерний итог в Threads разделяются по турнирам; прежние
+  независимые посты не мигрируют.
+- Object Storage хранит отдельный tail по ключу турнира и атомарно резервирует
+  append. Неопределённая публикация блокирует только затронутую цепочку и
+  вызывает admin alert; продолжение возможно после ручной проверки post ID и
+  вызова `restore_threads_chain_tail`. Определённый отказ снимает reservation.
+- Ограничение: ключ содержит `source`. PandaScore-радар и Liquipedia-финал одного
+  турнира могут открыть две цепочки. Межисточниковое соответствие пока не
+  реализовано; полный жизненный цикл в одной цепочке не подтверждён.
+- Полный локальный набор: 451 тест пройден; CI PR #122 успешен. Candidate
+  `d4e0huh4q9ber0svqcku` прошёл dry-run (`200`, `dry_run=true`); после
+  продвижения production-тег и пять timer trigger были проверены.
 
 ## Релиз 19 сентября 2026 — результаты StarLadder
 
