@@ -57,6 +57,28 @@ VRS-альбом использует отдельный outbox `content_type=to
 и content UID `tournament-vrs-v1:{channel}:{tournament}`, поэтому не дублирует
 обычный альбом итогов турнира.
 
+## Цепочка турнира в Threads
+
+Ключ цепочки привязан к платформе Threads и турниру. Если источник дал
+`source_refs.tournament_id`, используется он вместе с `source`; иначе —
+`tournament_parent`, затем `competition_key` или название турнира. Имя не
+заменяет доступный стабильный ID. Object Storage хранит JSON по ключу
+`threads/chains/{sha256(tournament_key)}.json` с подтверждённым `tail_id`,
+временным `reservation` и признаком `blocked`; секретов в нём нет.
+
+Append резервируется условной записью `If-None-Match` или `If-Match` до запроса
+к Threads. При отсутствии tail создаётся корневой пост; иначе его ID передаётся
+в `reply_to_id` single-image или carousel parent container. Новый tail
+фиксируется только после ответа с post ID. Неопределённый исход блокирует
+цепочку конкретного турнира, определённый отказ снимает reservation. После
+ручной сверки фактического post ID оператор восстанавливает tail через
+`restore_threads_chain_tail(tournament_key, tail_id)`. Старые независимые посты
+в состояние цепочки не импортируются.
+
+Текущие ключи разных источников не сопоставляются между собой: Liquipedia-финал
+может открыть отдельную цепочку от PandaScore-радара того же турнира. Единый
+межисточниковый ключ остаётся задачей развития.
+
 ## Ответственность delivery-layer
 
 `cs2bot.main` отвечает за Cloud Functions handler и публикацию.
