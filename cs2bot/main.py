@@ -28,9 +28,14 @@ from .analytics import record_manual_post_metrics, record_post, record_subscribe
 from .instagram_publish import (
     InstagramDeliveryUncertainError,
     InstagramPublishError,
+    create_reel_container,
     instagram_publishing_enabled,
+    instagram_reels_enabled,
     publish_rendered_cards,
+    upload_public_reel,
 )
+from .reel_delivery import advance_pending_reel, advance_today_reel, load_pending_reel, save_pending_reel
+from .schedule_reels import ScheduleReelError, probe_reel_runtime, reel_caption, render_schedule_reel, storyboard
 from .threads_publish import (
     ThreadsDeliveryUncertainError,
     ThreadsPublishError,
@@ -233,7 +238,7 @@ RUSSIAN_MONTHS = (
     "ноября",
     "декабря",
 )
-CONTENT_JOBS = {"results", "schedule", "digest", "radar", "radar_discovery", "analytics"}
+CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -2216,6 +2221,80 @@ def _send_schedule_context_to_telegram(
             )
 
 
+def _select_schedule_matches(matches: Sequence[UpcomingMatchNormalized]) -> list[UpcomingMatchNormalized]:
+    """Keep cards and Reels on the exact same editorial source filter."""
+    return [
+        match for match in matches
+        if tier1_autopilot_decision(match)[0] or match.feature_reason == "tier1_tournament"
+    ]
+
+
+def _handle_schedule_reel_job(dry_run: bool, context: Any, render_probe: bool = False) -> Dict[str, Any]:
+    """Render and enqueue one Reel; the five-minute worker can finish Meta processing."""
+    if dry_run and render_probe:
+        try:
+            result = probe_reel_runtime(datetime.now(ZoneInfo(DISPLAY_TIMEZONE)))
+        except (ScheduleReelError, ValueError) as exc:
+            log_event(
+                logger, logging.ERROR, "schedule_reel_runtime_probe_failed",
+                error_type=type(exc).__name__, error=_safe_error_message(exc),
+                cause_type=type(exc.__cause__).__name__ if exc.__cause__ else None,
+            )
+            return _error_response(502, "schedule_reel_runtime_probe_failed")
+        return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "dry_run": True, "render_probe": result})}
+    try:
+        enabled = instagram_publishing_enabled() and instagram_reels_enabled()
+    except InstagramPublishError:
+        return _error_response(503, "instagram_reels_configuration_invalid")
+    if not dry_run and not enabled:
+        return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "skipped_reason": "disabled"})}
+    start, end, local_now = _local_day_window()
+    day_key = local_now.date().isoformat()
+    try:
+        fetched = asyncio.run(fetch_upcoming_matches(start, end))
+        selected = _select_schedule_matches(fetched)
+    except Exception as exc:
+        log_event(logger, logging.ERROR, "schedule_reel_source_failed", error_type=type(exc).__name__)
+        return _error_response(502, "match_source_unavailable")
+    count = len(selected)
+    if count == 0:
+        return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "matches_selected": 0, "skipped_reason": "empty_day"})}
+    if count > MAX_SCHEDULE_TOTAL_MATCHES:
+        log_event(logger, logging.WARNING, "schedule_reel_too_many_matches", matches_selected=count)
+        if not dry_run:
+            _notify_admin("schedule_reel_too_many_matches", f"Reel за {day_key} не создан: отобрано {count} матчей, лимит 20.")
+        return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "matches_selected": count, "skipped_reason": "too_many_matches"})}
+    scenes = storyboard(selected)
+    if dry_run:
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "job": "schedule_reel", "dry_run": True, "day": day_key,
+                "matches_selected": count,
+                "match_ids": [match.match_id for scene in scenes if scene.kind == "matches" for match in scene.matches],
+                "scene_count": len(scenes), "duration_seconds": sum(scene.duration for scene in scenes),
+            }, ensure_ascii=False),
+        }
+    try:
+        state = load_pending_reel(day_key)
+        if state is None:
+            video = render_schedule_reel(selected, local_now, DISPLAY_TIMEZONE)
+            public_url = upload_public_reel(f"schedule_reel_{day_key}", video)
+            container_id = create_reel_container(public_url, reel_caption(local_now, count), context)
+            state = save_pending_reel(day_key, container_id, count)
+        result = advance_pending_reel(state, context)
+    except (InstagramPublishError, ScheduleReelError, StorageUnavailableError) as exc:
+        log_event(logger, logging.ERROR, "schedule_reel_failed", error_type=type(exc).__name__)
+        _notify_admin("schedule_reel_failed", f"Не удалось подготовить Reel за {day_key}; проверьте логи.")
+        return _error_response(502, "schedule_reel_failed")
+    log_event(logger, logging.INFO, "schedule_reel_state", day=day_key, result=result, matches_selected=count)
+    if result == "published":
+        _record_post_analytics("instagram", state.content_uid, "schedule_reel", matches_selected=count, media_video=True)
+    if result in {"processing_failed", "publish_uncertain"}:
+        _notify_admin("schedule_reel_delivery_blocked", f"Reel за {day_key}: исход публикации требует ручной проверки.")
+    return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "day": day_key, "matches_selected": count, "state": result})}
+
+
 def _handle_content_job(
     job: str,
     dry_run: bool,
@@ -2230,12 +2309,7 @@ def _handle_content_job(
     try:
         if job == "schedule":
             fetched = asyncio.run(fetch_upcoming_matches(start, end))
-            selected = [
-                match
-                for match in fetched
-                if tier1_autopilot_decision(match)[0]
-                or match.feature_reason == "tier1_tournament"
-            ]
+            selected = _select_schedule_matches(fetched)
             text = format_daily_schedule(selected, local_now) if selected else ""
             context_matches = sorted(selected, key=_context_priority)
             if context_matches:
@@ -2934,6 +3008,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     dry_run = False
     include_filtered = False
     retry_only = False
+    render_probe = False
     days_ahead = 1
     job = "results"
     test_run_id: str | None = None
@@ -2945,7 +3020,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         if isinstance(event, dict):
             requested_job = event.get("job", "results")
             if requested_job not in CONTENT_JOBS:
-                raise ValueError("job must be results, schedule, digest, radar, radar_discovery, or analytics")
+                raise ValueError("job must be results, schedule, schedule_reel, digest, radar, radar_discovery, or analytics")
             job = requested_job
             requested_test_run_id = event.get("test_run_id")
             if requested_test_run_id is not None:
@@ -2981,6 +3056,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             source = _parse_source(event.get("source"))
             mode = _parse_mode(event.get("mode"))
             dry_run = _parse_bool(event.get("dry_run"), default=False)
+            render_probe = _parse_bool(event.get("render_probe"), default=False)
+            if render_probe and (job != "schedule_reel" or not dry_run):
+                raise ValueError("render_probe is supported only for schedule_reel dry-run")
             retry_only = _parse_bool(event.get("retry_only"), default=False)
             if retry_only and (job != "results" or dry_run):
                 raise ValueError("retry_only is supported only for production results")
@@ -3012,7 +3090,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         analytics_snapshot = job == "analytics" and (
             not isinstance(event, dict) or event.get("analytics_operation", "snapshot") == "snapshot"
         )
-        if job != "analytics" or analytics_snapshot:
+        if (job != "analytics" or analytics_snapshot) and job != "schedule_reel":
             if not TELEGRAM_TOKEN:
                 missing_config.append("telegram_credentials")
             if not any(True for _ in _iter_channels()):
@@ -3023,7 +3101,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             pass
         elif retry_only:
             pass
-        elif job in {"schedule", "digest", "radar", "radar_discovery"} and not PANDASCORE_API_TOKEN:
+        elif job in {"schedule", "schedule_reel", "digest", "radar", "radar_discovery"} and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
         elif source == "pandascore" and not PANDASCORE_API_TOKEN:
             missing_config.append("match_source_credentials")
@@ -3058,6 +3136,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
     if job == "analytics":
         return _handle_analytics_job(event if isinstance(event, dict) else {}, dry_run)
+
+    if job == "schedule_reel":
+        return _handle_schedule_reel_job(dry_run, context, render_probe)
 
     if job in {"schedule", "digest"}:
         return _handle_content_job(
@@ -3740,6 +3821,25 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 error=_safe_error_message(exc),
             )
 
+    reel_worker_states: dict[str, str] = {}
+    if retry_only:
+        try:
+            if instagram_publishing_enabled() and instagram_reels_enabled():
+                reel_worker_states = advance_today_reel(context)
+                for reel_day, reel_state in reel_worker_states.items():
+                    if reel_state == "published":
+                        _record_post_analytics(
+                            "instagram", f"instagram_schedule_reel_{reel_day}", "schedule_reel", media_video=True
+                        )
+                    if reel_state in {"processing_failed", "publish_uncertain"}:
+                        _notify_admin(
+                            "schedule_reel_delivery_blocked",
+                            f"Reel за {reel_day}: исход публикации требует ручной проверки.",
+                        )
+        except (InstagramPublishError, StorageUnavailableError) as exc:
+            log_event(logger, logging.ERROR, "schedule_reel_worker_failed", error_type=type(exc).__name__)
+            _notify_admin("schedule_reel_worker_failed", "Не удалось проверить ожидающие Reels; проверьте логи.")
+
     metrics = {
         "matches_received": len(matches),
         "tier1_lan_unconfirmed": len(unconfirmed_tier1),
@@ -3748,6 +3848,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "filtered_skipped": skipped_filtered,
         "delivery_failures": failed_messages,
         "retry_only": retry_only,
+        "reel_worker_states": reel_worker_states,
         "channels": channel_stats,
     }
     log_event(logger, logging.INFO, "handler_complete", **metrics)

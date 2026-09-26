@@ -27,6 +27,68 @@ def test_upload_public_cards_uses_dedicated_bucket(monkeypatch):
     assert all(entry["ContentType"] == "image/png" for entry in seen)
 
 
+def test_reels_flag_is_independent_and_default_off(monkeypatch):
+    monkeypatch.delenv("ENABLE_INSTAGRAM_REELS", raising=False)
+    assert instagram_publish.instagram_reels_enabled() is False
+    monkeypatch.setenv("ENABLE_INSTAGRAM_REELS", "1")
+    assert instagram_publish.instagram_reels_enabled() is True
+
+
+def test_upload_public_reel_uses_video_content_type(monkeypatch):
+    monkeypatch.setenv("INSTAGRAM_MEDIA_BUCKET", "instagram-media")
+    seen = []
+
+    class Client:
+        def put_object(self, **kwargs):
+            seen.append(kwargs)
+
+    monkeypatch.setattr(instagram_publish, "_media_client", lambda: Client())
+    url = instagram_publish.upload_public_reel("schedule_reel_2026-09-25", b"\x00\x00\x00\x18ftypisom")
+
+    assert url.endswith("/instagram/schedule_reel_2026-09-25/reel.mp4")
+    assert seen[0]["ContentType"] == "video/mp4"
+    assert seen[0]["ACL"] == "public-read"
+
+
+def test_create_reel_container_keeps_it_out_of_feed(monkeypatch):
+    monkeypatch.setattr(instagram_publish, "_instagram_credentials", lambda context: ("token", "user"))
+
+    class Proxy:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *args):
+            return False
+
+    seen = []
+    monkeypatch.setattr(instagram_publish, "_meta_proxy", lambda: Proxy())
+    monkeypatch.setattr(instagram_publish, "_meta_post", lambda url, data, proxy: seen.append(data) or {"id": "12345"})
+
+    assert instagram_publish.create_reel_container("https://example.test/reel.mp4", "caption", None) == "12345"
+    assert seen[0]["media_type"] == "REELS"
+    assert seen[0]["share_to_feed"] == "false"
+    assert seen[0]["video_url"] == "https://example.test/reel.mp4"
+
+
+def test_reel_status_checks_instagram_login_host(monkeypatch):
+    monkeypatch.setattr(instagram_publish, "_instagram_credentials", lambda context: ("token", "user"))
+
+    class Proxy:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, *args):
+            return False
+
+    calls = []
+    monkeypatch.setattr(instagram_publish, "_meta_proxy", lambda: Proxy())
+    monkeypatch.setattr(instagram_publish, "_meta_get", lambda url, params, proxy: calls.append((url, params)) or {"status_code": "FINISHED"})
+
+    assert instagram_publish.reel_container_status("12345", None) == "FINISHED"
+    assert calls[0][0] == "https://graph.instagram.com/12345"
+    assert calls[0][1]["fields"] == "status_code"
+
+
 def test_publish_cards_creates_carousel_then_publishes(monkeypatch):
     monkeypatch.setattr(instagram_publish, "_instagram_credentials", lambda context: ("token", "user"))
 

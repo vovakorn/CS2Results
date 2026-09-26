@@ -49,6 +49,16 @@ def instagram_publishing_enabled() -> bool:
     raise InstagramPublishError("ENABLE_INSTAGRAM_PUBLISHING must be a boolean")
 
 
+def instagram_reels_enabled() -> bool:
+    """Reels have an independent, default-off production gate."""
+    value = os.getenv("ENABLE_INSTAGRAM_REELS", "0").strip().casefold()
+    if value in {"1", "true", "yes", "y"}:
+        return True
+    if value in {"0", "false", "no", "n", ""}:
+        return False
+    raise InstagramPublishError("ENABLE_INSTAGRAM_REELS must be a boolean")
+
+
 def _env(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
@@ -151,6 +161,28 @@ def upload_public_cards(publication_key: str, cards: Sequence[bytes]) -> list[st
     return urls
 
 
+def upload_public_reel(publication_key: str, video: bytes) -> str:
+    """Upload one MP4 to the existing public media bucket, never the state bucket."""
+    if not publication_key or any(part not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for part in publication_key):
+        raise InstagramPublishError("Instagram publication key is invalid")
+    if not isinstance(video, bytes) or not video or b"ftyp" not in video[:32]:
+        raise InstagramPublishError("Instagram Reel is not a valid MP4")
+    bucket = _media_bucket()
+    key = f"instagram/{publication_key}/reel.mp4"
+    try:
+        _media_client().put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=video,
+            ContentType="video/mp4",
+            ACL="public-read",
+            CacheControl="public, max-age=31536000, immutable",
+        )
+    except Exception as exc:
+        raise InstagramPublishError("Instagram Reel upload failed") from exc
+    return f"{_media_base_url(bucket)}/{quote(key, safe='/')}"
+
+
 def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> dict[str, Any]:
     try:
         response = requests.post(
@@ -173,6 +205,25 @@ def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> 
         raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown") from exc
     if not isinstance(payload, dict):
         raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown")
+    return payload
+
+
+def _meta_get(url: str, params: dict[str, str], proxy: dict[str, str] | None) -> dict[str, Any]:
+    try:
+        response = requests.get(
+            url,
+            params=params,
+            headers=META_HTTP_HEADERS,
+            proxies=proxy,
+            timeout=HTTP_TIMEOUT_SECONDS,
+            allow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, requests.JSONDecodeError) as exc:
+        raise InstagramPublishError("Instagram Reel status is unavailable") from exc
+    if not isinstance(payload, dict):
+        raise InstagramPublishError("Instagram Reel status is invalid")
     return payload
 
 
@@ -260,3 +311,54 @@ def publish_rendered_cards(
 ) -> str:
     """Upload cards first, then publish; upload retries are safe and idempotent."""
     return publish_cards(upload_public_cards(publication_key, cards), caption, context)
+
+
+def create_reel_container(video_url: str, caption: str, context: Any) -> str:
+    """Start Meta's asynchronous processing; this does not publish a post."""
+    if not isinstance(video_url, str) or not video_url.startswith("https://"):
+        raise InstagramPublishError("Instagram Reel URL is invalid")
+    access_token, user_id = _instagram_credentials(context)
+    with _meta_proxy() as proxy:
+        response = _meta_post(
+            f"{INSTAGRAM_GRAPH_URL}/{user_id}/media",
+            {
+                "media_type": "REELS",
+                "video_url": video_url,
+                "caption": _caption(caption),
+                "share_to_feed": "false",
+                "access_token": access_token,
+            },
+            proxy,
+        )
+    return _container_id(response)
+
+
+def reel_container_status(container_id: str, context: Any) -> str:
+    """Return Meta's status_code for a persisted Reel container."""
+    if not container_id or not container_id.isdecimal():
+        raise InstagramPublishError("Instagram Reel container ID is invalid")
+    access_token, _ = _instagram_credentials(context)
+    with _meta_proxy() as proxy:
+        response = _meta_get(
+            f"{INSTAGRAM_GRAPH_URL}/{container_id}",
+            {"fields": "status_code", "access_token": access_token},
+            proxy,
+        )
+    status = response.get("status_code")
+    if not isinstance(status, str):
+        raise InstagramPublishError("Instagram Reel status is invalid")
+    return status
+
+
+def publish_reel_container(container_id: str, context: Any) -> str:
+    """Publish a FINISHED container; caller must hold an attempting claim."""
+    if not container_id or not container_id.isdecimal():
+        raise InstagramPublishError("Instagram Reel container ID is invalid")
+    access_token, user_id = _instagram_credentials(context)
+    with _meta_proxy() as proxy:
+        response = _meta_post(
+            f"{INSTAGRAM_GRAPH_URL}/{user_id}/media_publish",
+            {"creation_id": container_id, "access_token": access_token},
+            proxy,
+        )
+    return _published_media_id(response)
