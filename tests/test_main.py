@@ -2697,7 +2697,7 @@ def test_digest_uses_spoiler_results_card_when_media_cards_enabled(monkeypatch):
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_content_processed", fake_mark)
-    monkeypatch.setattr(main, "render_results_card", lambda *args, **kwargs: b"results-card")
+    monkeypatch.setattr(main, "render_results_cards", lambda *args, **kwargs: [b"results-card"])
     monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent_text.append(args))
     monkeypatch.setattr(
         main,
@@ -2712,6 +2712,36 @@ def test_digest_uses_spoiler_results_card_when_media_cards_enabled(monkeypatch):
     assert sent_photos[0][0][1] == b"results-card"
     assert sent_photos[0][1]["has_spoiler"] is True
     assert sent_photos[0][1]["filename"].startswith("cs2-results-")
+
+
+def test_digest_sends_every_result_page_in_one_spoiler_album(monkeypatch):
+    albums = []
+
+    async def fake_fetch(limit, start=None, end=None):
+        return [_match("1"), _match("2", team1="Spirit", team2="MOUZ")]
+
+    async def fake_claim(content_uid):
+        return "claim"
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "fetch_pandascore_finished_matches", fake_fetch)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark)
+    monkeypatch.setattr(main, "render_results_cards", lambda *args, **kwargs: [b"page-1", b"page-2"])
+    monkeypatch.setattr(main, "send_media_group_to_telegram", lambda *args, **kwargs: albums.append((args, kwargs)))
+    monkeypatch.setattr(main, "send_photo_to_telegram", lambda *args, **kwargs: pytest.fail("lost album pages"))
+
+    response = main.handler({"job": "digest"}, None)
+
+    assert response["statusCode"] == 200
+    assert len(albums) == 1
+    assert albums[0][0][1] == [b"page-1", b"page-2"]
+    assert albums[0][1]["has_spoiler"] is True
+    assert all(name.startswith("cs2-results-") for name in albums[0][1]["filenames"])
 
 
 def test_invalid_job_is_rejected():
