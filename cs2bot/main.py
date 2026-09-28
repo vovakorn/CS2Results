@@ -51,7 +51,7 @@ from .media_cards import (
     can_render_tournament_vrs,
     render_final_card,
     render_result_card,
-    render_results_card,
+    render_results_cards,
     render_schedule_cards,
     render_schedule_context_covers,
     render_tournament_standings_cards,
@@ -2430,7 +2430,7 @@ def _handle_content_job(
         TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled
     ):
         try:
-            social_media_cards = [render_results_card(selected, local_now)]
+            social_media_cards = render_results_cards(selected, local_now)
             if TELEGRAM_MEDIA_CARDS:
                 telegram_media_cards = social_media_cards
         except Exception as exc:
@@ -2486,9 +2486,10 @@ def _handle_content_job(
                         caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
                     if len(caption) > MAX_TELEGRAM_CAPTION_LENGTH:
                         caption = format_schedule_photo_caption(local_now, len(selected))
-                    if job == "schedule" and len(telegram_media_cards) > 1:
+                    if len(telegram_media_cards) > 1:
+                        media_name = "schedule" if job == "schedule" else "results"
                         filenames = [
-                            f"cs2-schedule-{day_key}-{index}-of-{len(telegram_media_cards)}.png"
+                            f"cs2-{media_name}-{day_key}-{index}-of-{len(telegram_media_cards)}.png"
                             for index in range(1, len(telegram_media_cards) + 1)
                         ]
                         send_media_group_to_telegram(
@@ -2496,6 +2497,7 @@ def _handle_content_job(
                             telegram_media_cards,
                             caption,
                             filenames=filenames,
+                            has_spoiler=has_spoiler,
                         )
                     else:
                         send_photo_to_telegram(
@@ -2593,7 +2595,7 @@ def _handle_content_job(
                 cards = render_schedule_cards(members, local_now, DISPLAY_TIMEZONE)
                 caption = f"Расписание турнира: {members[0].tournament_name}"
             elif job == "digest":
-                cards = [render_results_card(members, local_now)]
+                cards = render_results_cards(members, local_now)
                 caption = f"Результаты турнира: {members[0].tournament_name}"
             else:
                 cards, caption = social_media_cards, text

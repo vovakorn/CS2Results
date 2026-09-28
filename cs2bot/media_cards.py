@@ -9,7 +9,7 @@ import math
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TypeVar
 from urllib.parse import urlparse
 
 import requests
@@ -30,7 +30,8 @@ RESULT_CARD_SIZE = (1080, 1080)
 SCHEDULE_CARD_SIZE = (1080, 1080)
 SCHEDULE_CONTEXT_COVER_SIZE = (1080, 1080)
 MAX_RESULT_MATCHES = 10
-MAX_SCHEDULE_MATCHES = 10
+MAX_RESULT_MATCHES_PER_CARD = 4
+MAX_SCHEDULE_MATCHES = 4
 MAX_SCHEDULE_TOTAL_MATCHES = 20
 MAX_TOURNAMENT_STANDINGS = 64
 TOURNAMENT_STANDINGS_PER_CARD = 8
@@ -55,6 +56,7 @@ ALLOWED_LOGO_TYPES = {
 
 logger = logging.getLogger(__name__)
 _logo_memory_cache: OrderedDict[str, bytes] = OrderedDict()
+_TMatch = TypeVar("_TMatch")
 
 NAVY = (7, 17, 32)
 PANEL = (18, 38, 61)
@@ -208,6 +210,48 @@ def _centered_text(
 ) -> None:
     box = draw.textbbox((0, 0), text, font=font)
     draw.text((center_x - (box[2] - box[0]) / 2, y), text, font=font, fill=fill)
+
+
+def _centered_team_name(
+    draw: ImageDraw.ImageDraw,
+    center_x: int,
+    y: int,
+    name: str,
+    max_width: int,
+    max_size: int,
+    color: tuple[int, int, int],
+    *,
+    min_size: int = 22,
+) -> None:
+    """Keep long team names legible by breaking them at a word boundary."""
+    text = name.upper()
+    full_font = _font(max_size)
+    if draw.textbbox((0, 0), text, font=full_font)[2] <= max_width:
+        _centered_text(draw, center_x, y, text, full_font, color)
+        return
+    words = text.split()
+    for size in range(max_size, min_size - 1, -2):
+        font = _font(size)
+        options = [
+            (" ".join(words[:split]), " ".join(words[split:]))
+            for split in range(1, len(words))
+        ]
+        fitting = [
+            pair for pair in options
+            if all(draw.textbbox((0, 0), line, font=font)[2] <= max_width for line in pair)
+        ]
+        if fitting:
+            first, second = min(
+                fitting,
+                key=lambda pair: abs(
+                    draw.textbbox((0, 0), pair[0], font=font)[2]
+                    - draw.textbbox((0, 0), pair[1], font=font)[2]
+                ),
+            )
+            _centered_text(draw, center_x, y, first, font, color)
+            _centered_text(draw, center_x, y + size + 2, second, font, color)
+            return
+    _centered_text(draw, center_x, y, text, _fit_font(draw, text, max_width, max_size, 11), color)
 
 
 def _centered_text_on_point(
@@ -697,6 +741,9 @@ def _draw_wide_schedule_match(
     match: UpcomingMatchNormalized,
     box: tuple[int, int, int, int],
     display_timezone: object,
+    *,
+    show_tournament: bool = True,
+    hero: bool = False,
 ) -> None:
     x0, y0, x1, y1 = box
     height = y1 - y0
@@ -704,10 +751,10 @@ def _draw_wide_schedule_match(
     draw.line((x0 + 28, y0 + 1, x0 + 168, y0 + 1), fill=(*CYAN, 190), width=3)
     draw.line((x1 - 168, y0 + 1, x1 - 28, y0 + 1), fill=(*AMBER, 190), width=3)
 
-    logo_diameter = min(142, max(88, int(height * 0.42)))
-    logo_y = y0 + int(height * 0.34)
-    team1_x = x0 + 135
-    team2_x = x1 - 135
+    logo_diameter = 208 if hero else min(142, max(88, int(height * 0.42)))
+    logo_y = y0 + (215 if hero else int(height * 0.34))
+    team1_x = x0 + (205 if hero else 135)
+    team2_x = x1 - (205 if hero else 135)
     _draw_logo(
         canvas,
         draw,
@@ -729,48 +776,44 @@ def _draw_wide_schedule_match(
         match.team2_logo_fallback_url,
     )
 
-    time_size = 64 if height >= 300 else 54 if height >= 250 else 46
-    team_size = 42 if height >= 300 else 36 if height >= 250 else 30
+    time_size = 92 if hero else 64 if height >= 300 else 54 if height >= 250 else 46
+    team_size = 50 if hero else 42 if height >= 300 else 36 if height >= 250 else 30
     event_size = 24 if height >= 300 else 21 if height >= 250 else 18
     _centered_text(
         draw,
         (x0 + x1) // 2,
-        y0 + int(height * 0.27),
+        y0 + (150 if hero else int(height * 0.27)),
         _schedule_time(match, display_timezone),
         _font(time_size),
         AMBER,
     )
-    team_width = (x1 - x0) // 2 - 80
-    team_y = y0 + int(height * 0.61)
+    team_width = 360 if hero else (x1 - x0) // 2 - 80
+    team_y = y0 + (355 if hero else int(height * 0.61))
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    _aligned_text(
-        draw,
-        x0 + 48,
-        team_y,
-        team1,
-        _fit_font(draw, team1, team_width, team_size, 18),
-        WHITE,
-        "left",
-    )
-    _aligned_text(
-        draw,
-        x1 - 48,
-        team_y,
-        team2,
-        _fit_font(draw, team2, team_width, team_size, 18),
-        WHITE,
-        "right",
-    )
-    event = _schedule_match_event_label(match).upper()
-    _centered_text(
-        draw,
-        (x0 + x1) // 2,
-        y1 - (54 if height >= 300 else 46),
-        event,
-        _fit_font(draw, event, x1 - x0 - 300, event_size, 14, display=True),
-        MUTED,
-    )
+    if hero:
+        _centered_team_name(draw, team1_x, team_y, team1, team_width, team_size, WHITE, min_size=30)
+        _centered_team_name(draw, team2_x, team_y, team2, team_width, team_size, WHITE, min_size=30)
+        _centered_text(draw, (x0 + x1) // 2, y0 + 296, "VS", _font(24, display=True), MUTED)
+    else:
+        _aligned_text(
+            draw, x0 + 48, team_y, team1,
+            _fit_font(draw, team1, team_width, team_size, 18), WHITE, "left",
+        )
+        _aligned_text(
+            draw, x1 - 48, team_y, team2,
+            _fit_font(draw, team2, team_width, team_size, 18), WHITE, "right",
+        )
+    if show_tournament:
+        event = _schedule_match_event_label(match).upper()
+        _centered_text(
+            draw,
+            (x0 + x1) // 2,
+            y1 - (54 if height >= 300 else 46),
+            event,
+            _fit_font(draw, event, x1 - x0 - 300, event_size, 14, display=True),
+            MUTED,
+        )
 
 
 def _draw_compact_schedule_match(
@@ -779,6 +822,8 @@ def _draw_compact_schedule_match(
     match: UpcomingMatchNormalized,
     box: tuple[int, int, int, int],
     display_timezone: object,
+    *,
+    show_tournament: bool = True,
 ) -> None:
     x0, y0, x1, y1 = box
     height = y1 - y0
@@ -790,7 +835,9 @@ def _draw_compact_schedule_match(
     # Every dense schedule card uses the same visual hierarchy: two centred
     # team blocks and a time badge in the exact centre of the fixture.
     dense_layout = height < 125
-    if height >= 210:
+    if height >= 270:
+        logo_diameter, time_size, team_size, event_size = 102, 56, 30, 17
+    elif height >= 210:
         logo_diameter, time_size, team_size, event_size = 84, 46, 26, 15
     elif height >= 165:
         logo_diameter, time_size, team_size, event_size = 70, 40, 22, 13
@@ -808,7 +855,7 @@ def _draw_compact_schedule_match(
         logo_y = y0 + int(height * 0.40)
         time_y = y0 + int(height * 0.33)
         team_y = y0 + int(height * 0.68)
-        event_y = y1 - max(25, int(height * 0.16))
+        event_y = y1 - (22 if height >= 270 else max(25, int(height * 0.16)))
     team1_x = x0 + int((center_x - x0) * 0.48)
     team2_x = x1 - int((x1 - center_x) * 0.48)
     _draw_logo(
@@ -843,32 +890,19 @@ def _draw_compact_schedule_match(
     name_width = int((center_x - x0) * 0.82)
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    _centered_text(
-        draw,
-        team1_x,
-        team_y,
-        team1,
-        _fit_font(draw, team1, name_width, team_size, 11),
-        WHITE,
-    )
-    _centered_text(
-        draw,
-        team2_x,
-        team_y,
-        team2,
-        _fit_font(draw, team2, name_width, team_size, 11),
-        WHITE,
-    )
+    _centered_team_name(draw, team1_x, team_y, team1, name_width, team_size, WHITE)
+    _centered_team_name(draw, team2_x, team_y, team2, name_width, team_size, WHITE)
 
-    event = _schedule_match_event_label(match).upper()
-    _centered_text(
-        draw,
-        center_x,
-        event_y,
-        event,
-        _fit_font(draw, event, x1 - x0 - 112, event_size, 10, display=True),
-        MUTED,
-    )
+    if show_tournament:
+        event = _schedule_match_event_label(match).upper()
+        _centered_text(
+            draw,
+            center_x,
+            event_y,
+            event,
+            _fit_font(draw, event, x1 - x0 - 112, event_size, 10, display=True),
+            MUTED,
+        )
 
 
 def _radar_standing_entries(radar: TournamentRadar) -> list[tuple[int, str, str | None]]:
@@ -1234,6 +1268,7 @@ def _draw_wide_result_match(
     box: tuple[int, int, int, int],
     *,
     show_tournament: bool = True,
+    hero: bool = False,
 ) -> None:
     x0, y0, x1, y1 = box
     height = y1 - y0
@@ -1243,11 +1278,11 @@ def _draw_wide_result_match(
 
     # Match the schedule card's visual language: each team is a centred block,
     # with the score occupying the exact centre between the two blocks.
-    logo_diameter = min(210, max(96, int(height * 0.42)))
+    logo_diameter = 218 if hero else min(210, max(96, int(height * 0.42)))
     logo_radius = logo_diameter // 2
-    logo_y = y0 + int(height * 0.35)
-    team1_center = x0 + int((x1 - x0) * 0.18)
-    team2_center = x1 - int((x1 - x0) * 0.18)
+    logo_y = y0 + (220 if hero else int(height * 0.35))
+    team1_center = x0 + (205 if hero else int((x1 - x0) * 0.18))
+    team2_center = x1 - (205 if hero else int((x1 - x0) * 0.18))
     _draw_logo(
         canvas,
         draw,
@@ -1269,7 +1304,9 @@ def _draw_wide_result_match(
         match.team2_logo_fallback_url,
     )
 
-    if height >= 400:
+    if hero:
+        score_size, team_size, event_size = 112, 50, 25
+    elif height >= 400:
         score_size, team_size, event_size = 110, 48, 25
     elif height >= 300:
         score_size, team_size, event_size = 78, 42, 22
@@ -1290,7 +1327,7 @@ def _draw_wide_result_match(
         _centered_text(
             draw,
             (x0 + x1) // 2,
-            y0 + int(height * 0.49),
+            y0 + (300 if hero else int(height * 0.49)),
             f"BO{match.best_of}",
             _font(24 if height < 400 else 30),
             MUTED,
@@ -1298,26 +1335,26 @@ def _draw_wide_result_match(
 
     winner_side = _winner_side(match)
     name_gap = 30 if height >= 400 else 18 if height >= 250 else 10
-    team_y = logo_y + logo_radius + name_gap
+    team_y = y0 + 355 if hero else logo_y + logo_radius + name_gap
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    name_width = int((x1 - x0) * 0.30)
-    _centered_text(
-        draw,
-        team1_center,
-        team_y,
-        team1,
-        _fit_font(draw, team1, name_width, team_size, 16),
-        AMBER if winner_side == "left" else WHITE,
-    )
-    _centered_text(
-        draw,
-        team2_center,
-        team_y,
-        team2,
-        _fit_font(draw, team2, name_width, team_size, 16),
-        AMBER if winner_side == "right" else WHITE,
-    )
+    name_width = 360 if hero else int((x1 - x0) * 0.30)
+    if hero:
+        _centered_team_name(draw, team1_center, team_y, team1, name_width, team_size,
+                            AMBER if winner_side == "left" else WHITE, min_size=30)
+        _centered_team_name(draw, team2_center, team_y, team2, name_width, team_size,
+                            AMBER if winner_side == "right" else WHITE, min_size=30)
+    else:
+        _centered_text(
+            draw, team1_center, team_y, team1,
+            _fit_font(draw, team1, name_width, team_size, 16),
+            AMBER if winner_side == "left" else WHITE,
+        )
+        _centered_text(
+            draw, team2_center, team_y, team2,
+            _fit_font(draw, team2, name_width, team_size, 16),
+            AMBER if winner_side == "right" else WHITE,
+        )
 
     if show_tournament:
         footer_text = match.tournament_name.upper()
@@ -1336,6 +1373,8 @@ def _draw_compact_result_match(
     draw: ImageDraw.ImageDraw,
     match: MatchNormalized,
     box: tuple[int, int, int, int],
+    *,
+    show_tournament: bool = True,
 ) -> None:
     x0, y0, x1, y1 = box
     height = y1 - y0
@@ -1349,7 +1388,7 @@ def _draw_compact_result_match(
     # dense six-to-ten-match variant.
     if height >= 280:
         logo_diameter, score_size, team_size, event_size = 106, 60, 30, 17
-        logo_y, team_y, event_y = y0 + 122, y0 + 190, y1 - 54
+        logo_y, team_y, event_y = y0 + 122, y0 + 190, y1 - 28
     elif height >= 210:
         logo_diameter, score_size, team_size, event_size = 84, 46, 26, 15
         logo_y, team_y, event_y = y0 + 92, y0 + 143, y1 - 46
@@ -1390,31 +1429,20 @@ def _draw_compact_result_match(
     name_width = 180 if height >= 210 else 170 if height >= 165 else 150
     team1 = match.team1_name.upper()
     team2 = match.team2_name.upper()
-    _centered_text(
-        draw,
-        team1_center,
-        team_y,
-        team1,
-        _fit_font(draw, team1, name_width, team_size, 11),
-        AMBER if winner_side == "left" else WHITE,
-    )
-    _centered_text(
-        draw,
-        team2_center,
-        team_y,
-        team2,
-        _fit_font(draw, team2, name_width, team_size, 11),
-        AMBER if winner_side == "right" else WHITE,
-    )
-    event = match.tournament_name.upper()
-    _centered_text(
-        draw,
-        center_x,
-        event_y,
-        event,
-        _fit_font(draw, event, x1 - x0 - 112, event_size, 10, display=True),
-        MUTED,
-    )
+    _centered_team_name(draw, team1_center, team_y, team1, name_width, team_size,
+                        AMBER if winner_side == "left" else WHITE)
+    _centered_team_name(draw, team2_center, team_y, team2, name_width, team_size,
+                        AMBER if winner_side == "right" else WHITE)
+    if show_tournament:
+        event = match.tournament_name.upper()
+        _centered_text(
+            draw,
+            center_x,
+            event_y,
+            event,
+            _fit_font(draw, event, x1 - x0 - 112, event_size, 10, display=True),
+            MUTED,
+        )
 
 
 def render_result_card(match: MatchNormalized) -> bytes:
@@ -2065,40 +2093,68 @@ def render_tournament_vrs_cards(
             for index, chunk in enumerate(chunks, start=1)]
 
 
+def _balanced_pages(items: Sequence[_TMatch], max_page_size: int) -> list[list[_TMatch]]:
+    """Keep all pages readable without leaving a one-match trailing page."""
+    if not items:
+        return []
+    page_count = math.ceil(len(items) / max_page_size)
+    smaller_size, larger_pages = divmod(len(items), page_count)
+    pages: list[list[_TMatch]] = []
+    offset = 0
+    for page_index in range(page_count):
+        page_size = smaller_size + (page_index < larger_pages)
+        pages.append(list(items[offset:offset + page_size]))
+        offset += page_size
+    return pages
+
+
 def render_results_card(
     matches: Sequence[MatchNormalized],
     local_now: datetime,
+    *,
+    page_number: int = 1,
+    page_count: int = 1,
 ) -> bytes:
-    """Render an adaptive daily results card with one to ten matches."""
-    if not matches or len(matches) > MAX_RESULT_MATCHES:
-        raise MediaCardError("Results card supports between one and ten matches")
+    """Render one legible page of the daily results album."""
+    if not matches or len(matches) > MAX_RESULT_MATCHES_PER_CARD:
+        raise MediaCardError("Results card supports between one and four matches")
+    if page_count < 1 or page_number < 1 or page_number > page_count:
+        raise MediaCardError("Results card page information is invalid")
 
     canvas = _background(RESULT_CARD_SIZE, header_accent_y=98).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
     width, height = RESULT_CARD_SIZE
     _draw_channel_logo(canvas, draw, (width // 2, 98), 100)
     _centered_text(draw, width // 2, 207, "ИТОГИ ДНЯ", _font(44, display=True), WHITE)
+    date_label = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
+    if page_count > 1:
+        date_label = f"{date_label} · {page_number}/{page_count}"
     _centered_text(
         draw,
         width // 2,
         286,
-        f"{local_now.day} {MONTH_NAMES[local_now.month]}",
+        date_label,
         _font(27, display=True),
         CYAN,
     )
 
     sorted_matches = sorted(matches, key=lambda item: item.end_date or item.date or item.start_date or "")
+    shared_tournament = len({item.tournament_name.casefold() for item in sorted_matches}) == 1
+    if shared_tournament:
+        tournament = sorted_matches[0].tournament_name.upper()
+        _centered_text(draw, width // 2, 327, tournament,
+                       _fit_font(draw, tournament, 900, 26, 15, display=True), MUTED)
     columns = 1 if len(sorted_matches) <= 3 else 2
     rows = math.ceil(len(sorted_matches) / columns)
     # Keep the grid close to the title and let a four-match digest use most of
     # the card. This makes the actual results readable at a glance while the
     # denser variants continue to fit in the same safe area.
-    area_top = 330
+    area_top = 365 if shared_tournament else 330
     area_bottom = 970
     gap = 14
     available_height = area_bottom - area_top - gap * (rows - 1)
     if columns == 1:
-        max_row_height = {1: 390, 2: 280, 3: 195}[len(sorted_matches)]
+        max_row_height = {1: 530, 2: 280, 3: 195}[len(sorted_matches)]
     else:
         max_row_height = 300 if len(sorted_matches) == 4 else 230
     row_height = min(max_row_height, available_height // rows)
@@ -2117,9 +2173,11 @@ def render_results_card(
         y0 = top + row * (row_height + gap)
         box = (x0, y0, x0 + card_width, y0 + row_height)
         if columns == 1:
-            _draw_wide_result_match(canvas, draw, match, box)
+            _draw_wide_result_match(canvas, draw, match, box,
+                                    show_tournament=not shared_tournament,
+                                    hero=len(sorted_matches) == 1)
         else:
-            _draw_compact_result_match(canvas, draw, match, box)
+            _draw_compact_result_match(canvas, draw, match, box, show_tournament=not shared_tournament)
 
     _centered_text(
         draw,
@@ -2132,6 +2190,16 @@ def render_results_card(
     return _as_png(canvas)
 
 
+def render_results_cards(matches: Sequence[MatchNormalized], local_now: datetime) -> list[bytes]:
+    """Render up to ten results as balanced pages of no more than four matches."""
+    if not matches or len(matches) > MAX_RESULT_MATCHES:
+        raise MediaCardError("Results album supports between one and ten matches")
+    sorted_matches = sorted(matches, key=lambda item: item.end_date or item.date or item.start_date or "")
+    pages = _balanced_pages(sorted_matches, MAX_RESULT_MATCHES_PER_CARD)
+    return [render_results_card(page, local_now, page_number=index, page_count=len(pages))
+            for index, page in enumerate(pages, start=1)]
+
+
 def render_schedule_card(
     matches: Sequence[UpcomingMatchNormalized],
     local_now: datetime,
@@ -2140,9 +2208,9 @@ def render_schedule_card(
     page_number: int = 1,
     page_count: int = 1,
 ) -> bytes:
-    """Render a square daily schedule with an adaptive one- or two-column grid."""
+    """Render a square daily schedule page with up to four matches."""
     if not matches or len(matches) > MAX_SCHEDULE_MATCHES:
-        raise MediaCardError("Schedule card supports between one and ten matches")
+        raise MediaCardError("Schedule card supports between one and four matches")
     if page_count < 1 or page_number < 1 or page_number > page_count:
         raise MediaCardError("Schedule card page information is invalid")
     try:
@@ -2157,6 +2225,7 @@ def render_schedule_card(
     width, height = SCHEDULE_CARD_SIZE
     sorted_matches = sorted(matches, key=lambda item: item.scheduled_at)
     _draw_schedule_header(canvas, draw, sorted_matches, local_now, page_number, page_count)
+    shared_tournament = len({_schedule_tournament_key(item) for item in sorted_matches}) == 1
     columns = 1 if len(sorted_matches) <= 3 else 2
     rows = math.ceil(len(sorted_matches) / columns)
     area_top = 360
@@ -2164,9 +2233,9 @@ def render_schedule_card(
     gap = 14
     available_height = area_bottom - area_top - gap * (rows - 1)
     if columns == 1:
-        max_row_height = {1: 390, 2: 280, 3: 195}[len(sorted_matches)]
+        max_row_height = {1: 530, 2: 280, 3: 195}[len(sorted_matches)]
     else:
-        max_row_height = 230
+        max_row_height = 280
     row_height = min(max_row_height, available_height // rows)
     group_height = row_height * rows + gap * (rows - 1)
     top = area_top + ((area_bottom - area_top) - group_height) // 2
@@ -2183,9 +2252,12 @@ def render_schedule_card(
         y0 = top + row * (row_height + gap)
         box = (x0, y0, x0 + card_width, y0 + row_height)
         if columns == 1:
-            _draw_wide_schedule_match(canvas, draw, match, box, display_timezone)
+            _draw_wide_schedule_match(canvas, draw, match, box, display_timezone,
+                                      show_tournament=not shared_tournament,
+                                      hero=len(sorted_matches) == 1)
         else:
-            _draw_compact_schedule_match(canvas, draw, match, box, display_timezone)
+            _draw_compact_schedule_match(canvas, draw, match, box, display_timezone,
+                                         show_tournament=not shared_tournament)
 
     _centered_text(
         draw,
@@ -2201,7 +2273,7 @@ def render_schedule_card(
 def paginate_schedule_matches(
     matches: Sequence[UpcomingMatchNormalized],
 ) -> list[list[UpcomingMatchNormalized]]:
-    """Split fixtures by tournament, then balance each tournament's pages."""
+    """Split fixtures by tournament into balanced pages of at most four."""
     if not matches or len(matches) > MAX_SCHEDULE_TOTAL_MATCHES:
         raise MediaCardError("Schedule album supports between one and twenty matches")
     sorted_matches = sorted(matches, key=lambda item: item.scheduled_at)
@@ -2211,11 +2283,7 @@ def paginate_schedule_matches(
 
     pages: list[list[UpcomingMatchNormalized]] = []
     for tournament_matches in tournament_groups.values():
-        if len(tournament_matches) <= MAX_SCHEDULE_MATCHES:
-            pages.append(tournament_matches)
-            continue
-        first_page_size = math.ceil(len(tournament_matches) / 2)
-        pages.extend((tournament_matches[:first_page_size], tournament_matches[first_page_size:]))
+        pages.extend(_balanced_pages(tournament_matches, MAX_SCHEDULE_MATCHES))
     return pages
 
 
@@ -2224,7 +2292,7 @@ def render_schedule_cards(
     local_now: datetime,
     timezone_name: str,
 ) -> list[bytes]:
-    """Render one schedule card or a balanced two-card album for 11–20 matches."""
+    """Render an album with at most four schedule matches on each card."""
     pages = paginate_schedule_matches(matches)
     page_count = len(pages)
     return [
