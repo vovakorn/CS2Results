@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 26 сентября 2026 года.
+Обновлено: 28 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,20 +15,31 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 26 сентября 2026, версия `d4e12jpmf5nth90bh5k8`
-  из Git `1145d17`; метаданные версии называют предыдущей
-  `d4eu28qtrl5f784qf2p7`. Тег `production` проверен 26 сентября.
+- Последний production-деплой: 28 сентября 2026, версия `d4eicrelkln6h4k52k27`
+  из Git `fc3d6e5`; предыдущая версия `d4e12jpmf5nth90bh5k8` закреплена
+  для rollback.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
 - В production включены флаги `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
   `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
-- Пять timer trigger вызывают тег `production`, а не `$latest`.
-- SHA-256 архива активной версии по метаданным Cloud Functions:
-  `c4512393e671f8b6b2141393cc5ad7dd5cc37ec0510b502f48298cdf49baf05e`.
+- Шесть timer trigger вызывают тег `production`, а не `$latest`.
+- SHA-256 release-архива:
+  `1cc9771169559d641b12a36821e6b72f65e4b0b04136cca335e6de3d2f89d6ff`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
+
+## Релиз 28 сентября 2026 — конкурентный delivery claim
+
+- PR #126 добавил детерминированный тест двух одновременных попыток получить
+  один channel delivery claim. Обе попытки синхронизируются непосредственно на
+  conditional PUT; ровно одна становится владельцем и сохраняет свой claim ID.
+- Новый race-тест прошёл 20 последовательных запусков. Полный локальный набор:
+  480 тестов; GitHub Actions на Python 3.11 и 3.12 прошли.
+- Candidate `d4eicrelkln6h4k52k27` и production smoke подтвердили `200`,
+  `dry_run=true`, отсутствие startup-ошибок и публикаций. Все шесть timer
+  trigger остались закреплены за тегом `production`.
 
 ## Релиз 21 сентября 2026 — цепочки турниров в Threads
 
@@ -66,6 +77,8 @@ production и сверки фактического состояния. Теку
 - `results` — каждые 15 минут.
 - `results retry_only` — каждые 5 минут, без запроса источников матчей.
 - `schedule` — ежедневно в 09:00 по Москве.
+- `schedule_reel` — ежедневно в 09:15 по Москве; публикация дополнительно
+  защищена флагом `ENABLE_INSTAGRAM_REELS`.
 - `digest` — ежедневно в 23:00 по Москве.
 - `radar_discovery` — ежедневно в 12:00 по Москве; выбирает Tier-1 турниры
   следующего дня, проверяет фактический первый матч турнира и публикует только
