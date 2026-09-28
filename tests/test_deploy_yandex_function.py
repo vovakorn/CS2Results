@@ -63,7 +63,7 @@ BASE_VERSION = {
 }
 
 
-def _triggers(tag: str | None = "production", count: int = 5) -> list[dict[str, object]]:
+def _triggers(tag: str | None = "production", count: int = 6) -> list[dict[str, object]]:
     triggers = []
     for index in range(count):
         function_target: dict[str, str] = {"function_id": FUNCTION_ID}
@@ -252,13 +252,13 @@ def test_check_is_read_only(fake_cloud: dict[str, str]) -> None:
     assert not any(call[:4] == ["serverless", "function", "version", "create"] for call in _calls(fake_cloud))
 
 
-def test_check_requires_exactly_five_timer_triggers(fake_cloud: dict[str, str]) -> None:
+def test_check_requires_exactly_six_timer_triggers(fake_cloud: dict[str, str]) -> None:
     fake_cloud["FAKE_TRIGGERS"] = json.dumps(_triggers(count=4))
 
     result = _run("check", fake_cloud)
 
     assert result.returncode != 0
-    assert "Expected 5 timer triggers" in result.stderr
+    assert "Expected 6 timer triggers" in result.stderr
 
 
 def test_check_rejects_trigger_without_production_tag(fake_cloud: dict[str, str]) -> None:

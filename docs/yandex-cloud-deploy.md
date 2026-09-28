@@ -258,7 +258,7 @@ Smoke ограничен локальными тайм-аутами: по умо
 
 ## 7. Timer triggers
 
-Создайте пять timer trigger. Расписание Yandex Cloud задаётся в UTC; Москва
+Создайте шесть timer trigger. Расписание Yandex Cloud задаётся в UTC; Москва
 круглый год использует UTC+3.
 
 Получение новых результатов — каждые 15 минут:
@@ -305,6 +305,20 @@ Liquipedia shadow; claims и processed markers предотвращают пар
 }
 ```
 
+Instagram Reel расписания — каждый день в 06:15 UTC (09:15 МСК):
+
+```text
+15 6 ? * * *
+```
+
+```json
+{
+  "job": "schedule_reel",
+  "source": "pandascore",
+  "mode": "production"
+}
+```
+
 Поиск турниров для радара — каждый день в 09:00 UTC (12:00 МСК):
 
 ```text
@@ -332,7 +346,7 @@ Liquipedia shadow; claims и processed markers предотвращают пар
 }
 ```
 
-Все пять заданий используют атомарную дедупликацию. Обычный `results` сохраняет
+Все шесть заданий используют атомарную дедупликацию. Обычный `results` сохраняет
 нормализованные матчи в durable outbox, а `retry_only` обрабатывает эту очередь
 без повторного запроса источников. Расписание и итог получают отдельный ключ на
 календарный день и канал. Пустой выпуск не отправляется и не помечается
@@ -351,7 +365,7 @@ scripts/deploy_yandex_function.sh rollback dist/releases/<candidate_version_id>.
 
 Команда отказывается работать, если текущий production не совпадает с candidate
 или предыдущей версией из manifest. Второй случай позволяет повторить проверку
-после прерванного rollback. После переноса тега она повторно проверяет тег, все пять timer
+после прерванного rollback. После переноса тега она повторно проверяет тег, все шесть timer
 trigger, production dry-run и startup-ошибки предыдущей версии. Реальная
 Telegram-публикация не выполняется.
 При откате на старый код, созданный до исправления dry-run алертов, сбой
@@ -447,7 +461,7 @@ YC_FUNCTION_ID=<function_id> \
 scripts/deploy_yandex_function.sh smoke dist/releases/<candidate_version_id>.json
 ```
 
-Успех: production-тег и все пять timer trigger проверены, `statusCode=200`, тело
+Успех: production-тег и все шесть timer trigger проверены, `statusCode=200`, тело
 содержит `dry_run=true`, в логах новой версии нет startup/import/runtime ошибок.
 Отправки и запись production-состояния не выполняются.
 
@@ -461,7 +475,7 @@ YC_ROLLBACK_TAG=rollback
 YC_DRY_RUN_PAYLOAD={"limit":1,"dry_run":true}
 YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket>
 YC_DIRECT_UPLOAD_MAX_BYTES=3500000
-YC_EXPECTED_TRIGGER_COUNT=5
+YC_EXPECTED_TRIGGER_COUNT=6
 YC_PACKAGE_LIFECYCLE_MAX_DAYS=30
 YC_RELEASE_DIR=dist/releases
 ```
