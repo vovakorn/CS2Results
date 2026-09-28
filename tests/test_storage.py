@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
@@ -11,6 +12,7 @@ from cs2bot.match_sources.storage import (
     alert_key,
     claim_admin_alert,
     claim_channel_delivery,
+    claim_key,
     claim_content_delivery,
     channel_match_uid,
     clear_telegram_media_degraded,
@@ -99,6 +101,28 @@ class FakeS3:
     def delete_object(self, Bucket, Key):
         self.objects.pop(Key, None)
         return {}
+
+
+class ConcurrentClaimS3(FakeS3):
+    """Synchronize competing claim creates while keeping conditional PUT atomic."""
+
+    def __init__(self, claim_object_key: str):
+        super().__init__()
+        self.claim_object_key = claim_object_key
+        self.create_barrier = threading.Barrier(2)
+        self.write_lock = threading.Lock()
+
+    def put_object(self, *args, **kwargs):
+        is_initial_claim = (
+            kwargs.get("Key") == self.claim_object_key
+            and kwargs.get("IfNoneMatch") == "*"
+        )
+        if not is_initial_claim:
+            return super().put_object(*args, **kwargs)
+
+        self.create_barrier.wait(timeout=5)
+        with self.write_lock:
+            return super().put_object(*args, **kwargs)
 
 
 def test_threads_chain_reserves_root_then_replies_and_advances_tail():
@@ -552,6 +576,28 @@ def test_delivery_claim_prevents_concurrent_publication_and_can_be_released():
     )
     assert third is not None
     assert third.claim_id != first.claim_id
+
+
+def test_concurrent_claim_calls_only_one_winner():
+    match = _match()
+    key = claim_key(channel_match_uid(match, "global"))
+    s3 = ConcurrentClaimS3(key)
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    async def race():
+        return await asyncio.gather(
+            claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now),
+            claim_channel_delivery(match, "global", client=s3, bucket="bucket", now=now),
+        )
+
+    contenders = asyncio.run(race())
+    winners = [claim for claim in contenders if claim is not None]
+
+    assert len(winners) == 1
+    winner = winners[0]
+    stored = s3.objects[key]
+    assert stored["Metadata"]["claim-id"] == winner.claim_id
+    assert json.loads(stored["Body"])["claim_id"] == winner.claim_id
 
 
 def test_confirmed_delivery_is_reconciled_without_a_second_claim():
