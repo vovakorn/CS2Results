@@ -550,6 +550,52 @@ def test_tournament_radar_bracket_is_paginated_into_square_pngs():
     assert all(Image.open(io.BytesIO(card)).size == media_cards.SCHEDULE_CARD_SIZE for card in cards)
 
 
+@pytest.mark.parametrize("as_album", [False, True])
+@pytest.mark.parametrize("has_future_slot", [False, True])
+def test_tournament_radar_labels_tournament_content_without_assuming_playoffs(monkeypatch, as_album, has_future_slot):
+    opening = RadarBracketMatch(
+        match_id="group-1",
+        round_name="Group stage",
+        team1_name="NAVI",
+        team2_name="FaZe",
+    )
+    second = RadarBracketMatch(
+        match_id="group-2",
+        round_name="Group stage",
+        team1_name="Spirit",
+        team2_name="Vitality",
+    )
+    radar = TournamentRadar(tournament_id="3", bracket_matches=[opening, second], bracket_match_count=2)
+    if has_future_slot:
+        radar.bracket_structure = [
+            opening,
+            second,
+            RadarBracketNode(match_id="group-final", round_name="Group final", previous_match_ids=["group-1", "group-2"]),
+        ]
+
+    drawn_text = []
+    original_centered = media_cards._centered_text
+    original_aligned = media_cards._aligned_text
+
+    def capture_centered(draw, x, y, text, font, fill):
+        drawn_text.append(text)
+        return original_centered(draw, x, y, text, font, fill)
+
+    def capture_aligned(draw, x, y, text, font, fill, alignment):
+        drawn_text.append(text)
+        return original_aligned(draw, x, y, text, font, fill, alignment)
+
+    monkeypatch.setattr(media_cards, "_centered_text", capture_centered)
+    monkeypatch.setattr(media_cards, "_aligned_text", capture_aligned)
+    render = media_cards.render_tournament_radar_cards if as_album else media_cards.render_tournament_radar_card
+    render(radar, "IEM Cologne 2026 — Group stage", "Europe/Moscow", "bracket")
+
+    expected = "СЕТКА ТУРНИРА" if has_future_slot else "ПОДТВЕРЖДЁННЫЕ ПАРЫ"
+    assert drawn_text.count(expected) == 1
+    assert any("2 МАТЧА В СЕТКЕ" in text for text in drawn_text)
+    assert not any("ПЛЕЙ-ОФФ" in text for text in drawn_text)
+
+
 def test_tournament_radar_bracket_uses_links_and_team_logos(monkeypatch):
     matches = [
         RadarBracketMatch(

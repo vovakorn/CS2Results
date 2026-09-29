@@ -950,6 +950,16 @@ def _draw_radar_standings(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar:
         _aligned_text(draw, 305, y0 + 37, name.upper(), _fit_font(draw, name.upper(), 530, 34, 18), WHITE, "left")
 
 
+def _radar_bracket_content_label(matches: Sequence[RadarBracketNode]) -> str:
+    """Describe what the card shows without assuming a tournament stage."""
+    if matches and all(
+        match.team1_name and match.team2_name and not match.previous_match_ids
+        for match in matches
+    ):
+        return "ПОДТВЕРЖДЁННЫЕ ПАРЫ"
+    return "СЕТКА ТУРНИРА"
+
+
 def _radar_bracket_section_label(matches: Sequence[RadarBracketNode]) -> str:
     """Name a bracket side only when PandaScore's round labels agree."""
     labels = " ".join(match.round_name or "" for match in matches).casefold()
@@ -961,7 +971,7 @@ def _radar_bracket_section_label(matches: Sequence[RadarBracketNode]) -> str:
         return "НИЖНЯЯ СЕТКА"
     if has_upper and has_lower:
         return "ВЕРХНЯЯ И НИЖНЯЯ СЕТКИ"
-    return "СЕТКА ТУРНИРА"
+    return _radar_bracket_content_label(matches)
 
 
 def _radar_round_label(matches: Sequence[RadarBracketNode]) -> str:
@@ -1113,7 +1123,9 @@ def _draw_radar_bracket(
         _centered_text(draw, 540, 560, "СЕТКА ТУРНИРА ПОКА НЕ ОПУБЛИКОВАНА", _font(22, display=True), MUTED)
         return
 
-    _aligned_text(draw, 64, 366, _radar_bracket_section_label(matches), _font(22, display=True), WHITE, "left")
+    section_label = _radar_bracket_section_label(matches)
+    if section_label != _radar_bracket_content_label(matches):
+        _aligned_text(draw, 64, 366, section_label, _font(22, display=True), WHITE, "left")
     if page_count > 1:
         _aligned_text(draw, 1016, 368, f"{page_number}/{page_count}", _font(18, display=True), AMBER, "right")
 
@@ -1203,19 +1215,14 @@ def render_tournament_radar_card(
         chosen = "bracket" if radar.bracket_matches else "next_match"
     canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
-    subtitles = {"bracket": "СЕТКА", "next_match": "БЛИЖАЙШИЙ МАТЧ"}
-    _radar_header(canvas, draw, tournament_name, subtitles[chosen])
+    matches = _radar_bracket_nodes(radar)[:MAX_RADAR_BRACKET_NODES_PER_CARD] if chosen == "bracket" else ()
+    subtitle = _radar_bracket_content_label(matches) if chosen == "bracket" else "БЛИЖАЙШИЙ МАТЧ"
+    _radar_header(canvas, draw, tournament_name, subtitle)
     if chosen == "bracket":
-        _draw_radar_bracket(
-            canvas,
-            draw,
-            _radar_bracket_nodes(radar)[:MAX_RADAR_BRACKET_NODES_PER_CARD],
-            1,
-            1,
-        )
+        _draw_radar_bracket(canvas, draw, matches, 1, 1)
     else:
         _draw_radar_next_match(canvas, draw, radar, timezone_name)
-    facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
+    facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {_format_match_count(radar.bracket_match_count)} В СЕТКЕ"
     _centered_text(draw, 540, 1007, facts, _fit_font(draw, facts, 900, 20, 13, display=True), MUTED)
     return _as_png(canvas)
 
@@ -1226,7 +1233,7 @@ def render_tournament_radar_cards(
     timezone_name: str,
     variant: str = "auto",
 ) -> list[bytes]:
-    """Render confirmed opening pairs and the source-confirmed bracket format."""
+    """Render source-confirmed tournament pairs and bracket structure."""
     if variant not in {"auto", "bracket", "next_match"}:
         raise MediaCardError("Unsupported radar card variant")
     if variant == "next_match" or (variant == "auto" and not radar.bracket_matches):
@@ -1238,9 +1245,9 @@ def render_tournament_radar_cards(
     for page_number, matches in enumerate(pages, start=1):
         canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
         draw = ImageDraw.Draw(canvas, "RGBA")
-        _radar_header(canvas, draw, tournament_name, "СЕТКА")
+        _radar_header(canvas, draw, tournament_name, _radar_bracket_content_label(matches))
         _draw_radar_bracket(canvas, draw, matches, page_number, len(pages))
-        facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
+        facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {_format_match_count(radar.bracket_match_count)} В СЕТКЕ"
         _centered_text(draw, 540, 1007, facts, _fit_font(draw, facts, 900, 20, 13, display=True), MUTED)
         rendered.append(_as_png(canvas))
     return rendered
@@ -2307,7 +2314,7 @@ def render_schedule_cards(
     ]
 
 
-def _context_cover_match_count(count: int) -> str:
+def _format_match_count(count: int) -> str:
     if 11 <= count % 100 <= 14:
         noun = "МАТЧЕЙ"
     elif count % 10 == 1:
@@ -2363,7 +2370,7 @@ def _render_schedule_context_cover(
         draw,
         width // 2,
         782,
-        f"{_context_cover_match_count(len(matches))} · {format_label}",
+        f"{_format_match_count(len(matches))} · {format_label}",
         _font(42, display=True),
         AMBER,
     )
