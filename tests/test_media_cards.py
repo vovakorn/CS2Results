@@ -550,6 +550,126 @@ def test_tournament_radar_bracket_is_paginated_into_square_pngs():
     assert all(Image.open(io.BytesIO(card)).size == media_cards.SCHEDULE_CARD_SIZE for card in cards)
 
 
+def test_tournament_radar_single_pair_uses_large_match_composition(monkeypatch):
+    match = RadarBracketMatch(match_id="group-1", round_name="Group stage", team1_name="NAVI", team2_name="FaZe")
+    radar = TournamentRadar(tournament_id="3", bracket_matches=[match], bracket_match_count=1)
+    logo_sizes = []
+    original = media_cards._draw_logo
+
+    def capture_logo(canvas, draw, center, diameter, *args, **kwargs):
+        logo_sizes.append(diameter)
+        return original(canvas, draw, center, diameter, *args, **kwargs)
+
+    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
+    data = media_cards.render_tournament_radar_card(radar, "IEM Cologne 2026", "Europe/Moscow", "bracket")
+
+    assert len(logo_sizes) == 2 and min(logo_sizes) >= 140
+    assert media_cards._radar_bracket_content_label([match]) == "ПОДТВЕРЖДЁННАЯ ПАРА"
+    assert Image.open(io.BytesIO(data)).size == (1080, 1080)
+
+
+def test_tournament_radar_four_pairs_get_large_non_overlapping_cards(monkeypatch):
+    matches = [
+        RadarBracketMatch(
+            match_id=f"group-{index}",
+            round_name="Group stage",
+            team1_name=f"Natus Vincere International Squad {index}",
+            team2_name=f"Team Counterstrike Academy {index}",
+        )
+        for index in range(4)
+    ]
+    boxes = []
+    original = media_cards._draw_radar_bracket_match
+
+    def capture_match(canvas, draw, match, box):
+        boxes.append(box)
+        return original(canvas, draw, match, box)
+
+    monkeypatch.setattr(media_cards, "_draw_radar_bracket_match", capture_match)
+    media_cards.render_tournament_radar_cards(
+        TournamentRadar(tournament_id="3", bracket_matches=matches, bracket_match_count=4),
+        "IEM Cologne 2026",
+        "Europe/Moscow",
+        "bracket",
+    )
+
+    assert len(boxes) == 4
+    assert min(y1 - y0 for _, y0, _, y1 in boxes) >= 230
+    assert all(410 <= y0 < y1 <= 950 for _, y0, _, y1 in boxes)
+    for index, left in enumerate(boxes):
+        for right in boxes[index + 1:]:
+            assert left[2] <= right[0] or right[2] <= left[0] or left[3] <= right[1] or right[3] <= left[1]
+
+
+def test_tournament_radar_dense_structure_keeps_local_links_on_readable_pages():
+    opening = [
+        RadarBracketMatch(
+            match_id=f"opening-{index}",
+            round_name="Opening round",
+            team1_name=f"Team Alpha {index}",
+            team2_name=f"Team Beta {index}",
+        )
+        for index in range(8)
+    ]
+    next_round = [
+        RadarBracketNode(
+            match_id=f"quarter-{index}",
+            round_name="Upper quarterfinal",
+            previous_match_ids=[f"opening-{2 * index}", f"opening-{2 * index + 1}"],
+        )
+        for index in range(4)
+    ]
+    structure = [*opening, *next_round]
+    pages = media_cards._paginate_radar_bracket_nodes(structure)
+    cards = media_cards.render_tournament_radar_cards(
+        TournamentRadar(tournament_id="3", bracket_matches=opening, bracket_structure=structure),
+        "IEM Cologne 2026",
+        "Europe/Moscow",
+        "bracket",
+    )
+
+    assert len(pages) == len(cards) == 4
+    assert all(len(page) == 3 for page in pages)
+    assert all(
+        set(page[-1].previous_match_ids) == {node.match_id for node in page[:-1]}
+        for page in pages
+    )
+    assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
+
+
+def test_tournament_radar_large_structures_stay_within_telegram_album_limit(monkeypatch):
+    flat = [
+        RadarBracketMatch(match_id=str(index), team1_name=f"Team {index}", team2_name=f"Opponent {index}")
+        for index in range(48)
+    ]
+    chain = [
+        RadarBracketNode(match_id=str(index), previous_match_ids=[str(index - 1)] if index else [])
+        for index in range(48)
+    ]
+
+    for nodes in (flat, chain):
+        pages = media_cards._paginate_radar_bracket_nodes(nodes)
+        assert len(pages) <= 10
+        assert sorted(node.match_id for page in pages for node in page) == sorted(node.match_id for node in nodes)
+
+    boxes = []
+    original = media_cards._draw_radar_vertical_match
+
+    def capture_match(canvas, draw, match, box):
+        boxes.append(box)
+        return original(canvas, draw, match, box)
+
+    monkeypatch.setattr(media_cards, "_draw_radar_vertical_match", capture_match)
+    media_cards.render_tournament_radar_card(
+        TournamentRadar(tournament_id="3", bracket_structure=chain, bracket_match_count=48),
+        "IEM Cologne 2026",
+        "Europe/Moscow",
+        "bracket",
+    )
+    assert len(boxes) == 5
+    assert all(x1 - x0 > 900 and y1 - y0 >= 90 for x0, y0, x1, y1 in boxes)
+
+
 @pytest.mark.parametrize("as_album", [False, True])
 @pytest.mark.parametrize("has_future_slot", [False, True])
 def test_tournament_radar_labels_tournament_content_without_assuming_playoffs(monkeypatch, as_album, has_future_slot):
@@ -592,7 +712,8 @@ def test_tournament_radar_labels_tournament_content_without_assuming_playoffs(mo
 
     expected = "СЕТКА ТУРНИРА" if has_future_slot else "ПОДТВЕРЖДЁННЫЕ ПАРЫ"
     assert drawn_text.count(expected) == 1
-    assert any("2 МАТЧА В СЕТКЕ" in text for text in drawn_text)
+    expected_count = "2 МАТЧА В СЕТКЕ" if has_future_slot else "2 МАТЧА"
+    assert any(text.endswith(expected_count) for text in drawn_text)
     assert not any("ПЛЕЙ-ОФФ" in text for text in drawn_text)
 
 
