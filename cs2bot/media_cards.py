@@ -36,7 +36,7 @@ MAX_SCHEDULE_TOTAL_MATCHES = 20
 MAX_TOURNAMENT_STANDINGS = 64
 TOURNAMENT_STANDINGS_PER_CARD = 8
 TOURNAMENT_VRS_PER_CARD = 8
-MAX_RADAR_BRACKET_NODES_PER_CARD = 12
+MAX_RADAR_BRACKET_NODES_PER_CARD = 8
 MAX_LOGO_BYTES = 2_000_000
 MAX_LOGO_PIXELS = 4_000_000
 # PandaScore's CDN can take longer than two seconds to start a cold response.
@@ -950,6 +950,20 @@ def _draw_radar_standings(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar:
         _aligned_text(draw, 305, y0 + 37, name.upper(), _fit_font(draw, name.upper(), 530, 34, 18), WHITE, "left")
 
 
+def _radar_has_only_confirmed_pairs(matches: Sequence[RadarBracketNode]) -> bool:
+    return bool(matches) and all(
+        match.team1_name and match.team2_name and not match.previous_match_ids
+        for match in matches
+    )
+
+
+def _radar_bracket_content_label(matches: Sequence[RadarBracketNode]) -> str:
+    """Describe what the card shows without assuming a tournament stage."""
+    if _radar_has_only_confirmed_pairs(matches):
+        return "ПОДТВЕРЖДЁННАЯ ПАРА" if len(matches) == 1 else "ПОДТВЕРЖДЁННЫЕ ПАРЫ"
+    return "СЕТКА ТУРНИРА"
+
+
 def _radar_bracket_section_label(matches: Sequence[RadarBracketNode]) -> str:
     """Name a bracket side only when PandaScore's round labels agree."""
     labels = " ".join(match.round_name or "" for match in matches).casefold()
@@ -961,7 +975,7 @@ def _radar_bracket_section_label(matches: Sequence[RadarBracketNode]) -> str:
         return "НИЖНЯЯ СЕТКА"
     if has_upper and has_lower:
         return "ВЕРХНЯЯ И НИЖНЯЯ СЕТКИ"
-    return "СЕТКА ТУРНИРА"
+    return _radar_bracket_content_label(matches)
 
 
 def _radar_round_label(matches: Sequence[RadarBracketNode]) -> str:
@@ -1034,29 +1048,31 @@ def _draw_radar_bracket_match(
 ) -> None:
     x0, y0, x1, y1 = box
     card_height = y1 - y0
-    header_height = min(32, max(24, card_height // 4))
+    header_height = min(46, max(20, card_height // 4))
     draw.rounded_rectangle(box, radius=18, fill=(*PANEL, 244), outline=(72, 109, 148, 150), width=2)
     draw.rounded_rectangle((x0, y0, x1, y0 + header_height), radius=18, fill=(*PANEL_LIGHT, 246))
     draw.rectangle((x0, y0 + header_height - 18, x1, y0 + header_height), fill=(*PANEL_LIGHT, 246))
     draw.line((x0 + 14, y0 + header_height, x1 - 14, y0 + header_height), fill=(80, 119, 159, 160), width=1)
 
     label = _radar_round_label([match])
+    is_live = (match.status or "").casefold() == "running"
     _aligned_text(
         draw,
         x0 + 16,
-        y0 + max(5, (header_height - 18) // 2),
+        y0 + max(3, (header_height - 18) // 2),
         label,
-        _fit_font(draw, label, x1 - x0 - 32, 14, 9, display=True),
+        _fit_font(draw, label, x1 - x0 - (100 if is_live else 32), min(18, max(11, header_height // 2)), 9, display=True),
         MUTED,
         "left",
     )
-    if (match.status or "").casefold() == "running":
-        _aligned_text(draw, x1 - 16, y0 + max(5, (header_height - 18) // 2), "LIVE", _font(13, display=True), AMBER, "right")
+    if is_live:
+        _aligned_text(draw, x1 - 16, y0 + max(3, (header_height - 18) // 2), "LIVE", _font(13, display=True), AMBER, "right")
 
     row_height = (card_height - header_height) // 2
-    logo_diameter = 34 if card_height < 112 else 40
-    name_x = x0 + logo_diameter + 27
-    name_width = x1 - name_x - 16
+    logo_diameter = min(88, max(18, row_height - 14))
+    logo_x = x0 + 18 + logo_diameter // 2
+    name_x = x0 + logo_diameter + 30
+    name_width = x1 - name_x - 20
     first_y = y0 + header_height + row_height // 2
     second_y = y0 + header_height + row_height + row_height // 2
     team1_name = match.team1_name or "TBD"
@@ -1064,7 +1080,7 @@ def _draw_radar_bracket_match(
     _draw_logo(
         canvas,
         draw,
-        (x0 + 22, first_y),
+        (logo_x, first_y),
         logo_diameter,
         team1_name if match.team1_name else "?",
         match.team1_logo_url,
@@ -1074,32 +1090,130 @@ def _draw_radar_bracket_match(
     _draw_logo(
         canvas,
         draw,
-        (x0 + 22, second_y),
+        (logo_x, second_y),
         logo_diameter,
         team2_name if match.team2_name else "?",
         match.team2_logo_url,
         AMBER,
         match.team2_logo_fallback_url,
     )
-    _aligned_text(
-        draw,
-        name_x,
-        first_y - 13,
-        team1_name.upper(),
-        _fit_font(draw, team1_name.upper(), name_width, 21 if card_height >= 112 else 18, 9),
-        WHITE,
-        "left",
-    )
-    _aligned_text(
-        draw,
-        name_x,
-        second_y - 13,
-        team2_name.upper(),
-        _fit_font(draw, team2_name.upper(), name_width, 21 if card_height >= 112 else 18, 9),
-        WHITE,
-        "left",
-    )
+    _draw_radar_team_name(draw, name_x, first_y, team1_name, name_width, row_height)
+    _draw_radar_team_name(draw, name_x, second_y, team2_name, name_width, row_height)
     draw.line((x0 + 16, y0 + header_height + row_height, x1 - 16, y0 + header_height + row_height), fill=(80, 119, 159, 135), width=1)
+
+
+def _draw_radar_team_name(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    center_y: int,
+    name: str,
+    max_width: int,
+    row_height: int,
+) -> None:
+    text = name.upper()
+    words = text.split()
+    max_size = min(34, max(12, round(row_height * 0.46)))
+    for size in range(max_size, 8, -2):
+        font = _font(size)
+        if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+            lines = [text]
+            break
+        if row_height >= size * 2 + 10:
+            pairs = [
+                (" ".join(words[:split]), " ".join(words[split:]))
+                for split in range(1, len(words))
+            ]
+            fitting = [
+                pair for pair in pairs
+                if all(draw.textbbox((0, 0), line, font=font)[2] <= max_width for line in pair)
+            ]
+            if fitting:
+                lines = list(min(fitting, key=lambda pair: abs(
+                    draw.textbbox((0, 0), pair[0], font=font)[2]
+                    - draw.textbbox((0, 0), pair[1], font=font)[2]
+                )))
+                break
+    else:
+        font = _font(9)
+        shortened = text
+        while shortened and draw.textbbox((0, 0), shortened + "...", font=font)[2] > max_width:
+            shortened = shortened[:-1]
+        lines = [shortened.rstrip() + "..."]
+
+    boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
+    heights = [box[3] - box[1] for box in boxes]
+    gap = 3
+    ink_y = center_y - (sum(heights) + gap * (len(lines) - 1)) / 2
+    for line, box, height in zip(lines, boxes, heights):
+        _aligned_text(draw, x, round(ink_y - box[1]), line, font, WHITE, "left")
+        ink_y += height + gap
+
+
+def _draw_radar_single_pair(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    match: RadarBracketNode,
+) -> None:
+    x0, y0, x1, y1 = 56, 420, 1024, 940
+    draw.rounded_rectangle((x0, y0, x1, y1), radius=30, fill=(*PANEL, 244), outline=(72, 109, 148, 165), width=2)
+    draw.rounded_rectangle((x0, y0, x1, y0 + 62), radius=30, fill=(*PANEL_LIGHT, 246))
+    draw.rectangle((x0, y0 + 32, x1, y0 + 62), fill=(*PANEL_LIGHT, 246))
+    draw.line((x0 + 24, y0 + 62, x1 - 24, y0 + 62), fill=(80, 119, 159, 160), width=1)
+    label = _radar_round_label([match]) if match.round_name else "МАТЧ ТУРНИРА"
+    is_live = (match.status or "").casefold() == "running"
+    _centered_text(draw, 540, y0 + 20, label, _fit_font(draw, label, 740 if is_live else 850, 23, 14, display=True), MUTED)
+    if is_live:
+        _aligned_text(draw, x1 - 25, y0 + 23, "LIVE", _font(18, display=True), AMBER, "right")
+    draw.line((540, 510, 540, 588), fill=(80, 119, 159, 110), width=2)
+    draw.line((540, 688, 540, 905), fill=(80, 119, 159, 110), width=2)
+    _draw_logo(canvas, draw, (286, 630), 168, match.team1_name, match.team1_logo_url, CYAN, match.team1_logo_fallback_url)
+    _draw_logo(canvas, draw, (794, 630), 168, match.team2_name, match.team2_logo_url, AMBER, match.team2_logo_fallback_url)
+    _centered_text(draw, 540, 622, "VS", _font(60, display=True), WHITE)
+    _centered_team_name(draw, 286, 790, match.team1_name, 396, 38, WHITE, min_size=24)
+    _centered_team_name(draw, 794, 790, match.team2_name, 396, 38, WHITE, min_size=24)
+
+
+def _draw_radar_vertical_matches(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    matches: Sequence[RadarBracketNode],
+) -> None:
+    top, bottom, gap = 420, 950, 12
+    card_height = (bottom - top - gap * (len(matches) - 1)) // len(matches)
+    for index, match in enumerate(matches):
+        y0 = top + index * (card_height + gap)
+        if index and matches[index - 1].match_id in match.previous_match_ids:
+            arrow_y = y0 - gap // 2
+            draw.line((540, arrow_y - 5, 540, arrow_y + 2), fill=(88, 131, 171, 190), width=3)
+            draw.polygon([(535, arrow_y + 1), (540, arrow_y + 5), (545, arrow_y + 1)], fill=(88, 131, 171, 190))
+        _draw_radar_vertical_match(canvas, draw, match, (56, y0, 1024, y0 + card_height))
+
+
+def _draw_radar_vertical_match(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    match: RadarBracketNode,
+    box: tuple[int, int, int, int],
+) -> None:
+    x0, y0, x1, y1 = box
+    header_height = 26
+    draw.rounded_rectangle(box, radius=16, fill=(*PANEL, 244), outline=(72, 109, 148, 150), width=2)
+    draw.rounded_rectangle((x0, y0, x1, y0 + header_height), radius=16, fill=(*PANEL_LIGHT, 246))
+    draw.rectangle((x0, y0 + 14, x1, y0 + header_height), fill=(*PANEL_LIGHT, 246))
+    draw.line((x0 + 16, y0 + header_height, x1 - 16, y0 + header_height), fill=(80, 119, 159, 160), width=1)
+    label = _radar_round_label([match]) if match.round_name else "МАТЧ ТУРНИРА"
+    _aligned_text(draw, x0 + 16, y0 + 5, label, _fit_font(draw, label, 760, 15, 10, display=True), MUTED, "left")
+    if (match.status or "").casefold() == "running":
+        _aligned_text(draw, x1 - 16, y0 + 5, "LIVE", _font(13, display=True), AMBER, "right")
+
+    team1_name = match.team1_name or "TBD"
+    team2_name = match.team2_name or "TBD"
+    logo_y = y0 + header_height + (y1 - y0 - header_height) // 2
+    _draw_logo(canvas, draw, (94, logo_y), 42, team1_name if match.team1_name else "?", match.team1_logo_url, CYAN, match.team1_logo_fallback_url)
+    _draw_logo(canvas, draw, (986, logo_y), 42, team2_name if match.team2_name else "?", match.team2_logo_url, AMBER, match.team2_logo_fallback_url)
+    _centered_team_name(draw, 292, y0 + 37, team1_name, 300, 28, WHITE, min_size=18)
+    _centered_text(draw, 540, y0 + 48, "VS", _font(27, display=True), MUTED)
+    _centered_team_name(draw, 788, y0 + 37, team2_name, 300, 28, WHITE, min_size=18)
 
 
 def _draw_radar_bracket(
@@ -1113,31 +1227,50 @@ def _draw_radar_bracket(
         _centered_text(draw, 540, 560, "СЕТКА ТУРНИРА ПОКА НЕ ОПУБЛИКОВАНА", _font(22, display=True), MUTED)
         return
 
-    _aligned_text(draw, 64, 366, _radar_bracket_section_label(matches), _font(22, display=True), WHITE, "left")
+    section_label = _radar_bracket_section_label(matches)
+    if section_label != _radar_bracket_content_label(matches):
+        _aligned_text(draw, 64, 366, section_label, _font(22, display=True), WHITE, "left")
     if page_count > 1:
         _aligned_text(draw, 1016, 368, f"{page_number}/{page_count}", _font(18, display=True), AMBER, "right")
 
+    if len(matches) == 1 and _radar_has_only_confirmed_pairs(matches):
+        _draw_radar_single_pair(canvas, draw, matches[0])
+        return
+
     columns, _ = _radar_bracket_columns(matches)
+    if len(columns) > 3:
+        _draw_radar_vertical_matches(canvas, draw, matches)
+        return
+    flat_pairs = _radar_has_only_confirmed_pairs(matches)
+    linked = any(match.previous_match_ids for match in matches)
+    max_column_size = max(len(column) for column in columns)
     outer_left, outer_right = 56, 1024
     column_gap = 20
     column_width = (outer_right - outer_left - column_gap * (len(columns) - 1)) // len(columns)
     cards: dict[str, tuple[int, int, int, int]] = {}
-    top, bottom = 442, 930
+    top, bottom = (410 if flat_pairs else 430), 950
     for column_index, column_matches in enumerate(columns):
         x0 = outer_left + column_index * (column_width + column_gap)
         x1 = x0 + column_width
-        label = _radar_round_label(column_matches)
-        _centered_text(
-            draw,
-            (x0 + x1) // 2,
-            405,
-            label,
-            _fit_font(draw, label, column_width - 12, 15, 9, display=True),
-            MUTED,
-        )
-        row_gap = 14
+        if not flat_pairs:
+            label = _radar_round_label(column_matches)
+            _centered_text(
+                draw,
+                (x0 + x1) // 2,
+                392,
+                label,
+                _fit_font(draw, label, column_width - 12, 15, 9, display=True),
+                MUTED,
+            )
+        row_gap = 20
         available_height = bottom - top - row_gap * (len(column_matches) - 1)
-        card_height = min(128, available_height // len(column_matches))
+        if linked and max_column_size > 1:
+            max_card_height = 220
+        elif flat_pairs:
+            max_card_height = 400 if len(column_matches) == 1 else 235
+        else:
+            max_card_height = 360 if len(column_matches) == 1 else 220
+        card_height = min(max_card_height, available_height // len(column_matches))
         used_height = card_height * len(column_matches) + row_gap * (len(column_matches) - 1)
         y0 = top + (bottom - top - used_height) // 2
         for match in column_matches:
@@ -1189,6 +1322,68 @@ def _radar_bracket_nodes(radar: TournamentRadar) -> Sequence[RadarBracketNode]:
     return radar.bracket_structure or radar.bracket_matches
 
 
+def _radar_bracket_page_fits(matches: Sequence[RadarBracketNode], max_nodes: int) -> bool:
+    if len(matches) > max_nodes:
+        return False
+    columns, _ = _radar_bracket_columns(matches)
+    return len(columns) <= 3 and all(len(column) <= 4 for column in columns)
+
+
+def _paginate_radar_bracket_nodes(nodes: Sequence[RadarBracketNode]) -> list[list[RadarBracketNode]]:
+    if not nodes:
+        return []
+    if _radar_has_only_confirmed_pairs(nodes):
+        page_size = 4 if len(nodes) <= 40 else MAX_RADAR_BRACKET_NODES_PER_CARD
+        return [list(nodes[index:index + page_size]) for index in range(0, len(nodes), page_size)]
+
+    max_nodes = 4 if len(nodes) <= 30 else MAX_RADAR_BRACKET_NODES_PER_CARD
+    by_id = {node.match_id: node for node in nodes}
+    assigned: set[str] = set()
+    groups: list[list[RadarBracketNode]] = []
+    for node in nodes:
+        if not node.previous_match_ids or node.match_id in assigned:
+            continue
+        parents = [
+            by_id[parent_id]
+            for parent_id in dict.fromkeys(node.previous_match_ids)
+            if parent_id in by_id and parent_id != node.match_id and parent_id not in assigned
+        ]
+        group = [*parents, node]
+        groups.append(group)
+        assigned.update(item.match_id for item in group)
+    groups.extend([[node] for node in nodes if node.match_id not in assigned])
+
+    pages: list[list[RadarBracketNode]] = []
+    page: list[RadarBracketNode] = []
+    for group in groups:
+        if page and not _radar_bracket_page_fits([*page, *group], max_nodes):
+            pages.append(page)
+            page = []
+        if _radar_bracket_page_fits(group, max_nodes):
+            page.extend(group)
+            continue
+        for node in group:
+            if page and not _radar_bracket_page_fits([*page, node], max_nodes):
+                pages.append(page)
+                page = []
+            page.append(node)
+    if page:
+        pages.append(page)
+    if len(pages) > 10:
+        return [
+            list(nodes[index:index + 5])
+            for index in range(0, len(nodes), 5)
+        ]
+    return pages
+
+
+def _radar_facts(radar: TournamentRadar, matches: Sequence[RadarBracketNode]) -> str:
+    match_count = _format_match_count(radar.bracket_match_count)
+    if not _radar_has_only_confirmed_pairs(matches):
+        match_count += " В СЕТКЕ"
+    return f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {match_count}"
+
+
 def render_tournament_radar_card(
     radar: TournamentRadar,
     tournament_name: str,
@@ -1203,19 +1398,15 @@ def render_tournament_radar_card(
         chosen = "bracket" if radar.bracket_matches else "next_match"
     canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
     draw = ImageDraw.Draw(canvas, "RGBA")
-    subtitles = {"bracket": "СЕТКА", "next_match": "БЛИЖАЙШИЙ МАТЧ"}
-    _radar_header(canvas, draw, tournament_name, subtitles[chosen])
+    pages = _paginate_radar_bracket_nodes(_radar_bracket_nodes(radar)) if chosen == "bracket" else []
+    matches = pages[0] if pages else ()
+    subtitle = _radar_bracket_content_label(matches) if chosen == "bracket" else "БЛИЖАЙШИЙ МАТЧ"
+    _radar_header(canvas, draw, tournament_name, subtitle)
     if chosen == "bracket":
-        _draw_radar_bracket(
-            canvas,
-            draw,
-            _radar_bracket_nodes(radar)[:MAX_RADAR_BRACKET_NODES_PER_CARD],
-            1,
-            1,
-        )
+        _draw_radar_bracket(canvas, draw, matches, 1, len(pages) or 1)
     else:
         _draw_radar_next_match(canvas, draw, radar, timezone_name)
-    facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
+    facts = _radar_facts(radar, matches)
     _centered_text(draw, 540, 1007, facts, _fit_font(draw, facts, 900, 20, 13, display=True), MUTED)
     return _as_png(canvas)
 
@@ -1226,21 +1417,20 @@ def render_tournament_radar_cards(
     timezone_name: str,
     variant: str = "auto",
 ) -> list[bytes]:
-    """Render confirmed opening pairs and the source-confirmed bracket format."""
+    """Render source-confirmed tournament pairs and bracket structure."""
     if variant not in {"auto", "bracket", "next_match"}:
         raise MediaCardError("Unsupported radar card variant")
     if variant == "next_match" or (variant == "auto" and not radar.bracket_matches):
         return [render_tournament_radar_card(radar, tournament_name, timezone_name, "next_match")]
     nodes = _radar_bracket_nodes(radar)
-    page_size = MAX_RADAR_BRACKET_NODES_PER_CARD if radar.bracket_structure else 4
-    pages = [nodes[index:index + page_size] for index in range(0, len(nodes), page_size)]
+    pages = _paginate_radar_bracket_nodes(nodes)
     rendered: list[bytes] = []
     for page_number, matches in enumerate(pages, start=1):
         canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=98).convert("RGBA")
         draw = ImageDraw.Draw(canvas, "RGBA")
-        _radar_header(canvas, draw, tournament_name, "СЕТКА")
+        _radar_header(canvas, draw, tournament_name, _radar_bracket_content_label(matches))
         _draw_radar_bracket(canvas, draw, matches, page_number, len(pages))
-        facts = f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {radar.bracket_match_count} МАТЧЕЙ В СЕТКЕ"
+        facts = _radar_facts(radar, matches)
         _centered_text(draw, 540, 1007, facts, _fit_font(draw, facts, 900, 20, 13, display=True), MUTED)
         rendered.append(_as_png(canvas))
     return rendered
@@ -1724,6 +1914,7 @@ def can_render_tournament_standings(placements: Sequence[TournamentPlacement]) -
     """Only render a complete, source-confirmed standings table."""
     return (
         2 <= len(placements) <= MAX_TOURNAMENT_STANDINGS
+        and len(placements) % 2 == 0
         and all(item.placement and item.team_name and item.prize_usd is not None for item in placements)
     )
 
@@ -1736,6 +1927,50 @@ def _standings_row_color(placement: str) -> tuple[int, int, int]:
     if placement in {"3", "4", "3-4", "3–4"}:
         return STANDINGS_BRONZE
     return WHITE
+
+
+def _tournament_table_layout(
+    row_count: int,
+    *,
+    champion_index: int | None = None,
+) -> tuple[int, list[int]]:
+    """Fill the table area while leaving room for the title and source line."""
+    available_rows_height = 946 - 340 - 62
+    if row_count <= 5 and champion_index is not None and row_count > 1:
+        champion_height = 160 if row_count <= 4 else 128
+        other_height = min(128, (available_rows_height - champion_height) // (row_count - 1))
+        row_heights = [other_height] * row_count
+        row_heights[champion_index] = champion_height
+    else:
+        row_heights = [min(136, available_rows_height // row_count)] * row_count
+    table_height = 62 + sum(row_heights)
+    return 340 + (606 - table_height) // 2, row_heights
+
+
+def _table_team_lines(
+    draw: ImageDraw.ImageDraw,
+    team_name: str,
+    max_width: int,
+    preferred_size: int,
+    two_line_size: int,
+) -> tuple[list[str], ImageFont.FreeTypeFont]:
+    """Use the added row height to keep long team names legible."""
+    preferred_font = _font(preferred_size)
+    if draw.textlength(team_name, font=preferred_font) <= max_width:
+        return [team_name], preferred_font
+    words = team_name.split()
+    if len(words) > 1:
+        for size in range(two_line_size, 19, -2):
+            font = _font(size)
+            candidates = []
+            for split in range(1, len(words)):
+                lines = [" ".join(words[:split]), " ".join(words[split:])]
+                widths = [draw.textlength(line, font=font) for line in lines]
+                if max(widths) <= max_width:
+                    candidates.append((abs(widths[0] - widths[1]), lines))
+            if candidates:
+                return min(candidates, key=lambda candidate: candidate[0])[1], font
+    return [team_name], _fit_font(draw, team_name, max_width, preferred_size, 16)
 
 
 def _metallic_shade(
@@ -1767,6 +2002,9 @@ def _draw_standings_medal(
     center_x: int,
     row_top: int,
     placement: str,
+    *,
+    row_height: int = 68,
+    prominent: bool = False,
 ) -> None:
     """Give podium badges a restrained metal highlight without changing their shape."""
     color = _standings_row_color(placement)
@@ -1774,7 +2012,7 @@ def _draw_standings_medal(
         _centered_text(
             draw,
             center_x,
-            row_top + 18,
+            row_top + (row_height - 32) // 2,
             placement,
             _fit_font(draw, placement, 110, 32, 16, display=True),
             WHITE,
@@ -1782,9 +2020,13 @@ def _draw_standings_medal(
         return
 
     is_single_place = placement in {"1", "2", "3", "4"}
-    badge_width = 46 if is_single_place else 84
-    badge_height = 46 if is_single_place else 44
-    badge_top = row_top + (68 - badge_height) // 2
+    if is_single_place and row_height > 68:
+        badge_width = badge_height = 62 if prominent else 54
+    elif not is_single_place and row_height > 68:
+        badge_width, badge_height = (102, 56) if prominent else (94, 52)
+    else:
+        badge_width, badge_height = (46, 46) if is_single_place else (84, 44)
+    badge_top = row_top + (row_height - badge_height) // 2
     badge_left = center_x - badge_width // 2
     badge_box = (badge_left, badge_top, badge_left + badge_width - 1, badge_top + badge_height - 1)
     shadow, base, highlight = STANDINGS_METAL_PALETTES[color]
@@ -1808,9 +2050,9 @@ def _draw_standings_medal(
     _centered_text(
         draw,
         center_x,
-        badge_top + (8 if is_single_place else 7),
+        badge_top + (badge_height - 30) // 2,
         placement,
-        _fit_font(draw, placement, badge_width - 12, 28, 14, display=True),
+        _fit_font(draw, placement, badge_width - 12, 30 if row_height > 68 else 28, 14, display=True),
         STANDINGS_MEDAL_TEXT,
     )
 
@@ -1872,10 +2114,10 @@ def _render_tournament_standings_page(
         CYAN,
     )
 
-    row_height = 68
     header_height = 62
-    table_height = header_height + row_height * len(placements)
-    table_top = 340 + (TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
+    champion_index = next((index for index, item in enumerate(placements) if item.placement == "1"), None)
+    table_top, row_heights = _tournament_table_layout(len(placements), champion_index=champion_index)
+    table_height = header_height + sum(row_heights)
     table = (64, table_top, 1016, table_top + table_height)
     _chamfered_panel(draw, table, cut=20)
     x0, y0, x1, y1 = table
@@ -1892,32 +2134,62 @@ def _render_tournament_standings_page(
     ]
     draw.polygon(header_points, fill=(*STANDINGS_HEADER, 255))
     draw.line(header_points + [header_points[0]], fill=(*STANDINGS_HEADER_LINE, 230), width=2)
+    sparse = len(placements) <= 5
+    if sparse and champion_index is not None:
+        champion_top = y0 + header_height + sum(row_heights[:champion_index])
+        champion_bottom = champion_top + row_heights[champion_index]
+        draw.rectangle((x0 + 2, champion_top + 1, x1 - 2, champion_bottom - 1), fill=(30, 32, 32, 255))
+        draw.rectangle((x0 + 4, champion_top + 12, x0 + 9, champion_bottom - 12), fill=(*STANDINGS_GOLD, 255))
     draw.line((place_divider, y0 + 14, place_divider, y1 - 14), fill=(*STANDINGS_HEADER_LINE, 145), width=1)
     draw.line((prize_divider, y0 + 14, prize_divider, y1 - 14), fill=(*STANDINGS_HEADER_LINE, 145), width=1)
     _centered_text(draw, (x0 + place_divider) // 2, y0 + 17, "МЕСТО", _font(22, display=True), WHITE)
     _aligned_text(draw, place_divider + 30, y0 + 17, "КОМАНДА", _font(22, display=True), WHITE, "left")
     _centered_text(draw, (prize_divider + x1) // 2, y0 + 17, "ПРИЗОВЫЕ", _font(22, display=True), WHITE)
 
+    row_top = y0 + header_height
     for index, item in enumerate(placements):
-        row_top = y0 + header_height + row_height * index
+        row_height = row_heights[index]
         if index:
             draw.line((x0 + 18, row_top, x1 - 18, row_top), fill=(*AMBER, 125), width=1)
         highlight = _standings_row_color(item.placement)
-        _draw_standings_medal(canvas, draw, (x0 + place_divider) // 2, row_top, item.placement)
+        champion = sparse and index == champion_index
+        _draw_standings_medal(canvas, draw, (x0 + place_divider) // 2, row_top, item.placement,
+                              row_height=row_height, prominent=champion)
         team_name = item.team_name.upper()
-        team_font = _fit_font(draw, team_name, prize_divider - place_divider - 58, 36, 16)
-        if highlight in STANDINGS_METAL_PALETTES:
-            _draw_standings_metal_text(canvas, draw, place_divider + 30, row_top + 15,
-                                        team_name, team_font, highlight)
+        team_size = 46 if champion else (42 if sparse else 36)
+        if sparse:
+            team_lines, team_font = _table_team_lines(
+                draw, team_name, prize_divider - place_divider - 58,
+                team_size, (36 if row_height >= 150 else 28) if champion else 34,
+            )
         else:
-            _aligned_text(draw, place_divider + 30, row_top + 15, team_name, team_font, highlight, "left")
+            team_lines = [team_name]
+            team_font = _fit_font(draw, team_name, prize_divider - place_divider - 58, team_size, 16)
+        if champion:
+            team_y = row_top + ((64 if row_height >= 150 else 56) if len(team_lines) > 1 else 69)
+        else:
+            text_height = len(team_lines) * team_font.size + (len(team_lines) - 1) * 7
+            team_y = row_top + (row_height - text_height) // 2 - 1
+        if champion:
+            _aligned_text(draw, place_divider + 30, row_top + 35, "ПОБЕДИТЕЛЬ",
+                          _font(19, display=True), STANDINGS_GOLD, "left")
+        for line in team_lines:
+            if highlight in STANDINGS_METAL_PALETTES:
+                _draw_standings_metal_text(canvas, draw, place_divider + 30, team_y,
+                                            line, team_font, highlight)
+            else:
+                _aligned_text(draw, place_divider + 30, team_y, line, team_font, highlight, "left")
+            team_y += team_font.size + 7
         amount = _format_usd(item.prize_usd or 0)
-        amount_font = _fit_font(draw, amount, 225, 30, 15, display=True)
+        amount_size = 42 if champion else (36 if sparse else 30)
+        amount_font = _fit_font(draw, amount, 225, amount_size, 15, display=True)
+        amount_y = row_top + 69 if champion else row_top + (row_height - amount_size) // 2 - 1
         if highlight in STANDINGS_METAL_PALETTES:
-            _draw_standings_metal_text(canvas, draw, (prize_divider + x1) // 2, row_top + 18,
+            _draw_standings_metal_text(canvas, draw, (prize_divider + x1) // 2, amount_y,
                                         amount, amount_font, highlight, centered=True)
         else:
-            _centered_text(draw, (prize_divider + x1) // 2, row_top + 18, amount, amount_font, highlight)
+            _centered_text(draw, (prize_divider + x1) // 2, amount_y, amount, amount_font, highlight)
+        row_top += row_height
 
     if page_count > 1:
         _centered_text(draw, width // 2, 972, f"СТРАНИЦА {page_number}/{page_count}", _font(20, display=True), MUTED)
@@ -2005,7 +2277,7 @@ def _vrs_snapshot_date(effective_at: str | None, version: str) -> str | None:
 
 
 def can_render_tournament_vrs(impacts: Sequence[TournamentVRSImpact]) -> bool:
-    return 1 <= len(impacts) <= MAX_TOURNAMENT_STANDINGS and all(
+    return 2 <= len(impacts) <= MAX_TOURNAMENT_STANDINGS and len(impacts) % 2 == 0 and all(
         item.placement and item.team_name and item.source and item.before_version and item.after_version
         for item in impacts
     )
@@ -2030,9 +2302,9 @@ def _render_tournament_vrs_page(
     after_date = _vrs_snapshot_date(impacts[0].after_effective_at, impacts[0].after_version)
     if before_date and after_date:
         _centered_text(draw, width // 2, 298, f"ДО {before_date}  |  ПОСЛЕ {after_date}", _font(20, display=True), MUTED)
-    row_height, header_height = 68, 62
-    table_top = 340 + (TOURNAMENT_VRS_PER_CARD - len(impacts)) * 26
-    table = (44, table_top, 1036, table_top + header_height + row_height * len(impacts))
+    header_height = 62
+    table_top, row_heights = _tournament_table_layout(len(impacts))
+    table = (44, table_top, 1036, table_top + header_height + sum(row_heights))
     _chamfered_panel(draw, table, cut=20)
     x0, y0, x1, y1 = table
     place_divider, points_divider, rank_divider = 188, 710, 872
@@ -2046,33 +2318,49 @@ def _render_tournament_vrs_page(
     _aligned_text(draw, place_divider + 26, y0 + 17, "КОМАНДА", _font(21, display=True), WHITE, "left")
     _centered_text(draw, (points_divider + rank_divider) // 2, y0 + 17, "ИЗМ. ОЧКОВ", _font(18, display=True), WHITE)
     _centered_text(draw, (rank_divider + x1) // 2, y0 + 17, "ИЗМ. МЕСТА", _font(18, display=True), WHITE)
+    row_top = y0 + header_height
     for index, item in enumerate(impacts):
-        row_top = y0 + header_height + row_height * index
+        row_height = row_heights[index]
         if index:
             draw.line((x0 + 18, row_top, x1 - 18, row_top), fill=(*AMBER, 125), width=1)
         highlight = _standings_row_color(item.placement)
-        _draw_standings_medal(canvas, draw, (x0 + place_divider) // 2, row_top, item.placement)
+        _draw_standings_medal(canvas, draw, (x0 + place_divider) // 2, row_top, item.placement,
+                              row_height=row_height)
         team_name = item.team_name.upper()
-        _aligned_text(draw, place_divider + 26, row_top + 15, team_name,
-                      _fit_font(draw, team_name, points_divider - place_divider - 48, 32, 14), highlight, "left")
+        text_size = 38 if row_height > 90 else 32
+        if row_height > 90:
+            team_lines, team_font = _table_team_lines(
+                draw, team_name, points_divider - place_divider - 48, text_size, 32,
+            )
+        else:
+            team_lines = [team_name]
+            team_font = _fit_font(draw, team_name, points_divider - place_divider - 48, text_size, 14)
+        text_height = len(team_lines) * team_font.size + (len(team_lines) - 1) * 7
+        text_y = row_top + (row_height - text_height) // 2 - 1
+        for line in team_lines:
+            _aligned_text(draw, place_divider + 26, text_y, line, team_font, highlight, "left")
+            text_y += team_font.size + 7
         points_text, points_color = _vrs_delta_text(item.points_delta)
         rank_text, rank_color = _vrs_rank_text(item.rank_delta)
-        _centered_text(draw, (points_divider + rank_divider) // 2, row_top + 17, points_text,
-                       _fit_font(draw, points_text, 130, 30, 16, display=True), points_color)
+        value_size = 36 if row_height > 90 else 30
+        value_y = row_top + (row_height - value_size) // 2 - 1
+        _centered_text(draw, (points_divider + rank_divider) // 2, value_y, points_text,
+                       _fit_font(draw, points_text, 130, value_size, 16, display=True), points_color)
         rank_center_x = (rank_divider + x1) // 2
-        rank_font = _fit_font(draw, rank_text, 102, 30, 16, display=True)
+        rank_font = _fit_font(draw, rank_text, 102, value_size, 16, display=True)
         if item.rank_delta:
             number_box = draw.textbbox((0, 0), rank_text, font=rank_font)
             number_width = number_box[2] - number_box[0]
             group_left = rank_center_x - (16 + 12 + number_width) // 2
             _draw_vrs_rank_arrow(
-                draw, group_left + 8, row_top + 34,
+                draw, group_left + 8, row_top + row_height // 2,
                 up=item.rank_delta > 0, color=rank_color,
             )
             number_center_x = group_left + 16 + 12 + number_width // 2
         else:
             number_center_x = rank_center_x
-        _centered_text(draw, number_center_x, row_top + 17, rank_text, rank_font, rank_color)
+        _centered_text(draw, number_center_x, value_y, rank_text, rank_font, rank_color)
+        row_top += row_height
     if page_count > 1:
         _centered_text(draw, width // 2, 972, f"СТРАНИЦА {page_number}/{page_count}", _font(20, display=True), MUTED)
     source_text = f"ИСТОЧНИК: {source_label.upper()}"
@@ -2307,7 +2595,7 @@ def render_schedule_cards(
     ]
 
 
-def _context_cover_match_count(count: int) -> str:
+def _format_match_count(count: int) -> str:
     if 11 <= count % 100 <= 14:
         noun = "МАТЧЕЙ"
     elif count % 10 == 1:
@@ -2363,7 +2651,7 @@ def _render_schedule_context_cover(
         draw,
         width // 2,
         782,
-        f"{_context_cover_match_count(len(matches))} · {format_label}",
+        f"{_format_match_count(len(matches))} · {format_label}",
         _font(42, display=True),
         AMBER,
     )
