@@ -432,7 +432,7 @@ scripts/deploy_yandex_function.sh candidate
 1. Проверка чистоты Git working tree и однократная сборка ZIP.
 2. Проверка размера и SHA-256 до обращения к Cloud Functions.
 3. Проверка приватности package bucket и lifecycle.
-4. Read-only проверка production-конфигурации и всех пяти таймеров, затем
+4. Read-only проверка production-конфигурации и всех шести таймеров, затем
    загрузка архива и создание версии с тегом `candidate`.
 5. Вызов candidate с `dry_run=true` и анализ startup-ошибок в логах.
 6. Сохранение manifest с Git SHA, SHA-256 архива, package object и ID обеих

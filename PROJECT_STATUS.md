@@ -1,6 +1,6 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 28 сентября 2026 года.
+Обновлено: 30 сентября 2026 года.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,8 +15,8 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 28 сентября 2026, версия `d4eicrelkln6h4k52k27`
-  из Git `fc3d6e5`; предыдущая версия `d4e12jpmf5nth90bh5k8` закреплена
+- Последний production-деплой: 30 сентября 2026, версия `d4eahib61k8opigb4cmt`
+  из Git `6050c5a`; предыдущая версия `d4eejnivbvjse8n6skeq` закреплена
   для rollback.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
@@ -25,10 +25,24 @@ production и сверки фактического состояния. Теку
   `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
 - Шесть timer trigger вызывают тег `production`, а не `$latest`.
 - SHA-256 release-архива:
-  `1cc9771169559d641b12a36821e6b72f65e4b0b04136cca335e6de3d2f89d6ff`.
+  `1760fda37f2eb9ea0b90dd8121c4ad0f23660c1476fa9a20f24deca1a9aa9d34`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
+
+## Релиз 30 сентября 2026 — карточки турнира
+
+- PR #129, Git `6050c5a`: подписи радара учитывают источник и не называют
+  всю сетку плей-офф; плашки и короткие таблицы итогов/VRS стали крупнее,
+  победитель выделен, длинные названия переносятся. Непарные таблицы команд
+  отклоняются. Оставшиеся визуальные идеи записаны в `BACKLOG.md`.
+- Локально прошли 503 теста, сборка архива и просмотр превью 1080 × 1080
+  для четырёх команд, включая отрицательные изменения VRS. GitHub Actions
+  прошёл на Python 3.11 и 3.12.
+- Candidate `d4eahib61k8opigb4cmt` и production smoke вернули `200`,
+  `dry_run=true`, без startup-ошибок и публикаций. Шесть timer trigger остались
+  закреплены за `production`. Предыдущая production-версия
+  `d4eejnivbvjse8n6skeq` сохранена для rollback.
 
 ## Релиз 28 сентября 2026 — конкурентный delivery claim
 
