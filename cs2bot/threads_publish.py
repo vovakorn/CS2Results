@@ -16,6 +16,11 @@ import boto3
 import requests
 
 from .instagram_publish import LOCKBOX_PAYLOAD_URL, _iam_token
+from .social_media_storage import (
+    PublicMediaUploadError,
+    upload_public_pngs,
+    validate_public_pngs,
+)
 from .xray_proxy import XrayProxyError, xray_http_proxy
 
 
@@ -94,34 +99,34 @@ def _media_client() -> Any:
 
 def upload_public_cards(publication_key: str, cards: Sequence[bytes]) -> list[str]:
     """Persist public card URLs under a deterministic, immutable publication key."""
-    if not cards or len(cards) > MAX_CAROUSEL_ITEMS:
-        raise ThreadsPublishError("Threads publication must contain between one and twenty cards")
-    if not publication_key or any(
-        part not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-"
-        for part in publication_key
-    ):
-        raise ThreadsPublishError("Threads publication key is invalid")
+    try:
+        validate_public_pngs("threads", publication_key, cards)
+    except PublicMediaUploadError as exc:
+        if exc.reason == "invalid_count":
+            raise ThreadsPublishError(
+                "Threads publication must contain between one and twenty cards"
+            ) from exc
+        if exc.reason == "invalid_key":
+            raise ThreadsPublishError("Threads publication key is invalid") from exc
+        if exc.reason == "invalid_image":
+            raise ThreadsPublishError("Threads card is invalid") from exc
+        raise ThreadsPublishError("Threads media upload failed") from exc
     bucket = _media_bucket()
     base_url = _media_base_url(bucket)
     client = _media_client()
-    urls: list[str] = []
-    for index, card in enumerate(cards, start=1):
-        if not isinstance(card, bytes) or not card:
-            raise ThreadsPublishError("Threads card is invalid")
-        key = f"threads/{publication_key}/{index}.png"
-        try:
-            client.put_object(
-                Bucket=bucket,
-                Key=key,
-                Body=card,
-                ContentType="image/png",
-                ACL="public-read",
-                CacheControl="public, max-age=31536000, immutable",
-            )
-        except Exception as exc:
-            raise ThreadsPublishError("Threads media upload failed") from exc
-        urls.append(f"{base_url}/{quote(key, safe='/')}")
-    return urls
+    try:
+        return upload_public_pngs(
+            "threads",
+            publication_key,
+            cards,
+            bucket=bucket,
+            base_url=base_url,
+            client=client,
+        )
+    except PublicMediaUploadError as exc:
+        if exc.reason == "invalid_image":
+            raise ThreadsPublishError("Threads card is invalid") from exc
+        raise ThreadsPublishError("Threads media upload failed") from exc
 
 
 def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> dict[str, Any]:

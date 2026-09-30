@@ -18,8 +18,11 @@ flowchart LR
     C --> G[Telegram API]
     C --> SP[Instagram / Threads publishers]
     SP --> Q[Meta API через Xray]
+    C --> XP[X publisher via Buffer GraphQL]
+    XP --> BX[Buffer API]
     G --> S
     SP --> S
+    XP --> S
     H --> A[Analytics journal]
     A --> S
     X[Yandex Lockbox] --> H
@@ -42,6 +45,8 @@ flowchart LR
 | `cs2bot/analytics.py` | Запись событий постов, подписчиков и кампаний | Блокировать основную публикацию при своей ошибке |
 | `cs2bot/social_oauth.py` | Отдельный OAuth handler для соцсетей и запись токенов в Lockbox | Участвовать в основном Telegram handler |
 | `cs2bot/instagram_publish.py`, `cs2bot/threads_publish.py` | Загрузка публичных карточек и вызовы Meta через Xray | Выбирать контент или разделять Telegram state |
+| `cs2bot/social_media_storage.py` | Проверка и загрузка готовых публичных PNG для X и Threads | Рендерить карточки или выполнять публикационный API-вызов |
+| `cs2bot/buffer_x_publish.py` | Создание X-поста через Buffer GraphQL и чтение постов для сверки | Повторять create после неопределённого ответа |
 
 ## Основной поток результатов
 
@@ -50,8 +55,9 @@ flowchart LR
 3. `match_fetcher` получает PandaScore, проверяет валидность и свежесть. Если
    включено, Liquipedia отдельно сравнивается в shadow-режиме.
 4. Фильтры оставляют разрешённые матчи и применяют настройки канала.
-5. Для каждой доставки сохраняется durable outbox item, затем создаётся атомарный
-   claim в Object Storage.
+5. Для результатов Telegram, Instagram и Threads сохраняется durable outbox item,
+   затем создаётся атомарный claim в Object Storage. Локальная X-интеграция
+   использует отдельную запись доставки по `content_uid`.
 6. Handler выбирает наименее недавно обрабатывавшиеся outbox items, формирует
    текст и, если сеть не находится в text-only режиме, PNG-карточку.
 7. Непосредственно перед запросом к Telegram, Instagram или Threads claim
@@ -66,6 +72,18 @@ flowchart LR
    автоматически. У неоднозначного результата outbox удаляется.
 10. Отдельный `retry_only` trigger раз в пять минут обрабатывает только outbox и не
     расходует квоту PandaScore или Liquipedia shadow.
+
+Локальная интеграция X включается только `ENABLE_X_PUBLISHING=1` (по умолчанию
+выключена) и отправляет запросы через Buffer GraphQL. Она не использует обычные
+delivery claims: отдельная CAS-защищённая запись X сохраняет payload до
+`createPost`. Для результатов X подключается как отдельный канал result outbox;
+для ежедневных и турнирных форматов формирует собственные стабильные ключи.
+Ответ `accepted` остаётся ожидающим; только статус `sent` со ссылкой X фиксирует
+обработанную публикацию. `attempting`, `accepted`, `uncertain` и `sent` не дают
+создать пост повторно. X-проверки выполняются после остальных каналов, только по
+наступившему времени и не более трёх записей за invocation; ошибка X не прерывает
+другие каналы. Форматы, которым нужно более четырёх изображений, пропускаются
+целиком; автоматического продолжения в следующие дни нет.
 
 Threads ведёт отдельную цепочку для каждого турнира: радар, расписание, результаты,
 итоги и VRS публикуются как root/replies. При append Object Storage атомарно
@@ -117,6 +135,7 @@ Object Storage содержит дополнительные типы состо
 - `processed/` — завершённые per-channel публикации;
 - `threads/chains/` — подтверждённый tail, reservation и состояние блокировки
   отдельной цепочки турнира;
+- `x/deliveries/` — отдельные X-записи и CAS-переходы состояния Buffer-доставки;
 - `delivery-health/` — короткое окно адаптивного text-only режима;
 - analytics journal — append-only события продукта.
 
@@ -131,6 +150,10 @@ Object Storage содержит дополнительные типы состо
 - Несекретные правила отбора находятся в `tier1_filter.json`.
 - Runtime-конфигурация читается из переменных окружения.
 - Токены и ключи передаются через Yandex Lockbox и не хранятся в репозитории.
+- Локальный Buffer X-клиент включается переменной `ENABLE_X_PUBLISHING`; API key,
+  organization ID, X channel ID и отдельный bucket публичных карточек задаются
+  через runtime-конфигурацию. Настройка Buffer в production этим описанием не
+  подтверждается.
 - Отдельная OAuth-функция направляет запросы к Meta через `SOCIAL_PROXY_URL`,
   подключённый из Lockbox; запросы к Yandex Lockbox через этот прокси не идут.
 - `cs2bot/config.py` отвечает за Telegram и каналы;

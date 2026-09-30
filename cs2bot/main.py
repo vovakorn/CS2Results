@@ -5,14 +5,16 @@ import asyncio
 import html
 import json
 import logging
+import os
 import re
 import sys
 import time
 from datetime import datetime, time as datetime_time, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Sequence
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import boto3
 import requests
 
 from .config import (
@@ -42,6 +44,9 @@ from .threads_publish import (
     publish_rendered_cards as publish_threads_rendered_cards,
     threads_publishing_enabled,
 )
+from . import x_delivery
+from .social_media_storage import upload_public_pngs
+from .x_content import X_TEXT_LIMIT, build_x_digest_text, build_x_result_text, build_x_schedule_text
 from .logging_utils import log_event
 from .media_cards import (
     MAX_RESULT_MATCHES,
@@ -54,6 +59,7 @@ from .media_cards import (
     render_results_cards,
     render_schedule_cards,
     render_schedule_context_covers,
+    paginate_schedule_matches,
     render_tournament_standings_cards,
     render_tournament_vrs_cards,
     render_tournament_radar_cards,
@@ -65,6 +71,7 @@ from .match_sources.config import (
     LIQUIPEDIA_API_KEY,
     MATCH_SOURCE,
     OBJECT_STORAGE_BUCKET,
+    OBJECT_STORAGE_ENDPOINT,
     PANDASCORE_API_TOKEN,
     POPULAR_TEAMS,
 )
@@ -94,6 +101,7 @@ from .match_sources.storage import (
     claim_admin_alert,
     claim_channel_delivery,
     claim_content_delivery,
+    get_x_delivery,
     clear_telegram_media_degraded,
     delete_result_delivery,
     enqueue_result_delivery,
@@ -1634,6 +1642,403 @@ def _instagram_caption(text: str) -> str:
     return plain[:2199].rstrip() + "…"
 
 
+def x_publishing_enabled() -> bool:
+    """Read the opt-in X flag; absent configuration keeps the channel disabled."""
+    value = os.getenv("ENABLE_X_PUBLISHING", "0").strip().casefold()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", ""}:
+        return False
+    raise ValueError("ENABLE_X_PUBLISHING must be a boolean")
+
+
+def _x_buffer_settings() -> tuple[str, str, str]:
+    names = ("BUFFER_API_KEY", "BUFFER_ORGANIZATION_ID", "BUFFER_X_CHANNEL_ID")
+    values = tuple(os.getenv(name, "").strip() for name in names)
+    missing = [name for name, value in zip(names, values) if not value]
+    if missing:
+        raise ValueError(f"X publishing configuration is missing: {', '.join(missing)}")
+    return values[0], values[1], values[2]
+
+
+def _deliver_x_result(pending: PendingDelivery) -> str:
+    """Prepare public media and hand one result to the durable X delivery state."""
+    api_key, organization_id, channel_id = _x_buffer_settings()
+    media_bucket = os.getenv("X_MEDIA_BUCKET", "").strip()
+    if not media_bucket:
+        raise ValueError("X publishing configuration is missing: X_MEDIA_BUCKET")
+
+    match = pending.match
+    card = (
+        render_final_card(match)
+        if match.source == "liquipedia" and can_render_final_card(match)
+        else render_result_card(match)
+    )
+    publication_key = f"result_{safe_storage_part(match.match_uid)}"
+    base_url = os.getenv("X_MEDIA_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not base_url:
+        base_url = f"https://storage.yandexcloud.net/{quote(media_bucket, safe='.-_')}"
+    public_urls = upload_public_pngs(
+        "x",
+        publication_key,
+        [card],
+        bucket=media_bucket,
+        base_url=base_url,
+        client=boto3.client("s3", endpoint_url=OBJECT_STORAGE_ENDPOINT),
+    )
+    text = build_x_result_text(match, public_urls)
+    state = asyncio.run(
+        x_delivery.create_x_delivery(
+            f"x:result:{match.match_uid}",
+            channel_id,
+            organization_id,
+            text,
+            public_urls,
+            api_key,
+        )
+    )
+    if state.record.status == "sent":
+        parsed_link = urlparse(state.record.x_url or "")
+        if parsed_link.scheme != "https" or (parsed_link.hostname or "").lower() not in {
+            "x.com", "www.x.com", "twitter.com", "www.twitter.com",
+        }:
+            raise ValueError("X sent state is missing a valid post link")
+    return state.record.status
+
+
+def _x_tournament_format_identity(
+    pending: PendingDelivery,
+) -> tuple[str, str, str] | None:
+    """Return the independent X key, media key, and short caption for a table."""
+    match = pending.match
+    if pending.content_type == "tournament_standings":
+        if not _can_publish_tournament_standings(match):
+            return None
+        tournament_id = match.tournament_parent
+        return (
+            f"x:tournament-standings:{tournament_id}",
+            f"standings_{safe_storage_part(tournament_id)}",
+            f"🏆 Итоги турнира CS2 — {match.tournament_name.strip()}",
+        )
+    if pending.content_type == "tournament_vrs_standings":
+        tournament_id = _vrs_tournament_id(match)
+        if (
+            not match.is_final
+            or not match.tournament_placements
+            or not tournament_id
+            or not can_render_tournament_vrs(pending.vrs_impacts)
+        ):
+            return None
+        return (
+            f"x:tournament-vrs:{tournament_id}",
+            f"vrs_{safe_storage_part(tournament_id)}",
+            f"📈 VRS после турнира CS2 — {match.tournament_name.strip()}",
+        )
+    raise ValueError(f"unsupported X tournament format: {pending.content_type}")
+
+
+def _deliver_x_tournament_format(pending: PendingDelivery) -> str:
+    """Hand a complete standings or VRS album to X without copying channel state."""
+    identity = _x_tournament_format_identity(pending)
+    if identity is None:
+        return "invalid_source"
+    content_uid, publication_key, post_text = identity
+    if len(post_text) > X_TEXT_LIMIT:
+        return "deferred_text_over_limit"
+
+    api_key, organization_id, channel_id = _x_buffer_settings()
+    media_bucket = os.getenv("X_MEDIA_BUCKET", "").strip()
+    if not media_bucket:
+        raise ValueError("X publishing configuration is missing: X_MEDIA_BUCKET")
+
+    existing = asyncio.run(get_x_delivery(content_uid, channel_id=channel_id))
+    if existing is not None:
+        state = asyncio.run(
+            x_delivery.create_x_delivery(
+                content_uid,
+                channel_id,
+                organization_id,
+                existing.record.text,
+                list(existing.record.image_urls),
+                api_key,
+            )
+        )
+    else:
+        match = pending.match
+        if pending.content_type == "tournament_standings":
+            cards = render_tournament_standings_cards(
+                match.tournament_name, match.tournament_placements
+            )
+        else:
+            impacts = pending.vrs_impacts
+            if not can_render_tournament_vrs(impacts):
+                return "invalid_source"
+            cards = render_tournament_vrs_cards(
+                match.tournament_name, impacts, impacts[0].source
+            )
+        if not 1 <= len(cards) <= 4:
+            log_event(
+                logger,
+                logging.INFO,
+                "x_tournament_album_deferred",
+                content_type=pending.content_type,
+                cards=len(cards),
+                reason="album_over_four_images" if len(cards) > 4 else "no_cards",
+            )
+            return "deferred_album_over_limit" if len(cards) > 4 else "invalid_source"
+
+        base_url = os.getenv("X_MEDIA_PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if not base_url:
+            base_url = f"https://storage.yandexcloud.net/{quote(media_bucket, safe='.-_')}"
+        public_urls = upload_public_pngs(
+            "x",
+            publication_key,
+            cards,
+            bucket=media_bucket,
+            base_url=base_url,
+            client=boto3.client("s3", endpoint_url=OBJECT_STORAGE_ENDPOINT),
+        )
+        state = asyncio.run(
+            x_delivery.create_x_delivery(
+                content_uid,
+                channel_id,
+                organization_id,
+                post_text,
+                public_urls,
+                api_key,
+            )
+        )
+
+    if state.record.status == "sent":
+        parsed_link = urlparse(state.record.x_url or "")
+        if parsed_link.scheme != "https" or (parsed_link.hostname or "").lower() not in {
+            "x.com", "www.x.com", "twitter.com", "www.twitter.com",
+        }:
+            raise ValueError("X sent state is missing a valid post link")
+    return state.record.status
+
+
+def _process_x_tournament_outbox(pending: PendingDelivery) -> str:
+    """Finalize the X-only outbox item only after a linked sent state."""
+    identity = _x_tournament_format_identity(pending)
+    if identity is not None and asyncio.run(
+        reconcile_content_delivery(identity[0], pending.content_type)
+    ):
+        asyncio.run(delete_result_delivery(pending))
+        return "duplicate"
+    outcome = _deliver_x_tournament_format(pending)
+    if outcome == "sent":
+        if identity is None:
+            raise ValueError("X tournament format lost its source eligibility")
+        content_uid = identity[0]
+        asyncio.run(mark_content_processed(content_uid, pending.content_type))
+        asyncio.run(delete_result_delivery(pending))
+        _record_post_analytics(
+            "x", content_uid, pending.content_type, media_card=True
+        )
+    elif outcome == "invalid_source":
+        asyncio.run(delete_result_delivery(pending))
+    else:
+        asyncio.run(record_result_delivery_attempt(pending))
+    return outcome
+
+
+def _x_content_card_count(job: str, matches: Sequence[Any]) -> int:
+    """Return the complete card count without rendering any PNGs."""
+    if job == "schedule":
+        return len(paginate_schedule_matches(matches))
+    if job == "digest":
+        return (len(matches) + 3) // 4
+    raise ValueError(f"unsupported X content job: {job}")
+
+
+def _deliver_x_content_job(
+    job: str,
+    day_key: str,
+    matches: Sequence[Any],
+    local_now: datetime,
+    cards: Sequence[bytes] | None,
+    *,
+    test_run_id: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Preview or durably hand one complete schedule/digest release to X."""
+    card_count = _x_content_card_count(job, matches)
+    if card_count < 1 or card_count > 4:
+        return {
+            "x_cards_count": card_count,
+            "x_skipped_reason": "invalid_card_count",
+            "x_delivery_state": "skipped",
+        }
+
+    # A dry run needs only the page count for the pure text builder. Placeholder
+    # entries avoid rendering images, uploading PNGs, or contacting Buffer.
+    selected_cards: Sequence[Any] = [None] * card_count if dry_run else (cards or ())
+    if not dry_run and len(selected_cards) != card_count:
+        raise ValueError("complete X card album could not be rendered")
+    if job == "schedule":
+        post_text = build_x_schedule_text(
+            matches, local_now, selected_cards, timezone_name=DISPLAY_TIMEZONE
+        )
+    else:
+        post_text = build_x_digest_text(matches, local_now, selected_cards)
+    if dry_run:
+        return {
+            "x_preview": post_text,
+            "x_cards_count": card_count,
+            "x_delivery_state": "dry_run",
+        }
+
+    api_key, organization_id, channel_id = _x_buffer_settings()
+    media_bucket = os.getenv("X_MEDIA_BUCKET", "").strip()
+    if not media_bucket:
+        raise ValueError("X publishing configuration is missing: X_MEDIA_BUCKET")
+    content_uid = f"x:{job}:{day_key}" + (f":test:{test_run_id}" if test_run_id else "")
+    existing = asyncio.run(get_x_delivery(content_uid, channel_id=channel_id))
+    if existing is not None:
+        # Keep the immutable payload already associated with this release key.
+        # This also lets a prepared record resume without rewriting its public PNGs.
+        state = asyncio.run(
+            x_delivery.create_x_delivery(
+                content_uid,
+                channel_id,
+                organization_id,
+                existing.record.text,
+                list(existing.record.image_urls),
+                api_key,
+            )
+        )
+        return {
+            "x_cards_count": len(existing.record.image_urls),
+            "x_delivery_state": state.record.status,
+            "x_messages_sent": int(state.record.status == "sent"),
+            "x_pending": state.record.status in {"prepared", "attempting", "accepted", "uncertain"},
+        }
+    publication_name = f"{job}_{day_key}"
+    if test_run_id:
+        publication_name += f"_test_{test_run_id}"
+    publication_key = safe_storage_part(publication_name)
+    base_url = os.getenv("X_MEDIA_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not base_url:
+        base_url = f"https://storage.yandexcloud.net/{quote(media_bucket, safe='.-_')}"
+    public_urls = upload_public_pngs(
+        "x",
+        publication_key,
+        selected_cards,
+        bucket=media_bucket,
+        base_url=base_url,
+        client=boto3.client("s3", endpoint_url=OBJECT_STORAGE_ENDPOINT),
+    )
+    state = asyncio.run(
+        x_delivery.create_x_delivery(
+            content_uid,
+            channel_id,
+            organization_id,
+            post_text,
+            public_urls,
+            api_key,
+        )
+    )
+    return {
+        "x_cards_count": card_count,
+        "x_delivery_state": state.record.status,
+        "x_messages_sent": int(state.record.status == "sent"),
+        "x_pending": state.record.status in {"prepared", "attempting", "accepted", "uncertain"},
+    }
+
+
+def _deliver_x_radar(
+    tournament_id: str,
+    tournament_name: str,
+    day_key: str,
+    cards: Sequence[bytes],
+    *,
+    test_run_id: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Preview or hand the full existing radar album to durable X delivery."""
+    card_count = len(cards)
+    if not 1 <= card_count <= 4:
+        reason = "no_rendered_cards" if card_count == 0 else "album_over_four_images"
+        return {
+            "x_cards_count": card_count,
+            "x_skipped_reason": reason,
+            "x_delivery_state": "skipped",
+        }
+
+    post_text = f"🏆 Турнирный радар CS2 — {tournament_name.strip()}"
+    if len(post_text) > X_TEXT_LIMIT:
+        return {
+            "x_cards_count": card_count,
+            "x_skipped_reason": "x_text_over_limit",
+            "x_delivery_state": "skipped",
+        }
+    if dry_run:
+        return {
+            "x_preview": post_text,
+            "x_cards_count": card_count,
+            "x_delivery_state": "dry_run",
+        }
+
+    api_key, organization_id, channel_id = _x_buffer_settings()
+    media_bucket = os.getenv("X_MEDIA_BUCKET", "").strip()
+    if not media_bucket:
+        raise ValueError("X publishing configuration is missing: X_MEDIA_BUCKET")
+    content_uid = f"x:radar:{tournament_id}:{day_key}"
+    if test_run_id:
+        content_uid += f":test:{test_run_id}"
+    existing = asyncio.run(get_x_delivery(content_uid, channel_id=channel_id))
+    if existing is not None:
+        state = asyncio.run(
+            x_delivery.create_x_delivery(
+                content_uid,
+                channel_id,
+                organization_id,
+                existing.record.text,
+                list(existing.record.image_urls),
+                api_key,
+            )
+        )
+        return {
+            "x_cards_count": len(existing.record.image_urls),
+            "x_delivery_state": state.record.status,
+            "x_messages_sent": int(state.record.status == "sent"),
+            "x_pending": state.record.status in {"prepared", "attempting", "accepted", "uncertain"},
+        }
+
+    publication_name = f"radar_{tournament_id}_{day_key}"
+    if test_run_id:
+        publication_name += f"_test_{test_run_id}"
+    publication_key = safe_storage_part(publication_name)
+    base_url = os.getenv("X_MEDIA_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not base_url:
+        base_url = f"https://storage.yandexcloud.net/{quote(media_bucket, safe='.-_')}"
+    public_urls = upload_public_pngs(
+        "x",
+        publication_key,
+        cards,
+        bucket=media_bucket,
+        base_url=base_url,
+        client=boto3.client("s3", endpoint_url=OBJECT_STORAGE_ENDPOINT),
+    )
+    state = asyncio.run(
+        x_delivery.create_x_delivery(
+            content_uid,
+            channel_id,
+            organization_id,
+            post_text,
+            public_urls,
+            api_key,
+        )
+    )
+    return {
+        "x_cards_count": card_count,
+        "x_delivery_state": state.record.status,
+        "x_messages_sent": int(state.record.status == "sent"),
+        "x_pending": state.record.status in {"prepared", "attempting", "accepted", "uncertain"},
+    }
+
+
 def _retain_uncertain_delivery_claim(claim: DeliveryClaim | None) -> None:
     """Best-effort diagnostic transition; ``attempting`` is already fail-closed."""
     if claim is None:
@@ -2345,6 +2750,14 @@ def _handle_content_job(
             _notify_admin(f"{job}_source_unavailable", f"Не удалось подготовить выпуск «{job}».")
         return _error_response(502, "match_source_unavailable")
 
+    x_enabled = False
+    x_configuration_error: str | None = None
+    try:
+        x_enabled = x_publishing_enabled()
+    except ValueError as exc:
+        x_configuration_error = type(exc).__name__
+        log_event(logger, logging.ERROR, "x_configuration_invalid", error=_safe_error_message(exc))
+
     if not text:
         body = {
             "job": job,
@@ -2355,6 +2768,16 @@ def _handle_content_job(
             "delivery_failures": 0,
             "dry_run": dry_run,
         }
+        if x_enabled:
+            body.update(
+                {
+                    "x_cards_count": 0,
+                    "x_skipped_reason": "empty_issue",
+                    "x_delivery_state": "skipped",
+                }
+            )
+        elif x_configuration_error:
+            body.update({"x_delivery_failures": 1, "x_error": x_configuration_error})
         if dry_run and job == "schedule":
             diagnostic_matches = fetched if include_filtered else selected
             body.update(
@@ -2390,7 +2813,9 @@ def _handle_content_job(
     ) or (
         job == "digest" and 1 <= len(selected) <= MAX_RESULT_MATCHES
     )
-    if card_supported and job == "schedule" and (instagram_enabled or threads_enabled):
+    if card_supported and job == "schedule" and (
+        instagram_enabled or threads_enabled or (x_enabled and not dry_run)
+    ):
         try:
             social_media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
         except Exception as exc:
@@ -2427,7 +2852,7 @@ def _handle_content_job(
                 error=_safe_error_message(exc),
             )
     if card_supported and job == "digest" and (
-        TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled
+        TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled or (x_enabled and not dry_run)
     ):
         try:
             social_media_cards = render_results_cards(selected, local_now)
@@ -2607,6 +3032,41 @@ def _handle_content_job(
             threads_duplicates += d
             threads_failures += f
 
+    x_sent = 0
+    x_failures = 0
+    x_result: dict[str, Any] = {}
+    if x_enabled:
+        try:
+            x_cards = social_media_cards or telegram_media_cards
+            if not dry_run and not x_cards:
+                if job == "schedule":
+                    x_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
+                else:
+                    x_cards = render_results_cards(selected, local_now)
+            x_result = _deliver_x_content_job(
+                job, day_key, selected, local_now, x_cards,
+                test_run_id=test_run_id, dry_run=dry_run,
+            )
+            x_sent = int(x_result.get("x_messages_sent", 0))
+        except Exception as exc:
+            x_failures = 1
+            x_result = {
+                "x_delivery_state": "error",
+                "x_delivery_failures": 1,
+                "x_error": type(exc).__name__,
+            }
+            log_event(
+                logger,
+                logging.ERROR,
+                "x_content_publish_failed",
+                job=job,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+    elif x_configuration_error:
+        x_failures = 1
+        x_result = {"x_delivery_state": "disabled_by_invalid_flag", "x_error": x_configuration_error}
+
     if failures:
         _notify_admin("delivery_failed", f"Не доставлен выпуск «{job}»: ошибок {failures}.")
     body = {
@@ -2622,8 +3082,11 @@ def _handle_content_job(
         "threads_messages_sent": threads_sent,
         "threads_duplicates_skipped": threads_duplicates,
         "threads_delivery_failures": threads_failures,
+        "x_messages_sent": x_sent,
+        "x_delivery_failures": x_failures,
         "dry_run": dry_run,
     }
+    body.update(x_result)
     if test_run_id:
         body["test_run_id"] = test_run_id
     if preview is not None:
@@ -2647,7 +3110,7 @@ def _handle_content_job(
         body["social_media_card_count"] = len(social_media_cards)
         if media_card_error:
             body["media_card_error"] = media_card_error
-    return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
+    return {"statusCode": 502 if failures or x_failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
 def _handle_radar_job(
@@ -2689,13 +3152,21 @@ def _handle_radar_job(
             body["radar"] = radar.model_dump()
         return {"statusCode": 200, "body": json.dumps(body, ensure_ascii=False)}
 
+    x_enabled = False
+    x_configuration_error: str | None = None
+    try:
+        x_enabled = x_publishing_enabled()
+    except ValueError as exc:
+        x_configuration_error = type(exc).__name__
+        log_event(logger, logging.ERROR, "x_configuration_invalid", error=_safe_error_message(exc))
+
     media_cards: list[bytes] = []
     media_card_error: str | None = None
     try:
         threads_enabled = threads_publishing_enabled()
     except ThreadsPublishError:
         threads_enabled = False
-    if TELEGRAM_MEDIA_CARDS or threads_enabled:
+    if TELEGRAM_MEDIA_CARDS or threads_enabled or x_enabled:
         try:
             media_cards = render_tournament_radar_cards(
                 radar, tournament_name, DISPLAY_TIMEZONE, card_variant
@@ -2818,6 +3289,39 @@ def _handle_radar_job(
             tournament_key=f"threads:pandascore:{tournament_id}",
         )
 
+    x_sent = 0
+    x_failures = 0
+    x_result: dict[str, Any] = {}
+    if x_enabled:
+        try:
+            x_result = _deliver_x_radar(
+                tournament_id,
+                tournament_name,
+                day_key,
+                media_cards,
+                test_run_id=test_run_id,
+                dry_run=dry_run,
+            )
+            x_sent = int(x_result.get("x_messages_sent", 0))
+        except Exception as exc:
+            x_failures = 1
+            x_result = {
+                "x_delivery_state": "error",
+                "x_delivery_failures": 1,
+                "x_error": type(exc).__name__,
+            }
+            log_event(
+                logger,
+                logging.ERROR,
+                "x_radar_publish_failed",
+                tournament_id=tournament_id,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+    elif x_configuration_error:
+        x_failures = 1
+        x_result = {"x_delivery_state": "disabled_by_invalid_flag", "x_error": x_configuration_error}
+
     body = {
         "job": "radar",
         "tournament_id": tournament_id,
@@ -2827,8 +3331,11 @@ def _handle_radar_job(
         "threads_messages_sent": threads_sent,
         "threads_duplicates_skipped": threads_duplicates,
         "threads_delivery_failures": threads_failures,
+        "x_messages_sent": x_sent,
+        "x_delivery_failures": x_failures,
         "dry_run": dry_run,
     }
+    body.update(x_result)
     if dry_run:
         body.update(
             {
@@ -2842,7 +3349,7 @@ def _handle_radar_job(
         )
         if media_card_error:
             body["media_card_error"] = media_card_error
-    return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
+    return {"statusCode": 502 if failures or x_failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
 def _radar_discovery_candidates(
@@ -3246,6 +3753,14 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     if threads_results_enabled:
         channels_by_id["threads"] = {"id": "threads", "name": "threads", "platform": "threads"}
         channel_stats.setdefault("threads", 0)
+    try:
+        x_results_enabled = x_publishing_enabled()
+    except ValueError as exc:
+        x_results_enabled = False
+        log_event(logger, logging.ERROR, "x_configuration_invalid", error=_safe_error_message(exc))
+    if x_results_enabled:
+        channels_by_id["x"] = {"id": "x", "name": "x", "platform": "x"}
+        channel_stats.setdefault("x", 0)
 
     eligible_matches: list[MatchNormalized] = []
     for match in matches:
@@ -3270,6 +3785,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 sent_messages += 1
             if threads_results_enabled:
                 channel_stats["threads"] += 1
+                sent_messages += 1
+            if x_results_enabled:
+                channel_stats["x"] += 1
                 sent_messages += 1
         pending_deliveries: list[PendingDelivery] = []
     else:
@@ -3379,6 +3897,34 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                         error=_safe_error_message(exc),
                     )
 
+        if x_results_enabled:
+            for match in eligible_matches:
+                key = result_outbox_key(match, "x")
+                try:
+                    if asyncio.run(is_channel_processed(match, "x")):
+                        _enqueue_tournament_standings(match, "x", "x")
+                        skipped_duplicates += 1
+                        continue
+                    created = asyncio.run(enqueue_result_delivery(match, "x", "x"))
+                    if created:
+                        current_targets[key] = PendingDelivery(
+                            key=key,
+                            channel_id="x",
+                            channel_name="x",
+                            match=match,
+                            created_at=queued_at,
+                        )
+                except Exception as exc:
+                    failed_messages += 1
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "x_result_outbox_enqueue_failed",
+                        match_uid=match.match_uid,
+                        error_type=type(exc).__name__,
+                        error=_safe_error_message(exc),
+                    )
+
         try:
             stored_targets = asyncio.run(
                 list_pending_result_deliveries(limit=RESULT_OUTBOX_LIMIT)
@@ -3398,6 +3944,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         pending_deliveries = sorted(
             current_targets.values(),
             key=lambda item: (
+                item.channel_id == "x",
                 item.last_attempt_at is not None,
                 item.last_attempt_at or item.created_at,
                 item.created_at,
@@ -3457,6 +4004,52 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         name = str(channel.get("name", pending.channel_name))
         channel_id = pending.channel_id
 
+        if channel.get("platform") == "x" and pending.content_type in {
+            "tournament_standings",
+            "tournament_vrs_standings",
+        }:
+            try:
+                outcome = _process_x_tournament_outbox(pending)
+                if outcome == "sent":
+                    channel_stats[name] += 1
+                    sent_messages += 1
+                elif outcome == "duplicate":
+                    skipped_duplicates += 1
+                elif outcome == "uncertain":
+                    failed_messages += 1
+                else:
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "x_tournament_delivery_pending",
+                        match_uid=match.match_uid,
+                        content_type=pending.content_type,
+                        state=outcome,
+                    )
+            except Exception as exc:
+                failed_messages += 1
+                try:
+                    asyncio.run(record_result_delivery_attempt(pending))
+                except Exception as outbox_exc:
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "x_tournament_outbox_attempt_failed",
+                        match_uid=match.match_uid,
+                        content_type=pending.content_type,
+                        error_type=type(outbox_exc).__name__,
+                    )
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "x_tournament_delivery_failed",
+                    match_uid=match.match_uid,
+                    content_type=pending.content_type,
+                    error_type=type(exc).__name__,
+                    error=_safe_error_message(exc),
+                )
+            continue
+
         if pending.content_type == "tournament_standings":
             if channel.get("platform") == "instagram":
                 outcome = _deliver_instagram_tournament_standings(pending, context)
@@ -3509,6 +4102,70 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 skipped_duplicates += 1
             else:
                 failed_messages += 1
+            continue
+
+        if channel.get("platform") == "x":
+            try:
+                x_state = _deliver_x_result(pending)
+                if x_state == "sent":
+                    already_processed = asyncio.run(is_channel_processed(match, "x"))
+                    if already_processed:
+                        skipped_duplicates += 1
+                    else:
+                        asyncio.run(mark_channel_processed(match, "x"))
+                        channel_stats[name] += 1
+                        sent_messages += 1
+                        _record_post_analytics(
+                            "x", match.match_uid, "results", media_card=True
+                        )
+                    _enqueue_tournament_standings(match, "x", "x")
+                    asyncio.run(delete_result_delivery(pending))
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "x_delivery_confirmed",
+                        match_uid=match.match_uid,
+                        already_processed=already_processed,
+                    )
+                elif x_state in {"prepared", "attempting", "accepted"}:
+                    asyncio.run(record_result_delivery_attempt(pending))
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "x_delivery_pending",
+                        match_uid=match.match_uid,
+                        state=x_state,
+                    )
+                elif x_state == "uncertain":
+                    failed_messages += 1
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "x_delivery_uncertain",
+                        match_uid=match.match_uid,
+                    )
+                else:
+                    raise RuntimeError("X delivery returned an unknown state")
+            except Exception as exc:
+                failed_messages += 1
+                try:
+                    asyncio.run(record_result_delivery_attempt(pending))
+                except Exception as outbox_exc:
+                    log_event(
+                        logger,
+                        logging.ERROR,
+                        "x_result_outbox_attempt_failed",
+                        match_uid=match.match_uid,
+                        error_type=type(outbox_exc).__name__,
+                    )
+                log_event(
+                    logger,
+                    logging.ERROR,
+                    "x_result_delivery_failed",
+                    match_uid=match.match_uid,
+                    error_type=type(exc).__name__,
+                    error=_safe_error_message(exc),
+                )
             continue
 
         try:
@@ -3819,6 +4476,25 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 "delivery_state_failed",
                 channel=name,
                 match_uid=match.match_uid,
+                error_type=type(exc).__name__,
+                error=_safe_error_message(exc),
+            )
+
+    # Buffer polling runs after channel deliveries so a slow X response cannot
+    # consume the result-delivery budget before Telegram, Instagram, or Threads.
+    if x_results_enabled and not dry_run:
+        try:
+            api_key, organization_id, _ = _x_buffer_settings()
+            checked = asyncio.run(
+                x_delivery.check_due_x_deliveries(api_key, organization_id)
+            )
+            if checked:
+                log_event(logger, logging.INFO, "x_delivery_checks_complete", checked=len(checked))
+        except Exception as exc:
+            log_event(
+                logger,
+                logging.ERROR,
+                "x_delivery_checks_failed",
                 error_type=type(exc).__name__,
                 error=_safe_error_message(exc),
             )

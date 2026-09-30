@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
@@ -14,6 +15,7 @@ from cs2bot.match_sources.storage import (
     claim_channel_delivery,
     claim_key,
     claim_content_delivery,
+    claim_x_delivery_create,
     channel_match_uid,
     clear_telegram_media_degraded,
     delete_result_delivery,
@@ -38,6 +40,13 @@ from cs2bot.match_sources.storage import (
     reconcile_content_delivery,
     read_cached_logo,
     StorageUnavailableError,
+    XDeliveryConflictError,
+    x_delivery_key,
+    prepare_x_delivery,
+    get_x_delivery,
+    mark_x_delivery_accepted,
+    mark_x_delivery_sent,
+    mark_x_delivery_uncertain,
     write_cached_logo,
     reserve_threads_chain_append,
     confirm_threads_chain_append,
@@ -121,6 +130,26 @@ class ConcurrentClaimS3(FakeS3):
             return super().put_object(*args, **kwargs)
 
         self.create_barrier.wait(timeout=5)
+        with self.write_lock:
+            return super().put_object(*args, **kwargs)
+
+
+class ConcurrentXReadS3(FakeS3):
+    """Make competing X invocations read the same ETag before either CAS write."""
+
+    def __init__(self):
+        super().__init__()
+        self.read_barrier = None
+        self.write_lock = threading.Lock()
+
+    def get_object(self, Bucket, Key):
+        result = super().get_object(Bucket, Key)
+        barrier = self.read_barrier
+        if barrier is not None and Key.startswith("x/deliveries/"):
+            barrier.wait(timeout=5)
+        return result
+
+    def put_object(self, *args, **kwargs):
         with self.write_lock:
             return super().put_object(*args, **kwargs)
 
@@ -705,6 +734,100 @@ def test_confirmed_content_delivery_is_reconciled_without_a_second_claim():
         reconcile_content_delivery(content_uid, "schedule", client=s3, bucket="bucket")
     )
     assert asyncio.run(is_processed(f"content_{content_uid}", client=s3, bucket="bucket"))
+
+
+def test_x_delivery_competing_invocations_only_claim_create_once():
+    s3 = ConcurrentXReadS3()
+    uid = "x:result:2026-09-29:match-42"
+    asyncio.run(prepare_x_delivery(uid, "NAVI 2–1 FaZe", ["https://img/1.png"], client=s3, bucket="bucket", channel_id="channel-x"))
+    s3.read_barrier = threading.Barrier(2)
+
+    def invoke():
+        return asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x"))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        leases = list(pool.map(lambda _: invoke(), range(2)))
+
+    assert sum(lease is not None for lease in leases) == 1
+    stored = json.loads(s3.objects[x_delivery_key(uid, "channel-x")]["Body"])
+    assert stored["status"] == "attempting"
+
+
+def test_x_delivery_does_not_retry_create_after_restart():
+    s3 = FakeS3()
+    uid = "x:schedule:2026-09-29"
+    prepared = asyncio.run(prepare_x_delivery(uid, "Schedule", ["https://img/1.png"], client=s3, bucket="bucket", channel_id="channel-x"))
+    assert prepared.status == "prepared"
+    first = asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x"))
+    assert first is not None and first.record.status == "attempting"
+
+    # A new invocation reloads the durable record and must not reacquire createPost.
+    prepared_again = asyncio.run(prepare_x_delivery(uid, "Schedule", ["https://img/1.png"], client=s3, bucket="bucket", channel_id="channel-x"))
+    assert prepared_again.status == "attempting"
+    assert asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x")) is None
+
+
+def test_x_delivery_keys_are_isolated_by_channel_for_the_same_content_uid():
+    s3 = FakeS3()
+    uid = "x:daily:2026-09-29"
+    asyncio.run(
+        prepare_x_delivery(uid, "Shared post", ["https://img/1.png"], client=s3, bucket="bucket", channel_id="channel-a")
+    )
+    asyncio.run(
+        prepare_x_delivery(uid, "Shared post", ["https://img/1.png"], client=s3, bucket="bucket", channel_id="channel-b")
+    )
+
+    first = asyncio.run(get_x_delivery(uid, client=s3, bucket="bucket", channel_id="channel-a"))
+    second = asyncio.run(get_x_delivery(uid, client=s3, bucket="bucket", channel_id="channel-b"))
+
+    assert first is not None and first.record.channel_id == "channel-a"
+    assert second is not None and second.record.channel_id == "channel-b"
+    assert first.key != second.key
+    assert x_delivery_key(uid, "channel-a") != x_delivery_key(uid, "channel-b")
+    assert first.key != x_delivery_key("different-material", "channel-a")
+
+
+def test_x_delivery_lifecycle_persists_buffer_identity_and_x_url():
+    s3 = FakeS3()
+    uid = "x:evening:2026-09-29"
+    asyncio.run(prepare_x_delivery(uid, "Daily results", ["https://img/1.png"], client=s3, bucket="bucket", channel_id="channel-x"))
+    attempting = asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x"))
+    accepted = asyncio.run(mark_x_delivery_accepted(
+        attempting, "buffer-post-1", "2026-09-29T21:00:00Z", client=s3, bucket="bucket"
+    ))
+    assert accepted.record.status == "accepted"
+    assert asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x")) is None
+    sent = asyncio.run(mark_x_delivery_sent(accepted, "https://x.com/account/status/1", client=s3, bucket="bucket"))
+    assert sent.record.status == "sent"
+    assert sent.record.buffer_post_id == "buffer-post-1"
+    assert sent.record.x_url == "https://x.com/account/status/1"
+    restored = asyncio.run(get_x_delivery(uid, client=s3, bucket="bucket", channel_id="channel-x"))
+    assert restored is not None
+    assert restored.record.status == "sent"
+    assert restored.record.buffer_post_id == "buffer-post-1"
+    assert restored.record.next_check_at == "2026-09-29T21:00:00Z"
+    assert restored.record.x_url == "https://x.com/account/status/1"
+
+
+def test_x_delivery_uncertain_and_stale_etag_never_reopen_create():
+    s3 = FakeS3()
+    uid = "x:result:uncertain"
+    asyncio.run(prepare_x_delivery(uid, "NAVI 2–1 FaZe", [], client=s3, bucket="bucket", channel_id="channel-x"))
+    attempting = asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x"))
+    uncertain = asyncio.run(mark_x_delivery_uncertain(attempting, client=s3, bucket="bucket"))
+    assert uncertain.record.status == "uncertain"
+    assert asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x")) is None
+
+    # Simulate another writer changing the durable object after this lease was read.
+    s3.put_object(
+        Bucket="bucket", Key=uncertain.key, Body=s3.objects[uncertain.key]["Body"],
+        ContentType="application/json",
+    )
+    with pytest.raises(XDeliveryConflictError, match="ETag changed"):
+        asyncio.run(mark_x_delivery_accepted(
+            attempting, "late-buffer-id", "2026-09-29T21:00:00Z", client=s3, bucket="bucket"
+        ))
+    assert asyncio.run(claim_x_delivery_create(uid, client=s3, bucket="bucket", channel_id="channel-x")) is None
 
 
 def test_expired_delivery_claim_is_atomically_reclaimed():

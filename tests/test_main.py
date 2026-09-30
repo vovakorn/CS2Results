@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 import requests
@@ -814,6 +815,280 @@ def test_result_delivers_durable_outbox_item_after_source_drops_it(monkeypatch):
     assert len(sent) == 1
     assert deleted == [pending.key]
     assert json.loads(response["body"])["retry_only"] is True
+
+
+def _x_pending(match):
+    return PendingDelivery(
+        key=f"outbox/results/x_{match.match_uid}.json",
+        channel_id="x",
+        channel_name="x",
+        match=match,
+        created_at="2026-02-17T00:00:00Z",
+    )
+
+
+def _enable_x_for_test(monkeypatch):
+    monkeypatch.setenv("ENABLE_X_PUBLISHING", "1")
+    monkeypatch.setattr(main, "_x_buffer_settings", lambda: ("test-key", "org-1", "buffer-channel"))
+
+    async def no_x_checks(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(main.x_delivery, "check_due_x_deliveries", no_x_checks)
+
+
+def test_x_result_handoff_uses_public_png_and_durable_delivery(monkeypatch):
+    _enable_x_for_test(monkeypatch)
+    match = _match()
+    pending = _x_pending(match)
+    upload_calls = []
+    delivery_calls = []
+
+    class FakeMediaClient:
+        pass
+
+    monkeypatch.setenv("X_MEDIA_BUCKET", "x-public")
+    monkeypatch.setenv("X_MEDIA_PUBLIC_BASE_URL", "https://cdn.example")
+    monkeypatch.setattr(main, "render_result_card", lambda _match: b"png-card")
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: FakeMediaClient())
+
+    def upload(platform, publication_key, cards, **kwargs):
+        upload_calls.append((platform, publication_key, cards, kwargs["bucket"], kwargs["base_url"]))
+        return ["https://cdn.example/x/result_1/1.png"]
+
+    async def create(uid, channel, organization, text, urls, api_key, **kwargs):
+        delivery_calls.append((uid, channel, organization, text, urls, api_key))
+        return SimpleNamespace(record=SimpleNamespace(status="accepted"))
+
+    monkeypatch.setattr(main, "upload_public_pngs", upload)
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", create)
+
+    outcome = main._deliver_x_result(pending)
+
+    assert outcome == "accepted"
+    assert upload_calls == [("x", f"result_{match.match_uid}", [b"png-card"], "x-public", "https://cdn.example")]
+    uid, channel, organization, text, urls, api_key = delivery_calls[0]
+    assert uid == f"x:result:{match.match_uid}"
+    assert (channel, organization, api_key) == ("buffer-channel", "org-1", "test-key")
+    assert urls == ["https://cdn.example/x/result_1/1.png"]
+    assert "NAVI" in text and "FaZe" in text and "2026-02-17" in text
+
+
+def test_enabled_x_result_is_queued_as_its_own_outbox_channel(monkeypatch):
+    _enable_x_for_test(monkeypatch)
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    match = _match()
+    enqueued = []
+    deleted = []
+
+    async def fake_matches(**kwargs):
+        return [match]
+
+    async def fake_enqueue(item, channel_id, channel_name):
+        enqueued.append((channel_id, channel_name))
+        return channel_id == "x"
+
+    async def no_pending(*args, **kwargs):
+        return []
+
+    async def fake_delete(item):
+        deleted.append(item.key)
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_matches)
+    monkeypatch.setattr(main, "enqueue_result_delivery", fake_enqueue)
+    monkeypatch.setattr(main, "list_pending_result_deliveries", no_pending)
+    monkeypatch.setattr(main, "delete_result_delivery", fake_delete)
+    monkeypatch.setattr(main, "_deliver_x_result", lambda _pending: "accepted")
+
+    response = main.handler({}, None)
+
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert enqueued == [("global", "global"), ("x", "x")]
+    assert body["messages_sent"] == 0
+    assert body["per_channel"]["x"] == 0
+    assert deleted == []
+
+
+def test_x_flag_defaults_off_and_does_not_enqueue_or_check(monkeypatch):
+    monkeypatch.delenv("ENABLE_X_PUBLISHING", raising=False)
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    enqueued = []
+    checked = []
+
+    async def fake_matches(**kwargs):
+        return [_match()]
+
+    async def fake_enqueue(match, channel_id, channel_name):
+        enqueued.append(channel_id)
+        return False
+
+    async def no_pending(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr(main.x_delivery, "check_due_x_deliveries", lambda *args, **kwargs: checked.append(True))
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_matches)
+    monkeypatch.setattr(main, "enqueue_result_delivery", fake_enqueue)
+    monkeypatch.setattr(main, "list_pending_result_deliveries", no_pending)
+    assert main.x_publishing_enabled() is False
+
+    response = main.handler({}, None)
+
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert "x" not in body["per_channel"]
+    assert enqueued == ["global"]
+    assert checked == []
+
+
+def test_x_accepted_outbox_item_stays_pending_across_retry_only_invocations(monkeypatch):
+    _enable_x_for_test(monkeypatch)
+    monkeypatch.setenv("X_MEDIA_BUCKET", "x-public")
+    monkeypatch.setenv("X_MEDIA_PUBLIC_BASE_URL", "https://cdn.example")
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    pending = _x_pending(_match())
+    attempts = []
+    processed = []
+    deleted = []
+    create_post_calls = []
+    state = {"status": None}
+
+    monkeypatch.setattr(main, "render_result_card", lambda _match: b"png-card")
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        main,
+        "upload_public_pngs",
+        lambda *args, **kwargs: ["https://cdn.example/x/result/1.png"],
+    )
+
+    async def fake_pending(*args, **kwargs):
+        return [pending]
+
+    async def fake_processed(*args, **kwargs):
+        return False
+
+    async def fake_mark(*args, **kwargs):
+        processed.append(args)
+
+    async def fake_delete(item):
+        deleted.append(item.key)
+
+    async def fake_attempt(item):
+        attempts.append(item.key)
+
+    async def fake_create(uid, channel, organization, text, urls, api_key, **kwargs):
+        if state["status"] is None:
+            create_post_calls.append(True)
+            state["status"] = "accepted"
+        return SimpleNamespace(record=SimpleNamespace(status=state["status"]))
+
+    monkeypatch.setattr(main, "list_pending_result_deliveries", fake_pending)
+    monkeypatch.setattr(main, "is_channel_processed", fake_processed)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(main, "delete_result_delivery", fake_delete)
+    monkeypatch.setattr(main, "record_result_delivery_attempt", fake_attempt)
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fake_create)
+
+    first = main.handler({"retry_only": True}, None)
+    second = main.handler({"retry_only": True}, None)
+
+    assert json.loads(first["body"])["messages_sent"] == 0
+    assert json.loads(second["body"])["messages_sent"] == 0
+    assert create_post_calls == [True]
+    assert attempts == [pending.key, pending.key]
+    assert processed == []
+    assert deleted == []
+
+
+def test_x_sent_confirmation_marks_processed_and_deletes_outbox(monkeypatch):
+    _enable_x_for_test(monkeypatch)
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    pending = _x_pending(_match())
+    processed = []
+    deleted = []
+
+    async def fake_pending(*args, **kwargs):
+        return [pending]
+
+    async def fake_processed(*args, **kwargs):
+        return False
+
+    async def fake_mark(*args, **kwargs):
+        processed.append(args)
+
+    async def fake_delete(item):
+        deleted.append(item.key)
+
+    monkeypatch.setattr(main, "list_pending_result_deliveries", fake_pending)
+    monkeypatch.setattr(main, "is_channel_processed", fake_processed)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(main, "delete_result_delivery", fake_delete)
+    monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "_deliver_x_result", lambda _pending: "sent")
+
+    response = main.handler({"retry_only": True}, None)
+
+    body = json.loads(response["body"])
+    assert body["messages_sent"] == 1
+    assert body["per_channel"]["x"] == 1
+    assert processed and processed[0][1] == "x"
+    assert deleted == [pending.key]
+
+
+def test_x_error_does_not_stop_other_result_channels(monkeypatch):
+    _enable_x_for_test(monkeypatch)
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
+    match = _match()
+    telegram = PendingDelivery(
+        key=f"outbox/results/global_{match.match_uid}.json",
+        channel_id="global", channel_name="global", match=match,
+        created_at="2026-02-17T00:00:00Z",
+    )
+    x_item = _x_pending(match)
+    instagram = PendingDelivery(
+        key=f"outbox/results/instagram_{match.match_uid}.json",
+        channel_id="instagram", channel_name="instagram", match=match,
+        created_at="2026-02-17T00:00:00Z",
+    )
+    threads = PendingDelivery(
+        key=f"outbox/results/threads_{match.match_uid}.json",
+        channel_id="threads", channel_name="threads", match=match,
+        created_at="2026-02-17T00:00:00Z",
+    )
+    sent = []
+
+    async def fake_pending(*args, **kwargs):
+        return [x_item, telegram, instagram, threads]
+
+    async def fake_claim(*args, **kwargs):
+        return _claim(match, "global")
+
+    async def fake_mark(*args, **kwargs):
+        return None
+
+    def fail_x(_pending):
+        raise RuntimeError("isolated X failure")
+
+    monkeypatch.setattr(main, "list_pending_result_deliveries", fake_pending)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
+    monkeypatch.setattr(main, "_deliver_x_result", fail_x)
+    monkeypatch.setattr(main, "_deliver_instagram_result", lambda *_args: "sent")
+    monkeypatch.setattr(main, "_deliver_threads_result", lambda *_args: "sent")
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent.append(args) or {"ok": True})
+    monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
+
+    response = main.handler({"retry_only": True}, None)
+
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 502
+    assert len(sent) == 1
+    assert body["messages_sent"] == 3
+    assert body["delivery_failures"] == 1
+    assert body["per_channel"]["instagram"] == 1
+    assert body["per_channel"]["threads"] == 1
 
 
 def test_handler_dry_run_reports_rejected_match_diagnostics(monkeypatch):
@@ -1886,6 +2161,428 @@ def test_radar_dry_run_returns_preview_without_sending(monkeypatch):
     assert "IEM Cologne 2026" in body["preview"]
 
 
+def _enable_x_radar_test(monkeypatch):
+    monkeypatch.setenv("ENABLE_X_PUBLISHING", "1")
+    monkeypatch.setenv("X_MEDIA_BUCKET", "x-public")
+    monkeypatch.setenv("X_MEDIA_PUBLIC_BASE_URL", "https://cdn.example")
+    monkeypatch.setattr(main, "_x_buffer_settings", lambda: ("test-key", "org-1", "buffer-channel"))
+    monkeypatch.setattr(main, "get_x_delivery", lambda *args, **kwargs: _async(None))
+    monkeypatch.setattr(main, "_capture_vrs_baseline", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", False)
+    monkeypatch.setattr(main, "CHANNELS", [])
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: False)
+
+
+@pytest.mark.parametrize("card_count", [1, 4, 6])
+def test_x_radar_sends_only_complete_albums_up_to_four_cards(monkeypatch, card_count):
+    _enable_x_radar_test(monkeypatch)
+    radar = TournamentRadar(
+        tournament_id="100",
+        bracket_matches=[
+            RadarBracketMatch(
+                match_id=f"pair-{index}", team1_name=f"Team {index}", team2_name=f"Opponent {index}"
+            )
+            for index in range(1, 7)
+        ],
+    )
+    cards = [f"card-{index}".encode() for index in range(1, card_count + 1)]
+    rendered = []
+    uploaded = []
+    created = []
+
+    def fake_render(rendered_radar, *args):
+        rendered.append(rendered_radar)
+        return cards
+
+    def fake_upload(platform, publication_key, uploaded_cards, **kwargs):
+        uploaded.append((platform, publication_key, list(uploaded_cards)))
+        return [f"https://cdn.example/x/{publication_key}/{index}.png" for index in range(1, len(uploaded_cards) + 1)]
+
+    async def fake_create(uid, channel, organization, text, urls, api_key):
+        created.append((uid, list(urls)))
+        return SimpleNamespace(record=SimpleNamespace(status="accepted"))
+
+    monkeypatch.setattr(main, "render_tournament_radar_cards", fake_render)
+    monkeypatch.setattr(main, "upload_public_pngs", fake_upload)
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fake_create)
+
+    response = main._handle_radar_job(
+        "100", "IEM Cologne 2026", False, publication_key="auto", radar=radar
+    )
+    body = json.loads(response["body"])
+
+    assert rendered == [radar]
+    assert body["x_cards_count"] == card_count
+    if card_count <= 4:
+        assert uploaded == [("x", "radar_100_auto", cards)]
+        assert created == [("x:radar:100:auto", [f"https://cdn.example/x/radar_100_auto/{i}.png" for i in range(1, card_count + 1)])]
+        assert body["x_delivery_state"] == "accepted"
+        assert body["x_messages_sent"] == 0
+    else:
+        assert uploaded == []
+        assert created == []
+        assert body["x_skipped_reason"] == "album_over_four_images"
+        assert body["x_delivery_state"] == "skipped"
+
+
+def test_x_radar_dry_run_previews_without_buffer_or_upload(monkeypatch):
+    _enable_x_radar_test(monkeypatch)
+    radar = TournamentRadar(
+        tournament_id="100",
+        bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
+    )
+    calls = []
+    monkeypatch.setattr(main, "render_tournament_radar_cards", lambda *args: [b"card"])
+    monkeypatch.setattr(main, "upload_public_pngs", lambda *args, **kwargs: calls.append("upload"))
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", lambda *args, **kwargs: calls.append("buffer"))
+
+    response = main._handle_radar_job(
+        "100", "IEM Cologne 2026", True, publication_key="auto", radar=radar
+    )
+    body = json.loads(response["body"])
+
+    assert body["x_delivery_state"] == "dry_run"
+    assert body["x_cards_count"] == 1
+    assert "IEM Cologne 2026" in body["x_preview"]
+    assert calls == []
+
+
+def test_x_radar_repeat_uses_stable_record_without_second_create_or_upload(monkeypatch):
+    _enable_x_radar_test(monkeypatch)
+    radar = TournamentRadar(
+        tournament_id="100",
+        bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
+    )
+    record = {}
+    uploads = []
+    create_posts = []
+
+    async def get_existing(uid, *, channel_id):
+        current = record.get(uid)
+        return SimpleNamespace(record=current) if current else None
+
+    def upload(platform, key, cards, **kwargs):
+        uploads.append(key)
+        return [f"https://cdn.example/x/{key}/1.png"]
+
+    async def create(uid, channel, organization, text, urls, api_key):
+        if uid not in record:
+            create_posts.append(uid)
+            record[uid] = SimpleNamespace(status="accepted", text=text, image_urls=tuple(urls))
+        return SimpleNamespace(record=record[uid])
+
+    monkeypatch.setattr(main, "get_x_delivery", get_existing)
+    monkeypatch.setattr(main, "render_tournament_radar_cards", lambda *args: [b"card"])
+    monkeypatch.setattr(main, "upload_public_pngs", upload)
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", create)
+
+    first = main._handle_radar_job("100", "IEM Cologne 2026", False, publication_key="auto", radar=radar)
+    second = main._handle_radar_job("100", "IEM Cologne 2026", False, publication_key="auto", radar=radar)
+
+    assert json.loads(first["body"])["x_delivery_state"] == "accepted"
+    assert json.loads(second["body"])["x_delivery_state"] == "accepted"
+    assert create_posts == ["x:radar:100:auto"]
+    assert uploads == ["radar_100_auto"]
+
+
+def test_x_radar_failure_does_not_stop_telegram_or_threads(monkeypatch):
+    _enable_x_radar_test(monkeypatch)
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
+    radar = TournamentRadar(
+        tournament_id="100",
+        bracket_matches=[RadarBracketMatch(match_id="pair", team1_name="NAVI", team2_name="FaZe")],
+    )
+    telegram = []
+    threads = []
+
+    async def fake_claim(uid):
+        return DeliveryClaim(uid, f"claims/{uid}.json", "claim-id", '"etag"')
+
+    async def no_op(*args, **kwargs):
+        return None
+
+    def fail_x(*args, **kwargs):
+        raise RuntimeError("Buffer unavailable")
+
+    monkeypatch.setattr(main, "render_tournament_radar_cards", lambda *args: [b"card"])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", no_op)
+    monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: telegram.append(args))
+    monkeypatch.setattr(main, "_deliver_threads_content", lambda **kwargs: threads.append(kwargs) or (1, 0, 0))
+    monkeypatch.setattr(main, "upload_public_pngs", lambda platform, key, cards, **kwargs: [f"https://cdn.example/x/{key}/1.png"])
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fail_x)
+
+    response = main._handle_radar_job("100", "IEM Cologne 2026", False, publication_key="auto", radar=radar)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 502
+    assert len(telegram) == 1
+    assert len(threads) == 1
+    assert body["messages_sent"] == 1
+    assert body["threads_messages_sent"] == 1
+    assert body["x_delivery_failures"] == 1
+
+
+def _x_tournament_pending(content_type="tournament_standings"):
+    match = _match().model_copy(
+        update={
+            "source": "liquipedia",
+            "is_final": True,
+            "tournament_parent": "BLAST/Open/Porto/2026",
+            "vrs_baseline_id": "BLAST/Open/Porto/2026",
+            "tournament_placements": [
+                TournamentPlacement(placement="1", team_name="NAVI", prize_usd=150_000),
+                TournamentPlacement(placement="2", team_name="FaZe", prize_usd=60_000),
+            ],
+        }
+    )
+    impact = main.TournamentVRSImpact(
+        placement="1",
+        team_name="NAVI",
+        team_id="team-1",
+        before_points=1800,
+        after_points=1900,
+        before_rank=2,
+        after_rank=1,
+        points_delta=100,
+        rank_delta=1,
+        source="Valve VRS",
+        before_version="standings_before.md",
+        after_version="standings_after.md",
+    )
+    return PendingDelivery(
+        key=f"outbox/results/x_{content_type}.json",
+        channel_id="x",
+        channel_name="x",
+        match=match,
+        created_at="2026-09-30T00:00:00Z",
+        content_type=content_type,
+        vrs_impacts=(impact,) if content_type == "tournament_vrs_standings" else (),
+    )
+
+
+def _enable_x_tournament_test(monkeypatch):
+    monkeypatch.setenv("X_MEDIA_BUCKET", "x-public")
+    monkeypatch.setenv("X_MEDIA_PUBLIC_BASE_URL", "https://cdn.example")
+    monkeypatch.setattr(main, "_x_buffer_settings", lambda: ("test-key", "org-1", "buffer-channel"))
+
+    async def no_existing(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "get_x_delivery", no_existing)
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
+
+
+@pytest.mark.parametrize(
+    ("content_type", "render_name", "expected_uid", "expected_prefix"),
+    [
+        (
+            "tournament_standings",
+            "render_tournament_standings_cards",
+            "x:tournament-standings:BLAST/Open/Porto/2026",
+            "standings_BLAST_Open_Porto_2026",
+        ),
+        (
+            "tournament_vrs_standings",
+            "render_tournament_vrs_cards",
+            "x:tournament-vrs:BLAST/Open/Porto/2026",
+            "vrs_BLAST_Open_Porto_2026",
+        ),
+    ],
+)
+def test_x_tournament_formats_upload_complete_eligible_album(
+    monkeypatch, content_type, render_name, expected_uid, expected_prefix
+):
+    _enable_x_tournament_test(monkeypatch)
+    pending = _x_tournament_pending(content_type)
+    rendered = []
+    uploaded = []
+    creates = []
+    marked = []
+    deleted = []
+    attempts = []
+
+    def fake_render(*args):
+        rendered.append(args)
+        return [b"card-1", b"card-2"]
+
+    async def fake_create(uid, channel, organization, text, urls, api_key):
+        creates.append((uid, channel, organization, text, list(urls), api_key))
+        return SimpleNamespace(record=SimpleNamespace(status="accepted"))
+
+    monkeypatch.setattr(main, render_name, fake_render)
+    monkeypatch.setattr(
+        main,
+        "upload_public_pngs",
+        lambda platform, key, cards, **kwargs: uploaded.append((platform, key, list(cards)))
+        or [f"https://cdn.example/x/{key}/{index}.png" for index in range(1, len(cards) + 1)],
+    )
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fake_create)
+    monkeypatch.setattr(main, "mark_content_processed", lambda *args: _async(marked.append(args)))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+    monkeypatch.setattr(main, "record_result_delivery_attempt", lambda item: _async(attempts.append(item.key)))
+
+    outcome = main._process_x_tournament_outbox(pending)
+
+    assert outcome == "accepted"
+    assert len(rendered) == 1
+    assert uploaded == [("x", expected_prefix, [b"card-1", b"card-2"])]
+    assert creates[0][0] == expected_uid
+    assert len(creates[0][4]) == 2
+    assert marked == []
+    assert deleted == []
+    assert attempts == [pending.key]
+
+
+@pytest.mark.parametrize(
+    "source_case",
+    ["unconfirmed-payout", "missing-vrs-impacts", "missing-snapshot-version"],
+)
+def test_x_tournament_formats_reject_incomplete_source_data(monkeypatch, source_case):
+    _enable_x_tournament_test(monkeypatch)
+    if source_case == "unconfirmed-payout":
+        match = _match().model_copy(
+            update={
+                "source": "liquipedia",
+                "is_final": True,
+                "tournament_parent": "BLAST/Open/Porto/2026",
+                "tournament_placements": [
+                    TournamentPlacement(placement="1", team_name="NAVI", prize_usd=150_000),
+                    TournamentPlacement(placement="2", team_name="FaZe", prize_usd=None),
+                ],
+            }
+        )
+        pending = PendingDelivery(
+            key="outbox/results/x_unconfirmed_standings.json",
+            channel_id="x",
+            channel_name="x",
+            match=match,
+            created_at="2026-09-30T00:00:00Z",
+            content_type="tournament_standings",
+        )
+    elif source_case == "missing-vrs-impacts":
+        valid = _x_tournament_pending("tournament_vrs_standings")
+        pending = PendingDelivery(
+            key="outbox/results/x_bad_vrs.json",
+            channel_id="x",
+            channel_name="x",
+            match=valid.match,
+            created_at=valid.created_at,
+            content_type="tournament_vrs_standings",
+            vrs_impacts=(),
+        )
+    else:
+        valid = _x_tournament_pending("tournament_vrs_standings")
+        incomplete_impact = valid.vrs_impacts[0].model_copy(
+            update={"before_version": "", "after_version": ""}
+        )
+        pending = PendingDelivery(
+            key="outbox/results/x_missing_snapshot_version.json",
+            channel_id="x",
+            channel_name="x",
+            match=valid.match,
+            created_at=valid.created_at,
+            content_type="tournament_vrs_standings",
+            vrs_impacts=(incomplete_impact,),
+        )
+    calls = []
+    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: calls.append("render"))
+    monkeypatch.setattr(main, "render_tournament_vrs_cards", lambda *args: calls.append("render"))
+    monkeypatch.setattr(main, "upload_public_pngs", lambda *args, **kwargs: calls.append("upload"))
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", lambda *args, **kwargs: calls.append("buffer"))
+    deleted = []
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+
+    outcome = main._process_x_tournament_outbox(pending)
+
+    assert outcome == "invalid_source"
+    assert calls == []
+    assert deleted == [pending.key]
+
+
+@pytest.mark.parametrize("content_type", ["tournament_standings", "tournament_vrs_standings"])
+def test_x_tournament_formats_defer_album_over_four_images(monkeypatch, content_type):
+    _enable_x_tournament_test(monkeypatch)
+    pending = _x_tournament_pending(content_type)
+    calls = []
+    render_name = (
+        "render_tournament_standings_cards"
+        if content_type == "tournament_standings"
+        else "render_tournament_vrs_cards"
+    )
+    monkeypatch.setattr(main, render_name, lambda *args: [b"card"] * 5)
+    monkeypatch.setattr(main, "upload_public_pngs", lambda *args, **kwargs: calls.append("upload"))
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", lambda *args, **kwargs: calls.append("buffer"))
+    attempts = []
+    monkeypatch.setattr(main, "record_result_delivery_attempt", lambda item: _async(attempts.append(item.key)))
+
+    outcome = main._process_x_tournament_outbox(pending)
+
+    assert outcome == "deferred_album_over_limit"
+    assert calls == []
+    assert attempts == [pending.key]
+
+
+@pytest.mark.parametrize(
+    ("content_type", "render_name", "expected_uid", "expected_prefix"),
+    [
+        (
+            "tournament_standings",
+            "render_tournament_standings_cards",
+            "x:tournament-standings:BLAST/Open/Porto/2026",
+            "standings_BLAST_Open_Porto_2026",
+        ),
+        (
+            "tournament_vrs_standings",
+            "render_tournament_vrs_cards",
+            "x:tournament-vrs:BLAST/Open/Porto/2026",
+            "vrs_BLAST_Open_Porto_2026",
+        ),
+    ],
+)
+def test_x_tournament_repeat_reuses_format_key_and_saved_payload(
+    monkeypatch, content_type, render_name, expected_uid, expected_prefix
+):
+    _enable_x_tournament_test(monkeypatch)
+    pending = _x_tournament_pending(content_type)
+    stored = {}
+    uploaded = []
+    create_posts = []
+    monkeypatch.setattr(main, render_name, lambda *args: [b"card"])
+
+    async def get_existing(uid, *, channel_id):
+        record = stored.get(uid)
+        return SimpleNamespace(record=record) if record else None
+
+    def fake_upload(platform, key, cards, **kwargs):
+        uploaded.append(key)
+        return [f"https://cdn.example/x/{key}/1.png"]
+
+    async def fake_create(uid, channel, organization, text, urls, api_key):
+        if uid not in stored:
+            create_posts.append(uid)
+            stored[uid] = SimpleNamespace(status="accepted", text=text, image_urls=tuple(urls))
+        return SimpleNamespace(record=stored[uid])
+
+    monkeypatch.setattr(main, "get_x_delivery", get_existing)
+    monkeypatch.setattr(main, "upload_public_pngs", fake_upload)
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fake_create)
+    monkeypatch.setattr(main, "record_result_delivery_attempt", lambda *args: _async(None))
+
+    first = main._process_x_tournament_outbox(pending)
+    second = main._process_x_tournament_outbox(pending)
+
+    assert first == second == "accepted"
+    assert create_posts == [expected_uid]
+    assert uploaded == [expected_prefix]
+
+
 def test_radar_discovery_selects_each_tier1_tournament_once():
     first = _upcoming().model_copy(
         update={
@@ -2747,6 +3444,215 @@ def test_digest_sends_every_result_page_in_one_spoiler_album(monkeypatch):
     assert albums[0][0][1] == [b"page-1", b"page-2"]
     assert albums[0][1]["has_spoiler"] is True
     assert all(name.startswith("cs2-results-") for name in albums[0][1]["filenames"])
+
+
+def _enable_x_content_job(monkeypatch):
+    monkeypatch.setenv("ENABLE_X_PUBLISHING", "1")
+    monkeypatch.setenv("X_MEDIA_BUCKET", "x-public")
+    monkeypatch.setenv("X_MEDIA_PUBLIC_BASE_URL", "https://cdn.example")
+    monkeypatch.setattr(main, "_x_buffer_settings", lambda: ("test-key", "org-1", "buffer-channel"))
+    monkeypatch.setattr(
+        main,
+        "CHANNELS",
+        [{"id": "global", "name": "global", "chat_id": "test-chat", "teams": None}],
+    )
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: False)
+
+    async def no_telegram_claim(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "claim_content_delivery", no_telegram_claim)
+
+    async def no_existing_x_delivery(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(main, "get_x_delivery", no_existing_x_delivery)
+
+
+@pytest.mark.parametrize("job", ["schedule", "digest"])
+def test_x_content_jobs_handoff_complete_release_to_buffer(monkeypatch, job):
+    _enable_x_content_job(monkeypatch)
+    uploaded = []
+    handed_off = []
+
+    async def fake_schedule(start, end):
+        return [_upcoming()]
+
+    async def fake_contexts(matches):
+        return []
+
+    async def fake_digest(limit, start=None, end=None):
+        return [_match()]
+
+    async def fake_create(uid, channel, organization, text, urls, api_key):
+        handed_off.append((uid, channel, organization, text, urls, api_key))
+        return SimpleNamespace(record=SimpleNamespace(status="accepted"))
+
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_schedule)
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", fake_contexts)
+    monkeypatch.setattr(main, "fetch_pandascore_finished_matches", fake_digest)
+    monkeypatch.setattr(main, "apply_quality_filters", lambda matches: (matches, [], []))
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: [b"schedule-card"])
+    monkeypatch.setattr(main, "render_results_cards", lambda *args: [b"digest-card"])
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        main,
+        "upload_public_pngs",
+        lambda platform, key, cards, **kwargs: uploaded.append((platform, key, cards))
+        or [f"https://cdn.example/x/{key}/1.png"],
+    )
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fake_create)
+
+    response = main.handler({"job": job}, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert len(uploaded) == 1
+    assert uploaded[0][0] == "x"
+    assert uploaded[0][1].startswith(f"{job}_")
+    assert uploaded[0][2] == [b"schedule-card" if job == "schedule" else b"digest-card"]
+    uid, channel, organization, post_text, urls, api_key = handed_off[0]
+    assert uid.startswith(f"x:{job}:")
+    assert (channel, organization, api_key) == ("buffer-channel", "org-1", "test-key")
+    assert urls[0].startswith("https://cdn.example/x/")
+    assert post_text and body["x_cards_count"] == 1
+    assert body["x_delivery_state"] == "accepted"
+    assert body["x_messages_sent"] == 0
+
+
+def test_x_content_empty_release_has_explicit_skip_reason(monkeypatch):
+    _enable_x_content_job(monkeypatch)
+    uploads = []
+    async def fake_fetch(start, end):
+        return []
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "upload_public_pngs", lambda *args, **kwargs: uploads.append(True))
+
+    response = main.handler({"job": "schedule"}, None)
+    body = json.loads(response["body"])
+
+    assert body["matches_selected"] == 0
+    assert body["x_cards_count"] == 0
+    assert body["x_skipped_reason"] == "empty_issue"
+    assert uploads == []
+
+
+def test_x_content_skips_album_with_more_than_four_cards_before_upload():
+    matches = [
+        SimpleNamespace(
+            competition_key=f"event-{index}",
+            tournament_name=f"Event {index}",
+            scheduled_at=f"2026-09-30T{10 + index:02d}:00:00Z",
+        )
+        for index in range(5)
+    ]
+
+    result = main._deliver_x_content_job(
+        "schedule", "2026-09-30", matches, None, None  # type: ignore[arg-type]
+    )
+
+    assert result["x_cards_count"] == 5
+    assert result["x_skipped_reason"] == "invalid_card_count"
+    assert result["x_delivery_state"] == "skipped"
+
+
+def test_x_content_dry_run_previews_without_render_upload_or_buffer(monkeypatch):
+    _enable_x_content_job(monkeypatch)
+    calls = []
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+    async def fake_contexts(matches):
+        return []
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", fake_contexts)
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: calls.append("render"))
+    monkeypatch.setattr(main, "upload_public_pngs", lambda *args, **kwargs: calls.append("upload"))
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", lambda *args, **kwargs: calls.append("buffer"))
+
+    response = main.handler({"job": "schedule", "dry_run": True}, None)
+    body = json.loads(response["body"])
+
+    assert body["x_delivery_state"] == "dry_run"
+    assert body["x_cards_count"] == 1
+    assert "NAVI" in body["x_preview"] and "FaZe" in body["x_preview"]
+    assert calls == []
+
+
+def test_x_content_repeated_scheduler_invocation_keeps_one_create_post(monkeypatch):
+    _enable_x_content_job(monkeypatch)
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+    async def fake_contexts(matches):
+        return []
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", fake_contexts)
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: [b"card"])
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    uploads = []
+    monkeypatch.setattr(main, "upload_public_pngs", lambda platform, key, cards, **kwargs: uploads.append(key) or [f"https://cdn.example/x/{key}/1.png"])
+    persisted = {}
+    create_post_calls = []
+
+    async def fake_get(uid, *, channel_id):
+        record = persisted.get(uid)
+        if record is None:
+            return None
+        return SimpleNamespace(record=record)
+
+    monkeypatch.setattr(main, "get_x_delivery", fake_get)
+
+    async def fake_create(uid, channel, organization, text, urls, api_key):
+        if uid not in persisted:
+            create_post_calls.append(uid)
+            persisted[uid] = SimpleNamespace(
+                status="accepted", text=text, image_urls=tuple(urls)
+            )
+        return SimpleNamespace(record=persisted[uid])
+
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fake_create)
+    first = main.handler({"job": "schedule"}, None)
+    second = main.handler({"job": "schedule"}, None)
+
+    assert json.loads(first["body"])["x_delivery_state"] == "accepted"
+    assert json.loads(second["body"])["x_delivery_state"] == "accepted"
+    assert len(create_post_calls) == 1
+    assert len(uploads) == 1
+    assert create_post_calls[0].startswith("x:schedule:")
+
+
+def test_x_buffer_error_does_not_stop_telegram_content_delivery(monkeypatch):
+    _enable_x_content_job(monkeypatch)
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+    async def fake_contexts(matches):
+        return []
+    async def fake_claim(uid):
+        return "telegram-claim"
+    async def fake_mark_processed(*args, **kwargs):
+        return None
+    telegram_sent = []
+    async def fake_create(*args, **kwargs):
+        raise RuntimeError("Buffer unavailable")
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", fake_contexts)
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_content_processed", fake_mark_processed)
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: telegram_sent.append(args))
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: [b"card"])
+    monkeypatch.setattr(main.boto3, "client", lambda *args, **kwargs: object())
+    monkeypatch.setattr(main, "upload_public_pngs", lambda platform, key, cards, **kwargs: [f"https://cdn.example/x/{key}/1.png"])
+    monkeypatch.setattr(main.x_delivery, "create_x_delivery", fake_create)
+
+    response = main.handler({"job": "schedule"}, None)
+    body = json.loads(response["body"])
+
+    assert len(telegram_sent) >= 1
+    assert telegram_sent[0][0] == "chat"
+    assert body["x_delivery_failures"] == 1
+    assert body["x_delivery_state"] == "error"
+    assert body["messages_sent"] == 1
 
 
 def test_invalid_job_is_rejected():

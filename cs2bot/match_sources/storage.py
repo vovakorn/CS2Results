@@ -28,6 +28,10 @@ class StorageUnavailableError(Exception):
     """Raised when Object Storage is not configured or cannot be reached."""
 
 
+class XDeliveryConflictError(Exception):
+    """Raised when an X delivery changed before a conditional state transition."""
+
+
 @dataclass(frozen=True)
 class DeliveryClaim:
     match_uid: str
@@ -59,7 +63,32 @@ class ThreadsChainAppend:
     etag: str
 
 
+@dataclass(frozen=True)
+class XDeliveryRecord:
+    """Durable X delivery data, isolated from the existing channel claims."""
+
+    content_uid: str
+    text: str
+    image_urls: tuple[str, ...]
+    channel_id: str
+    status: str
+    created_at: str
+    updated_at: str
+    attempting_at: str | None = None
+    buffer_post_id: str | None = None
+    next_check_at: str | None = None
+    x_url: str | None = None
+
+
+@dataclass(frozen=True)
+class XDeliveryLease:
+    record: XDeliveryRecord
+    key: str
+    etag: str
+
+
 RESULT_OUTBOX_PREFIX = "outbox/results/"
+X_DELIVERY_PREFIX = "x/deliveries/"
 VRS_SNAPSHOT_PREFIX = "vrs-snapshots/"
 TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
 CLAIM_CREATE_MAX_ATTEMPTS = 3
@@ -96,6 +125,401 @@ def alert_key(alert_code: str, now: datetime) -> str:
 def safe_storage_part(value: str) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     return cleaned.strip("_") or "unknown"
+
+
+def x_delivery_key(content_uid: str, channel_id: str) -> str:
+    """Return a collision-resistant X key scoped to the stable channel and UID."""
+    if not isinstance(content_uid, str) or not content_uid.strip():
+        raise ValueError("content_uid must be a non-empty string")
+    if not isinstance(channel_id, str) or not channel_id.strip():
+        raise ValueError("channel_id must be a non-empty string")
+    identity = f"{channel_id}\0{content_uid}"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+    return f"{X_DELIVERY_PREFIX}{digest}.json"
+
+
+def _x_delivery_from_payload(payload: dict[str, Any]) -> XDeliveryRecord:
+    try:
+        return XDeliveryRecord(
+            content_uid=str(payload["content_uid"]),
+            text=str(payload["text"]),
+            image_urls=tuple(str(url) for url in payload["image_urls"]),
+            channel_id=str(payload["channel_id"]),
+            status=str(payload["status"]),
+            created_at=str(payload["created_at"]),
+            updated_at=str(payload["updated_at"]),
+            attempting_at=payload.get("attempting_at"),
+            buffer_post_id=payload.get("buffer_post_id"),
+            next_check_at=payload.get("next_check_at"),
+            x_url=payload.get("x_url"),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise StorageUnavailableError("invalid X delivery record") from exc
+
+
+async def _read_x_delivery(
+    content_uid: str,
+    *,
+    channel_id: str,
+    s3: Any,
+    bucket_name: str,
+) -> XDeliveryLease | None:
+    key = x_delivery_key(content_uid, channel_id)
+    try:
+        response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return None
+        raise StorageUnavailableError(f"X delivery read failed for {key}") from exc
+    body = response.get("Body")
+    try:
+        payload = json.loads(body.read())
+    except (AttributeError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise StorageUnavailableError(f"invalid X delivery record at {key}") from exc
+    finally:
+        if body is not None and hasattr(body, "close"):
+            body.close()
+    if (
+        not isinstance(payload, dict)
+        or payload.get("content_uid") != content_uid
+        or payload.get("channel_id") != channel_id
+    ):
+        raise StorageUnavailableError(f"X delivery identity mismatch at {key}")
+    etag = response.get("ETag")
+    if not etag:
+        raise StorageUnavailableError(f"X delivery is missing an ETag at {key}")
+    return XDeliveryLease(_x_delivery_from_payload(payload), key, etag)
+
+
+async def prepare_x_delivery(
+    content_uid: str,
+    text: str,
+    image_urls: list[str] | tuple[str, ...],
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+    *,
+    channel_id: str,
+) -> XDeliveryRecord:
+    """Create an immutable prepared X outbox record before calling Buffer."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("X delivery text must be non-empty")
+    if not isinstance(image_urls, (list, tuple)) or not all(
+        isinstance(url, str) and url.strip() for url in image_urls
+    ):
+        raise ValueError("X delivery image URLs must be non-empty strings")
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = x_delivery_key(content_uid, channel_id)
+    reference = now or datetime.now(timezone.utc)
+    timestamp = reference.isoformat().replace("+00:00", "Z")
+    payload = {
+        "content_uid": content_uid,
+        "text": text,
+        "image_urls": list(image_urls),
+        "status": "prepared",
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "channel_id": channel_id,
+        "attempting_at": None,
+        "buffer_post_id": None,
+        "next_check_at": None,
+        "x_url": None,
+    }
+    try:
+        await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+        return _x_delivery_from_payload(payload)
+    except ClientError as exc:
+        if not _is_precondition_failed(exc):
+            raise StorageUnavailableError(f"X delivery prepare failed for {key}") from exc
+    existing = await _read_x_delivery(
+        content_uid, channel_id=channel_id, s3=s3, bucket_name=bucket_name
+    )
+    if existing is None:
+        raise StorageUnavailableError(f"X delivery disappeared after prepare conflict for {key}")
+    record = existing.record
+    if (
+        record.text != text
+        or record.image_urls != tuple(image_urls)
+        or record.channel_id != channel_id
+    ):
+        raise XDeliveryConflictError("content_uid already has a different prepared X payload")
+    return record
+
+
+async def claim_x_delivery_create(
+    content_uid: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+    *,
+    channel_id: str,
+) -> XDeliveryLease | None:
+    """CAS prepared→attempting; only the winner may issue Buffer createPost."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    current = await _read_x_delivery(
+        content_uid, channel_id=channel_id, s3=s3, bucket_name=bucket_name
+    )
+    if current is None or current.record.status != "prepared":
+        return None
+    updated_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+    payload = {
+        **current.record.__dict__,
+        "status": "attempting",
+        "updated_at": updated_at,
+        "attempting_at": updated_at,
+        "next_check_at": updated_at,
+    }
+    try:
+        response = await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=current.key,
+            Body=json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            ContentType="application/json",
+            IfMatch=current.etag,
+        )
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return None
+        raise StorageUnavailableError(f"X delivery claim failed for {current.key}") from exc
+    etag = response.get("ETag")
+    if not etag:
+        raise StorageUnavailableError(f"X delivery claim is missing an ETag for {current.key}")
+    return XDeliveryLease(_x_delivery_from_payload(payload), current.key, etag)
+
+
+async def _transition_x_delivery(
+    lease: XDeliveryLease,
+    expected_status: str,
+    status: str,
+    *,
+    client: Any | None = None,
+    bucket: str | None = None,
+    buffer_post_id: str | None = None,
+    next_check_at: str | None = None,
+    x_url: str | None = None,
+    now: datetime | None = None,
+) -> XDeliveryLease:
+    if lease.record.status != expected_status:
+        raise XDeliveryConflictError(
+            f"X delivery transition requires {expected_status}, got {lease.record.status}"
+        )
+    if status == "accepted" and (
+        not (buffer_post_id or lease.record.buffer_post_id) or not next_check_at
+    ):
+        raise ValueError("accepted X delivery requires Buffer post ID and next check time")
+    if status == "sent" and (not lease.record.buffer_post_id or not x_url):
+        raise ValueError("sent X delivery requires Buffer post ID and X URL")
+    if not lease.etag:
+        raise StorageUnavailableError(f"X delivery transition is missing an ETag for {lease.key}")
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    updated_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+    payload = {
+        **lease.record.__dict__,
+        "status": status,
+        "updated_at": updated_at,
+        "buffer_post_id": buffer_post_id or lease.record.buffer_post_id,
+        "next_check_at": next_check_at if status == "accepted" else lease.record.next_check_at,
+        "x_url": x_url or lease.record.x_url,
+    }
+    try:
+        response = await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=lease.key,
+            Body=json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            ContentType="application/json",
+            IfMatch=lease.etag,
+        )
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            raise XDeliveryConflictError("X delivery ETag changed during transition") from exc
+        raise StorageUnavailableError(f"X delivery transition failed for {lease.key}") from exc
+    etag = response.get("ETag")
+    if not etag:
+        raise StorageUnavailableError(f"X delivery transition is missing an ETag for {lease.key}")
+    return XDeliveryLease(_x_delivery_from_payload(payload), lease.key, etag)
+
+
+async def mark_x_delivery_accepted(
+    lease: XDeliveryLease,
+    buffer_post_id: str,
+    next_check_at: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> XDeliveryLease:
+    return await _transition_x_delivery(
+        lease, "attempting", "accepted", client=client, bucket=bucket,
+        buffer_post_id=buffer_post_id, next_check_at=next_check_at, now=now,
+    )
+
+
+async def mark_x_delivery_uncertain(
+    lease: XDeliveryLease,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> XDeliveryLease:
+    return await _transition_x_delivery(
+        lease, "attempting", "uncertain", client=client, bucket=bucket, now=now,
+    )
+
+
+async def mark_x_delivery_sent(
+    lease: XDeliveryLease,
+    x_url: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> XDeliveryLease:
+    return await _transition_x_delivery(
+        lease, "accepted", "sent", client=client, bucket=bucket, x_url=x_url, now=now,
+    )
+
+
+async def get_x_delivery(
+    content_uid: str,
+    client: Any | None = None,
+    bucket: str | None = None,
+    *,
+    channel_id: str,
+) -> XDeliveryLease | None:
+    """Read one X delivery together with its ETag for a safe state transition."""
+    return await _read_x_delivery(
+        content_uid,
+        channel_id=channel_id,
+        s3=client or _client(),
+        bucket_name=bucket or _bucket(),
+    )
+
+
+async def list_due_x_deliveries(
+    now: datetime,
+    *,
+    limit: int = 3,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> list[XDeliveryLease]:
+    """Return due, nonterminal X records ordered by their next check time."""
+    if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+        raise ValueError("limit must be a positive integer")
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    reference = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+    reference = reference.astimezone(timezone.utc)
+    keys: list[str] = []
+    continuation: str | None = None
+    while True:
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket_name,
+            "Prefix": X_DELIVERY_PREFIX,
+            "MaxKeys": 1000,
+        }
+        if continuation:
+            kwargs["ContinuationToken"] = continuation
+        try:
+            page = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
+        except (BotoCoreError, ClientError) as exc:
+            raise StorageUnavailableError("X delivery listing failed") from exc
+        keys.extend(
+            item["Key"] for item in page.get("Contents", [])
+            if isinstance(item, dict) and isinstance(item.get("Key"), str)
+        )
+        if not page.get("IsTruncated"):
+            break
+        continuation = page.get("NextContinuationToken")
+        if not continuation:
+            raise StorageUnavailableError("X delivery listing returned no continuation token")
+
+    due: list[tuple[datetime, XDeliveryLease]] = []
+    for key in keys:
+        lease = await _read_x_delivery_by_key(key, s3=s3, bucket_name=bucket_name)
+        if lease is None or lease.record.status not in {"attempting", "accepted"}:
+            continue
+        raw_check = lease.record.next_check_at
+        if not raw_check:
+            continue
+        try:
+            check_at = datetime.fromisoformat(raw_check.replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            continue
+        if check_at.tzinfo is None:
+            check_at = check_at.replace(tzinfo=timezone.utc)
+        check_at = check_at.astimezone(timezone.utc)
+        if check_at <= reference:
+            due.append((check_at, lease))
+    due.sort(key=lambda pair: (pair[0], pair[1].key))
+    return [lease for _, lease in due[:limit]]
+
+
+async def _read_x_delivery_by_key(
+    key: str,
+    *,
+    s3: Any,
+    bucket_name: str,
+) -> XDeliveryLease | None:
+    """Read a listed record without reconstructing its hashed key from a UID."""
+    try:
+        response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return None
+        raise StorageUnavailableError(f"X delivery read failed for {key}") from exc
+    body = response.get("Body")
+    try:
+        payload = json.loads(body.read())
+    except (AttributeError, OSError, TypeError, ValueError) as exc:
+        raise StorageUnavailableError(f"invalid X delivery record at {key}") from exc
+    finally:
+        if body is not None and hasattr(body, "close"):
+            body.close()
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("content_uid"), str)
+        or not isinstance(payload.get("channel_id"), str)
+    ):
+        raise StorageUnavailableError(f"X delivery identity mismatch at {key}")
+    try:
+        expected_key = x_delivery_key(payload["content_uid"], payload.get("channel_id"))
+    except ValueError as exc:
+        raise StorageUnavailableError(f"X delivery identity mismatch at {key}") from exc
+    if expected_key != key:
+        raise StorageUnavailableError(f"X delivery identity mismatch at {key}")
+    etag = response.get("ETag")
+    if not etag:
+        raise StorageUnavailableError(f"X delivery is missing an ETag at {key}")
+    return XDeliveryLease(_x_delivery_from_payload(payload), key, etag)
+
+
+async def reschedule_x_delivery_check(
+    lease: XDeliveryLease,
+    next_check_at: str,
+    *,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> XDeliveryLease:
+    """Advance a check without changing an accepted X delivery's status."""
+    return await _transition_x_delivery(
+        lease,
+        "accepted",
+        "accepted",
+        client=client,
+        bucket=bucket,
+        next_check_at=next_check_at,
+        now=now,
+    )
 
 
 def logo_cache_key(url: str) -> str:

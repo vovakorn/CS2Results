@@ -419,6 +419,28 @@ YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
 
 ### Candidate
 
+#### Первое включение X через Buffer
+
+Локальный X-код выключен по умолчанию (`ENABLE_X_PUBLISHING=0`). Текущая версия
+`scripts/deploy_yandex_function.sh` копирует environment и ссылки Lockbox из
+версии `production`, но не имеет override для `ENABLE_X_PUBLISHING`,
+`BUFFER_ORGANIZATION_ID`, `BUFFER_X_CHANNEL_ID`, `X_MEDIA_BUCKET`,
+`X_MEDIA_PUBLIC_BASE_URL` или закреплённой привязки `BUFFER_API_KEY`. Команда
+`check` не проверяет X-конфигурацию, а стандартный candidate smoke запускает
+только `analytics/import_metrics` с `dry_run=true`; его успех не доказывает
+доступность Buffer или публичных PNG.
+
+До первого включения флага проверьте у владельца подключение нужного X-канала
+и тариф Buffer. Затем отдельно дополните release-процесс передачей перечисленных
+параметров и Lockbox-привязки без чтения или вывода значения ключа, добавьте
+проверку их наличия и выполните локальные профильные проверки. Сохраните
+изменения в чистой проверяемой ветке: `candidate` по умолчанию отказывает при
+грязном Git working tree. Только после согласованного release-цикла и
+контролируемого пилота со статусом Buffer `sent` и ссылкой X обновляйте
+production-снимок в `PROJECT_STATUS.md`. `createPost` сейчас использует
+`addToQueue`, поэтому принятие Buffer и успешный dry-run не подтверждают
+публикацию в X.
+
 Создайте и проверьте release candidate:
 
 ```bash
