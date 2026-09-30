@@ -261,11 +261,16 @@ def test_threads_vrs_publication_replies_to_the_tournament_tail(monkeypatch):
         points_delta=100, rank_delta=1, source="Valve VRS",
         before_version="before", after_version="after",
     )
+    second_impact = impact.model_copy(update={
+        "placement": "2", "team_name": "FaZe", "team_id": "team-2",
+        "before_points": 1700, "after_points": 1650,
+        "before_rank": 4, "after_rank": 6, "points_delta": -50, "rank_delta": -2,
+    })
     match = _match().model_copy(update={"vrs_baseline_id": "tournament-1"})
     pending = PendingDelivery(
         key="outbox/results/threads_vrs.json", channel_id="threads",
         channel_name="threads", match=match, created_at="2026-09-01T00:00:00Z",
-        content_type="tournament_vrs_standings", vrs_impacts=(impact,),
+        content_type="tournament_vrs_standings", vrs_impacts=(impact, second_impact),
     )
     published = []
     monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(DeliveryClaim("vrs", "claim", "id")))

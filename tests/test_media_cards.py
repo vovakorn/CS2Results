@@ -1,7 +1,7 @@
 import io
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from cs2bot import media_cards
 from cs2bot.match_sources.models import (
@@ -237,6 +237,17 @@ def test_tournament_standings_require_payout_for_every_team():
         media_cards.render_tournament_standings_cards("IEM Cologne 2026", placements)
 
 
+def test_tournament_standings_reject_odd_team_count():
+    placements = [
+        TournamentPlacement(placement=str(index + 1), team_name=f"Team {index + 1}", prize_usd=10_000)
+        for index in range(5)
+    ]
+
+    assert not media_cards.can_render_tournament_standings(placements)
+    with pytest.raises(media_cards.MediaCardError, match="complete placements"):
+        media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)
+
+
 def test_tournament_standings_use_subtle_podium_colors_for_top_four():
     assert media_cards._standings_row_color("1") == media_cards.STANDINGS_GOLD
     assert media_cards._standings_row_color("2") == media_cards.STANDINGS_SILVER
@@ -255,22 +266,55 @@ def test_tournament_standings_draws_metallic_podium_medals_and_a_distinct_header
     image = Image.open(
         io.BytesIO(media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)[0])
     ).convert("RGB")
-    table_top = 340 + (media_cards.TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
-    first_row_top = table_top + 62
-
-    for index in range(4):
-        row_top = first_row_top + index * 68
-        shadow = image.getpixel((146, row_top + 13))
-        sheen = image.getpixel((146, row_top + 22))
-        assert sum(sheen) > sum(shadow)
-    assert image.getpixel((146, first_row_top + 22)) != image.getpixel((146, first_row_top + 68 + 22))
-    assert image.getpixel((146, first_row_top + 68 + 22)) != image.getpixel((146, first_row_top + 2 * 68 + 22))
-    assert image.getpixel((136, first_row_top + 17)) != image.getpixel((156, first_row_top + 17))
-    bronze_row_top = first_row_top + 2 * 68
-    assert image.getpixel((120, bronze_row_top + 23)) != image.getpixel((172, bronze_row_top + 23))
+    table_top, row_heights = media_cards._tournament_table_layout(4, champion_index=0)
+    assert table_top == 340
+    assert table_top + 62 + sum(row_heights) == 946
+    row_top = table_top + 62
+    badge_colors = []
+    for row_height in row_heights:
+        center_y = row_top + row_height // 2
+        badge_colors.append(image.getpixel((122, center_y)))
+        badge_crop = image.crop((110, center_y - 22, 182, center_y + 22))
+        assert len(badge_crop.getcolors(72 * 44) or []) > 8
+        row_top += row_height
+    assert len(set(badge_colors[:3])) == 3
+    assert image.getpixel((400, table_top + 80)) != image.getpixel((400, table_top + 62 + row_heights[0] + 20))
     assert image.getpixel((540, table_top + 30)) == media_cards.STANDINGS_HEADER
     assert image.getpixel((540, table_top)) == media_cards.STANDINGS_HEADER_LINE
     assert image.getpixel((540, table_top + 62)) == media_cards.STANDINGS_HEADER_LINE
+
+
+@pytest.mark.parametrize("count", [2, 4, 6, 8])
+def test_tournament_standings_table_uses_available_height(count, monkeypatch):
+    panels = []
+    original = media_cards._chamfered_panel
+
+    def capture_panel(draw, box, **kwargs):
+        panels.append(box)
+        return original(draw, box, **kwargs)
+
+    monkeypatch.setattr(media_cards, "_chamfered_panel", capture_panel)
+    placements = [
+        TournamentPlacement(placement=str(index + 1), team_name=f"Team {index + 1}", prize_usd=10_000)
+        for index in range(count)
+    ]
+    media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)
+    _, top, _, bottom = panels[0]
+    assert top >= 340
+    assert bottom <= 946
+    assert bottom - top >= (340 if count == 2 else 600)
+
+
+def test_sparse_tournament_table_wraps_long_team_name():
+    name = "VERY LONG COUNTER STRIKE TEAM NAME THAT MUST SHRINK"
+    draw = ImageDraw.Draw(Image.new("RGB", (1080, 1080)))
+
+    for preferred_size, two_line_size in ((46, 36), (38, 32)):
+        lines, font = media_cards._table_team_lines(draw, name, 474, preferred_size, two_line_size)
+        assert len(lines) == 2
+        assert " ".join(lines) == name
+        assert font.size >= 30
+        assert all(draw.textlength(line, font=font) <= 474 for line in lines)
 
 
 def test_tournament_standings_use_the_source_label_on_every_page(monkeypatch):
@@ -283,7 +327,7 @@ def test_tournament_standings_use_the_source_label_on_every_page(monkeypatch):
 
     placements = [
         TournamentPlacement(placement=str(index + 1), team_name=f"Team {index + 1}", prize_usd=10_000)
-        for index in range(9)
+        for index in range(10)
     ]
     monkeypatch.setattr(media_cards, "_centered_text", capture_text)
 

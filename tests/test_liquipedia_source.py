@@ -141,12 +141,20 @@ def test_liquipedia_accepts_only_complete_tournament_standings():
     incomplete = liquipedia_source._tournament_placements_from_response(
         {"result": [{"placement": "1", "opponentname": "Natus Vincere", "prizemoney": "500000"}]}
     )
+    odd = liquipedia_source._tournament_placements_from_response(
+        {"result": [
+            {"placement": "1", "opponentname": "Natus Vincere", "prizemoney": "500000"},
+            {"placement": "2", "opponentname": "FaZe Clan", "prizemoney": "170000"},
+            {"placement": "3-4", "opponentname": "Spirit", "prizemoney": "40000"},
+        ]}
+    )
 
     assert [(item.placement, item.team_name, item.prize_usd) for item in placements] == [
         ("1", "Natus Vincere", 500_000),
         ("2", "FaZe Clan", 170_000),
     ]
     assert incomplete == []
+    assert odd == []
 
 
 def test_liquipedia_ignores_showmatch_rows_and_sorts_tournament_standings():
@@ -154,6 +162,7 @@ def test_liquipedia_ignores_showmatch_rows_and_sorts_tournament_standings():
         {
             "result": [
                 {"placement": "3-4", "opponentname": "Spirit", "prizemoney": "40000"},
+                {"placement": "3-4", "opponentname": "Vitality", "prizemoney": "40000"},
                 {"placement": "W", "opponentname": "Showmatch A", "prizemoney": "0"},
                 {"placement": "2", "opponentname": "FaZe Clan", "prizemoney": "170000"},
                 {"placement": "", "opponentname": "Showmatch B", "prizemoney": "0"},
@@ -166,6 +175,7 @@ def test_liquipedia_ignores_showmatch_rows_and_sorts_tournament_standings():
         ("1", "Natus Vincere"),
         ("2", "FaZe Clan"),
         ("3-4", "Spirit"),
+        ("3-4", "Vitality"),
     ]
 
 

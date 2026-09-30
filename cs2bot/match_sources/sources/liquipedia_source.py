@@ -280,7 +280,7 @@ def _tournament_placements_from_response(data: Any) -> list[TournamentPlacement]
             item.team_name.casefold(),
         )
     )
-    return placements if 2 <= len(placements) <= 64 else []
+    return placements if 2 <= len(placements) <= 64 and len(placements) % 2 == 0 else []
 
 
 def _winner_prize_from_tournament_placements(
