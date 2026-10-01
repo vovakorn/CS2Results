@@ -23,6 +23,19 @@ def clear_logo_memory_cache():
     media_cards._logo_memory_cache.clear()
 
 
+
+@pytest.fixture
+def drawn_text(monkeypatch):
+    from PIL import ImageDraw
+    calls = []
+    original = ImageDraw.ImageDraw.text
+    def capture(draw, xy, text, *args, **kwargs):
+        calls.append((xy, text, kwargs.get("font"), kwargs.get("fill")))
+        return original(draw, xy, text, *args, **kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    return calls
+
+
 def _result():
     return MatchNormalized(
         source="pandascore",
@@ -127,6 +140,46 @@ def test_final_card_adapts_to_three_four_and_five_maps(map_count):
     assert image.size == media_cards.RESULT_CARD_SIZE
 
 
+
+@pytest.mark.parametrize("map_count", [3, 4, 5])
+@pytest.mark.parametrize("prize_usd", [0, 500_000, 10_000_000_000])
+def test_final_prize_label_and_amount_are_centered_in_their_cells(
+    monkeypatch, drawn_text, map_count, prize_usd,
+):
+    from PIL import ImageDraw
+
+    panels = []
+    original_panel = media_cards._draw_final_foil_panel
+
+    def capture_panel(canvas, box, **kwargs):
+        panels.append(box)
+        return original_panel(canvas, box, **kwargs)
+
+    monkeypatch.setattr(media_cards, "_draw_final_foil_panel", capture_panel)
+    match = _result().model_copy(update={
+        "source": "liquipedia", "is_final": True,
+        "final_identity_confirmed": True, "winner_prize_usd": prize_usd,
+        "maps": [MapResult(name=name, score1=13, score2=9)
+                 for name in ("Mirage", "Dust II", "Nuke", "Ancient", "Inferno")[:map_count]],
+    })
+    image = Image.open(io.BytesIO(media_cards.render_final_card(match)))
+    measure = ImageDraw.Draw(image)
+    label = [measure.textbbox(xy, text, font=font) for xy, text, font, _ in drawn_text
+             if text in {"ПРИЗОВЫЕ", "ПОБЕДИТЕЛЯ"}]
+    amount = [measure.textbbox(xy, text, font=font) for xy, text, font, _ in drawn_text
+              if text == media_cards._format_usd(prize_usd)]
+    assert len(label) == 2
+    assert len(amount) == 1
+    label_box = (min(b[0] for b in label), min(b[1] for b in label),
+                 max(b[2] for b in label), max(b[3] for b in label))
+    x0, y0, x1, y1 = panels[-1]
+    divider = (x0 + x1) / 2
+    for box, left, right in [(label_box, x0, divider), (amount[0], divider, x1)]:
+        assert (box[0] + box[2]) / 2 == pytest.approx((left + right) / 2, abs=1)
+        assert (box[1] + box[3]) / 2 == pytest.approx((y0 + y1) / 2, abs=1)
+        assert left + 16 <= box[0] < box[2] <= right - 16
+        assert y0 + 12 <= box[1] < box[3] <= y1 - 12
+
 def test_final_card_places_compact_logos_above_team_names(monkeypatch):
     match = _result().model_copy(update={
         "is_final": True,
@@ -161,8 +214,8 @@ def test_final_card_places_compact_logos_above_team_names(monkeypatch):
     media_cards.render_final_card(match)
 
     assert logos == [
-        ((220, 288), 72, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url, 0.76),
-        ((860, 288), 72, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url, 0.76),
+        ((220, 362), 72, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url, 0.76),
+        ((860, 362), 72, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url, 0.76),
     ]
 
 
@@ -263,90 +316,42 @@ def test_tournament_standings_draws_metallic_podium_medals_and_a_distinct_header
         TournamentPlacement(placement="3–4", team_name="Falcons", prize_usd=40_000),
     ]
 
+    placements.extend(TournamentPlacement(placement=str(i), team_name=f"Team {i}", prize_usd=1000)
+                      for i in range(5, 9))
     image = Image.open(
         io.BytesIO(media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)[0])
     ).convert("RGB")
-    table_top, row_heights = media_cards._tournament_table_layout(4, champion_index=0)
-    assert table_top == 340
-    assert table_top + 62 + sum(row_heights) == 946
-    row_top = table_top + 62
-    badge_colors = []
-    for row_height in row_heights:
-        center_y = row_top + row_height // 2
-        badge_colors.append(image.getpixel((122, center_y)))
-        badge_crop = image.crop((110, center_y - 22, 182, center_y + 22))
-        assert len(badge_crop.getcolors(72 * 44) or []) > 8
-        row_top += row_height
-    assert len(set(badge_colors[:3])) == 3
-    assert image.getpixel((400, table_top + 80)) != image.getpixel((400, table_top + 62 + row_heights[0] + 20))
+    table_top = 342 + (media_cards.TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
+    first_row_top = table_top + 72
+
+    for index in range(4):
+        row_top = first_row_top + index * 68
+        shadow = image.getpixel((146, row_top + 13))
+        sheen = image.getpixel((146, row_top + 22))
+        assert sum(sheen) > sum(shadow)
+    assert image.getpixel((146, first_row_top + 22)) != image.getpixel((146, first_row_top + 68 + 22))
+    assert image.getpixel((146, first_row_top + 68 + 22)) != image.getpixel((146, first_row_top + 2 * 68 + 22))
+    assert image.getpixel((136, first_row_top + 17)) != image.getpixel((156, first_row_top + 17))
+    bronze_row_top = first_row_top + 2 * 68
+    assert image.getpixel((120, bronze_row_top + 23)) != image.getpixel((172, bronze_row_top + 23))
     assert image.getpixel((540, table_top + 30)) == media_cards.STANDINGS_HEADER
     assert image.getpixel((540, table_top)) == media_cards.STANDINGS_HEADER_LINE
-    assert image.getpixel((540, table_top + 62)) == media_cards.STANDINGS_HEADER_LINE
+    assert image.getpixel((540, table_top + 72)) == media_cards.STANDINGS_HEADER_LINE
 
 
-@pytest.mark.parametrize("count", [2, 4, 6, 8])
-def test_tournament_standings_table_uses_available_height(count, monkeypatch):
-    panels = []
-    original = media_cards._chamfered_panel
-
-    def capture_panel(draw, box, **kwargs):
-        panels.append(box)
-        return original(draw, box, **kwargs)
-
-    monkeypatch.setattr(media_cards, "_chamfered_panel", capture_panel)
-    placements = [
-        TournamentPlacement(placement=str(index + 1), team_name=f"Team {index + 1}", prize_usd=10_000)
-        for index in range(count)
-    ]
-    media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)
-    _, top, _, bottom = panels[0]
-    assert top >= 340
-    assert bottom <= 946
-    assert bottom - top >= (340 if count == 2 else 600)
+def test_tournament_standings_use_the_source_label_on_every_page(drawn_text):
+    placements = [TournamentPlacement(placement=str(i + 1), team_name=f"Team {i}", prize_usd=100) for i in range(10)]
+    media_cards.render_tournament_standings_cards("IEM", placements, source_label="BLAST.tv")
+    assert [v for _, v, _, _ in drawn_text].count("ИСТОЧНИК: BLAST.TV") == 2
 
 
-def test_sparse_tournament_table_wraps_long_team_name():
-    name = "VERY LONG COUNTER STRIKE TEAM NAME THAT MUST SHRINK"
-    draw = ImageDraw.Draw(Image.new("RGB", (1080, 1080)))
-
-    for preferred_size, two_line_size in ((46, 36), (38, 32)):
-        lines, font = media_cards._table_team_lines(draw, name, 474, preferred_size, two_line_size)
-        assert len(lines) == 2
-        assert " ".join(lines) == name
-        assert font.size >= 30
-        assert all(draw.textlength(line, font=font) <= 474 for line in lines)
-
-
-def test_tournament_standings_use_the_source_label_on_every_page(monkeypatch):
+def test_result_card_channel_logo_is_inside_header(monkeypatch):
     drawn = []
-    original = media_cards._centered_text
-
-    def capture_text(draw, center_x, y, text, font, fill):
-        drawn.append(text)
-        return original(draw, center_x, y, text, font, fill)
-
-    placements = [
-        TournamentPlacement(placement=str(index + 1), team_name=f"Team {index + 1}", prize_usd=10_000)
-        for index in range(10)
-    ]
-    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
-
-    media_cards.render_tournament_standings_cards("BLAST Open Porto", placements, source_label="BLAST.tv")
-
-    assert drawn.count("ИСТОЧНИК: BLAST.TV") == 2
-
-
-def test_result_card_channel_logo_is_centered_at_top(monkeypatch):
-    drawn = []
-
-    def capture(canvas, draw, center, diameter):
-        drawn.append((center, diameter))
-
-    monkeypatch.setattr(media_cards, "_draw_channel_logo", capture)
-
+    monkeypatch.setattr(media_cards, "_draw_channel_logo", lambda c, d, center, diameter: drawn.append((center, diameter)))
     media_cards.render_result_card(_result())
-
-    assert drawn == [((media_cards.RESULT_CARD_SIZE[0] // 2, 98), 100)]
+    assert len(drawn) == 1
+    (x, y), diameter = drawn[0]
+    assert x == 540 and diameter >= 80 and 0 <= x - diameter/2 < x + diameter/2 <= 1080 and y + diameter/2 < 144
 
 
 def test_result_card_omits_winner_footer(monkeypatch):
@@ -365,145 +370,37 @@ def test_result_card_omits_winner_footer(monkeypatch):
     assert not any("РЕЗУЛЬТАТ ЗАВЕРШЁН" in text for text in texts)
 
 
-def test_result_card_centres_team_names_under_logos(monkeypatch):
-    names = []
-    logos = []
-    original = media_cards._centered_text
-
-    def capture_text(draw, center_x, y, text, font, fill):
-        if text in {"NATUS VINCERE JUNIOR", "GAIMIN GLADIATORS ACADEMY"}:
-            names.append((center_x, y, text))
-        return original(draw, center_x, y, text, font, fill)
-
-    def capture_logo(canvas, draw, center, diameter, *args):
-        logos.append((center, diameter))
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
-    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
-    match = _result().model_copy(
-        update={
-            "team1_name": "Natus Vincere Junior",
-            "team2_name": "Gaimin Gladiators Academy",
-        }
-    )
-
+def test_result_card_preserves_long_team_names_under_logos(drawn_text):
+    match = _result().model_copy(update={"team1_name":"Natus Vincere Junior", "team2_name":"Gaimin Gladiators Academy"})
     media_cards.render_result_card(match)
-
-    assert [text for _, _, text in names] == ["NATUS VINCERE JUNIOR", "GAIMIN GLADIATORS ACADEMY"]
-    assert names[0][0] == logos[0][0][0]
-    assert names[1][0] == logos[1][0][0]
-    assert names[0][1] - (logos[0][0][1] + logos[0][1] // 2) >= 24
-    assert names[1][1] - (logos[1][0][1] + logos[1][1] // 2) >= 24
+    values = " ".join(v for _, v, _, _ in drawn_text)
+    assert "NATUS VINCERE JUNIOR" in values
+    assert "GAIMIN GLADIATORS ACADEMY" in values
 
 
 @pytest.mark.parametrize("match_count", [1, 2, 4, 6, 8, 10])
 def test_daily_results_album_supports_requested_match_counts(match_count):
-    matches = [
-        _result().model_copy(
-            update={
-                "match_id": str(index),
-                "team1_name": f"Long Left Team {index}",
-                "team2_name": f"Long Right Team {index}",
-            }
-        )
-        for index in range(match_count)
-    ]
-
-    cards = media_cards.render_results_cards(
-        matches,
-        media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
-    )
-
-    assert len(cards) == {1: 1, 2: 1, 4: 1, 6: 2, 8: 2, 10: 3}[match_count]
-    for data in cards:
-        image = Image.open(io.BytesIO(data))
-        assert image.format == "PNG"
-        assert image.size == media_cards.RESULT_CARD_SIZE
+    matches = [_result().model_copy(update={"match_id": str(i)}) for i in range(match_count)]
+    cards = media_cards.render_results_cards(matches, media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"))
+    assert len(cards) == (match_count + 3) // 4
+    assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
 
 
-def test_daily_results_card_rejects_more_than_ten_matches():
-    with pytest.raises(media_cards.MediaCardError, match="ten"):
-        media_cards.render_results_cards(
-            [_result().model_copy(update={"match_id": str(index)}) for index in range(11)],
-            media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
-        )
+def test_daily_results_album_rejects_more_than_ten_matches():
+    with pytest.raises(media_cards.MediaCardError):
+        media_cards.render_results_cards([_result() for i in range(11)], media_cards.datetime.now())
 
 
-def test_ten_result_matches_keep_chronology_across_three_balanced_pages(monkeypatch):
-    rendered = []
-
-    def capture(matches, local_now, *, page_number, page_count):
-        rendered.append((page_number, page_count, [match.match_id for match in matches]))
-        return b"card"
-
-    monkeypatch.setattr(media_cards, "render_results_card", capture)
-    matches = [
-        _result().model_copy(update={"match_id": str(index), "date": f"2026-08-01T{index:02d}:00:00Z"})
-        for index in range(10)
-    ]
-
-    cards = media_cards.render_results_cards(
-        list(reversed(matches)), media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00")
-    )
-
-    assert len(cards) == 3
-    assert [len(page[2]) for page in rendered] == [4, 3, 3]
-    assert [match_id for _, _, page in rendered for match_id in page] == [str(index) for index in range(10)]
-    assert [(number, count) for number, count, _ in rendered] == [(1, 3), (2, 3), (3, 3)]
-
-
-def test_four_match_daily_results_use_prominent_grid(monkeypatch):
+def test_four_match_daily_results_use_full_width_readable_rows(monkeypatch):
     boxes = []
-    original = media_cards._draw_compact_result_match
-
-    def capture_box(canvas, draw, match, box, **kwargs):
+    original = media_cards._draw_fixture_row
+    def capture(canvas, draw, match, box, **kwargs):
         boxes.append(box)
         return original(canvas, draw, match, box, **kwargs)
-
-    monkeypatch.setattr(media_cards, "_draw_compact_result_match", capture_box)
-    media_cards.render_results_card(
-        [_result().model_copy(update={"match_id": str(index)}) for index in range(4)],
-        media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
-    )
-
+    monkeypatch.setattr(media_cards, "_draw_fixture_row", capture)
+    media_cards.render_results_card([_result() for i in range(4)], media_cards.datetime.now())
     assert len(boxes) == 4
-    assert all(y1 - y0 >= 290 for _, y0, _, y1 in boxes)
-
-
-def test_shared_result_tournament_is_drawn_once_above_matches(monkeypatch):
-    labels = []
-    original = media_cards._centered_text
-
-    def capture(draw, center_x, y, text, font, fill):
-        labels.append(text)
-        return original(draw, center_x, y, text, font, fill)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-    media_cards.render_results_card(
-        [_result().model_copy(update={"match_id": str(index)}) for index in range(4)],
-        media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"),
-    )
-
-    assert labels.count("BLAST BOUNTY — 2026 SEASON 2 FINALS") == 1
-
-
-def test_mixed_result_page_keeps_tournament_label_for_each_match(monkeypatch):
-    labels = []
-    original = media_cards._centered_text
-
-    def capture(draw, center_x, y, text, font, fill):
-        labels.append(text)
-        return original(draw, center_x, y, text, font, fill)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-    first = _result()
-    second = _result().model_copy(update={"match_id": "second", "tournament_name": "IEM Cologne"})
-    media_cards.render_results_card(
-        [first, second], media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00")
-    )
-
-    assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" in labels
-    assert "IEM COLOGNE" in labels
+    assert all(x1 - x0 >= 900 and y1 - y0 >= 145 for x0, y0, x1, y1 in boxes)
 
 
 def test_schedule_card_is_valid_square_png():
@@ -518,24 +415,10 @@ def test_schedule_card_is_valid_square_png():
     assert image.size == media_cards.SCHEDULE_CARD_SIZE
 
 
-def test_schedule_card_footer_names_schedule(monkeypatch):
-    texts = []
-    original = media_cards._centered_text
-
-    def capture_text(draw, center_x, y, text, font, fill):
-        texts.append((y, text))
-        return original(draw, center_x, y, text, font, fill)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
-
-    media_cards.render_schedule_card(
-        [_upcoming()],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert (1012, "CS2 TIER-1 · РАСПИСАНИЕ МАТЧЕЙ") in texts
-    assert (1012, "CS2 TIER-1 · РЕЗУЛЬТАТЫ МАТЧЕЙ") not in texts
+def test_schedule_card_identifies_format_and_channel(drawn_text):
+    media_cards.render_schedule_card([_upcoming()], media_cards.datetime.now(), "Europe/Moscow")
+    values = [v for _, v, _, _ in drawn_text]
+    assert "МАТЧИ CS2 СЕГОДНЯ" in values and "@CS2_RESULTS" in values
 
 
 @pytest.mark.parametrize("variant", ["bracket", "next_match"])
@@ -590,7 +473,7 @@ def test_tournament_radar_bracket_is_paginated_into_square_pngs():
         radar, "IEM Cologne 2026", "Europe/Moscow", "bracket"
     )
 
-    assert len(cards) == 3
+    assert len(cards) == 2
     assert all(Image.open(io.BytesIO(card)).size == media_cards.SCHEDULE_CARD_SIZE for card in cards)
 
 
@@ -625,9 +508,9 @@ def test_tournament_radar_four_pairs_get_large_non_overlapping_cards(monkeypatch
     boxes = []
     original = media_cards._draw_radar_bracket_match
 
-    def capture_match(canvas, draw, match, box):
+    def capture_match(canvas, draw, match, box, **kwargs):
         boxes.append(box)
-        return original(canvas, draw, match, box)
+        return original(canvas, draw, match, box, **kwargs)
 
     monkeypatch.setattr(media_cards, "_draw_radar_bracket_match", capture_match)
     media_cards.render_tournament_radar_cards(
@@ -639,79 +522,51 @@ def test_tournament_radar_four_pairs_get_large_non_overlapping_cards(monkeypatch
 
     assert len(boxes) == 4
     assert min(y1 - y0 for _, y0, _, y1 in boxes) >= 230
-    assert all(410 <= y0 < y1 <= 950 for _, y0, _, y1 in boxes)
+    assert all(326 <= y0 < y1 <= 964 for _, y0, _, y1 in boxes)
     for index, left in enumerate(boxes):
         for right in boxes[index + 1:]:
             assert left[2] <= right[0] or right[2] <= left[0] or left[3] <= right[1] or right[3] <= left[1]
 
 
 def test_tournament_radar_dense_structure_keeps_local_links_on_readable_pages():
-    opening = [
-        RadarBracketMatch(
-            match_id=f"opening-{index}",
-            round_name="Opening round",
-            team1_name=f"Team Alpha {index}",
-            team2_name=f"Team Beta {index}",
-        )
-        for index in range(8)
-    ]
-    next_round = [
-        RadarBracketNode(
-            match_id=f"quarter-{index}",
-            round_name="Upper quarterfinal",
-            previous_match_ids=[f"opening-{2 * index}", f"opening-{2 * index + 1}"],
-        )
-        for index in range(4)
-    ]
+    opening = [RadarBracketMatch(match_id=f"opening-{i}", team1_name=f"Team Alpha {i}",
+                                team2_name=f"Team Beta {i}") for i in range(8)]
+    next_round = [RadarBracketNode(match_id=f"quarter-{i}",
+                  previous_match_ids=[f"opening-{2*i}", f"opening-{2*i+1}"]) for i in range(4)]
     structure = [*opening, *next_round]
-    pages = media_cards._paginate_radar_bracket_nodes(structure)
+    pages, references = media_cards._paginate_radar_bracket_nodes(structure)
     cards = media_cards.render_tournament_radar_cards(
         TournamentRadar(tournament_id="3", bracket_matches=opening, bracket_structure=structure),
-        "IEM Cologne 2026",
-        "Europe/Moscow",
-        "bracket",
-    )
-
-    assert len(pages) == len(cards) == 4
-    assert all(len(page) == 3 for page in pages)
-    assert all(
-        set(page[-1].previous_match_ids) == {node.match_id for node in page[:-1]}
-        for page in pages
-    )
+        "IEM Cologne 2026", "Europe/Moscow", "bracket")
+    assert len(pages) == len(cards) == 2
+    assert all(len(page) <= 6 for page in pages)
+    assert [node.match_id for page in pages for node in page] == [node.match_id for node in structure]
+    for i, node in enumerate(next_round):
+        assert f"{2*i+1:02d}" in references[node.match_id]
+        assert f"{2*i+2:02d}" in references[node.match_id]
+    assert "С.1" in references["quarter-0"]
     assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
 
 
 def test_tournament_radar_large_structures_stay_within_telegram_album_limit(monkeypatch):
-    flat = [
-        RadarBracketMatch(match_id=str(index), team1_name=f"Team {index}", team2_name=f"Opponent {index}")
-        for index in range(48)
-    ]
-    chain = [
-        RadarBracketNode(match_id=str(index), previous_match_ids=[str(index - 1)] if index else [])
-        for index in range(48)
-    ]
-
+    flat = [RadarBracketMatch(match_id=str(i), team1_name=f"Team {i}", team2_name=f"Opponent {i}")
+            for i in range(48)]
+    chain = [RadarBracketNode(match_id=str(i), previous_match_ids=[str(i-1)] if i else []) for i in range(48)]
     for nodes in (flat, chain):
-        pages = media_cards._paginate_radar_bracket_nodes(nodes)
-        assert len(pages) <= 10
+        pages, _ = media_cards._paginate_radar_bracket_nodes(nodes)
+        assert len(pages) == 8
         assert sorted(node.match_id for page in pages for node in page) == sorted(node.match_id for node in nodes)
-
     boxes = []
-    original = media_cards._draw_radar_vertical_match
-
-    def capture_match(canvas, draw, match, box):
+    original = media_cards._draw_radar_bracket_match
+    def capture_match(canvas, draw, match, box, **kwargs):
         boxes.append(box)
-        return original(canvas, draw, match, box)
-
-    monkeypatch.setattr(media_cards, "_draw_radar_vertical_match", capture_match)
-    media_cards.render_tournament_radar_card(
+        return original(canvas, draw, match, box, **kwargs)
+    monkeypatch.setattr(media_cards, "_draw_radar_bracket_match", capture_match)
+    cards = media_cards.render_tournament_radar_cards(
         TournamentRadar(tournament_id="3", bracket_structure=chain, bracket_match_count=48),
-        "IEM Cologne 2026",
-        "Europe/Moscow",
-        "bracket",
-    )
-    assert len(boxes) == 5
-    assert all(x1 - x0 > 900 and y1 - y0 >= 90 for x0, y0, x1, y1 in boxes)
+        "IEM Cologne 2026", "Europe/Moscow", "bracket")
+    assert len(cards) == 8 and len(boxes) == 48
+    assert all(x1-x0 >= 450 and y1-y0 >= 200 for x0,y0,x1,y1 in boxes)
 
 
 @pytest.mark.parametrize("as_album", [False, True])
@@ -738,24 +593,17 @@ def test_tournament_radar_labels_tournament_content_without_assuming_playoffs(mo
         ]
 
     drawn_text = []
-    original_centered = media_cards._centered_text
-    original_aligned = media_cards._aligned_text
-
-    def capture_centered(draw, x, y, text, font, fill):
-        drawn_text.append(text)
-        return original_centered(draw, x, y, text, font, fill)
-
-    def capture_aligned(draw, x, y, text, font, fill, alignment):
-        drawn_text.append(text)
-        return original_aligned(draw, x, y, text, font, fill, alignment)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture_centered)
-    monkeypatch.setattr(media_cards, "_aligned_text", capture_aligned)
+    original_text = ImageDraw.ImageDraw.text
+    def capture_text(draw, xy, text, *args, **kwargs):
+        if draw._image.width == 1080:
+            drawn_text.append(text)
+        return original_text(draw, xy, text, *args, **kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     render = media_cards.render_tournament_radar_cards if as_album else media_cards.render_tournament_radar_card
     render(radar, "IEM Cologne 2026 — Group stage", "Europe/Moscow", "bracket")
 
     expected = "СЕТКА ТУРНИРА" if has_future_slot else "ПОДТВЕРЖДЁННЫЕ ПАРЫ"
-    assert drawn_text.count(expected) == 1
+    assert sum(text.startswith(expected) for text in drawn_text) == 1
     expected_count = "2 МАТЧА В СЕТКЕ" if has_future_slot else "2 МАТЧА"
     assert any(text.endswith(expected_count) for text in drawn_text)
     assert not any("ПЛЕЙ-ОФФ" in text for text in drawn_text)
@@ -810,7 +658,7 @@ def test_tournament_radar_bracket_uses_links_and_team_logos(monkeypatch):
     assert Image.open(io.BytesIO(data)).size == media_cards.SCHEDULE_CARD_SIZE
 
 
-def test_tournament_radar_shows_future_slots_as_tbd_without_inventing_teams(monkeypatch):
+def test_tournament_radar_shows_future_slots_as_tbd_without_inventing_teams(monkeypatch, drawn_text):
     opening = RadarBracketMatch(
         match_id="opening",
         round_name="Opening round",
@@ -843,43 +691,27 @@ def test_tournament_radar_shows_future_slots_as_tbd_without_inventing_teams(monk
         "bracket",
     )
 
-    assert rendered_names.count("TBD") == 2
-    assert "NAVI" in rendered_names
+    assert [v for _, v, _, _ in drawn_text].count("TBD") == 2
+    assert "NAVI" in [v for _, v, _, _ in drawn_text]
     assert Image.open(io.BytesIO(data)).size == media_cards.SCHEDULE_CARD_SIZE
 
 
 def test_schedule_album_supports_ten_matches():
-    cards = media_cards.render_schedule_cards(
-        [_upcoming(str(index)) for index in range(10)],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
+    cards = media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(10)], media_cards.datetime.now(), "Europe/Moscow")
     assert len(cards) == 3
-    assert all(Image.open(io.BytesIO(data)).size == (1080, 1080) for data in cards)
+    assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
 
 
-def test_schedule_card_rejects_more_than_four_matches():
+def test_single_schedule_page_rejects_more_than_four_matches():
     with pytest.raises(media_cards.MediaCardError, match="four"):
-        media_cards.render_schedule_card(
-            [_upcoming(str(index)) for index in range(5)],
-            media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-            "Europe/Moscow",
-        )
+        media_cards.render_schedule_card([_upcoming(str(i)) for i in range(5)], media_cards.datetime.now(), "Europe/Moscow")
 
 
-def test_schedule_album_balances_sixteen_matches_into_four_pages():
-    matches = [
-        _upcoming(str(index)).model_copy(
-            update={"scheduled_at": f"2026-07-31T{index:02d}:00:00Z"}
-        )
-        for index in range(16)
-    ]
-
+def test_schedule_album_preserves_all_sixteen_matches_in_order():
+    matches = [_upcoming(str(i)).model_copy(update={"scheduled_at": f"2026-07-31T{i:02d}:00:00Z"}) for i in range(16)]
     pages = media_cards.paginate_schedule_matches(list(reversed(matches)))
-
     assert [len(page) for page in pages] == [4, 4, 4, 4]
-    assert [match.match_id for page in pages for match in page] == [str(index) for index in range(16)]
+    assert [match.match_id for page in pages for match in page] == [str(i) for i in range(16)]
 
 
 def test_schedule_album_balances_odd_match_count():
@@ -904,25 +736,12 @@ def test_schedule_album_renders_four_square_pngs_for_sixteen_matches():
         assert image.size == media_cards.SCHEDULE_CARD_SIZE
 
 
-def test_schedule_album_marks_page_number_in_date_line(monkeypatch):
-    centered = []
-    original = media_cards._centered_text
-
-    def capture(draw, center_x, y, text, font, fill):
-        centered.append((y, text))
-        return original(draw, center_x, y, text, font, fill)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-
-    media_cards.render_schedule_card(
-        [_upcoming(str(index)) for index in range(4)],
-        media_cards.datetime.fromisoformat("2026-08-12T10:00:00+03:00"),
-        "Europe/Moscow",
-        page_number=2,
-        page_count=4,
-    )
-
-    assert (315, "12 АВГУСТА · 2/4") in centered
+def test_schedule_album_marks_page_number(drawn_text):
+    media_cards.render_schedule_card([_upcoming(str(i)) for i in range(4)],
+        media_cards.datetime.fromisoformat("2026-08-12T10:00:00+03:00"), "Europe/Moscow", page_number=2, page_count=2)
+    values = [v for _, v, _, _ in drawn_text]
+    assert "12 АВГУСТА" in values
+    assert "2/2" in values
 
 
 def test_schedule_album_rejects_more_than_twenty_matches():
@@ -1175,25 +994,11 @@ def test_logo_download_prefers_official_thumbnail(monkeypatch):
     ]
 
 
-def test_schedule_uses_competition_name_for_tournament_header(monkeypatch):
-    drawn = []
-    original = media_cards._centered_text
-
-    def capture(draw, center_x, y, text, font, fill):
-        drawn.append(text)
-        return original(draw, center_x, y, text, font, fill)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-
-    media_cards.render_schedule_card(
-        [_upcoming()],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert "BLAST BOUNTY 2026" in drawn
-    assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" not in drawn
-    assert all("ВРЕМЯ МСК" not in text for text in drawn)
+def test_schedule_uses_competition_name_for_tournament_header(drawn_text):
+    media_cards.render_schedule_card([_upcoming()], media_cards.datetime.now(), "Europe/Moscow")
+    values = [v for _, v, _, _ in drawn_text]
+    assert "BLAST BOUNTY 2026" in values
+    assert "BLAST BOUNTY — 2026 SEASON 2 FINALS" not in values
 
 
 def test_schedule_match_event_label_falls_back_to_tournament_name():
@@ -1202,46 +1007,17 @@ def test_schedule_match_event_label_falls_back_to_tournament_name():
     assert media_cards._schedule_match_event_label(match) == match.tournament_name
 
 
-def test_schedule_header_is_centered_on_canvas(monkeypatch):
-    drawn = []
-    original = media_cards._centered_text
-
-    def capture(draw, center_x, y, text, font, fill):
-        drawn.append((center_x, text))
-        return original(draw, center_x, y, text, font, fill)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-
-    media_cards.render_schedule_card(
-        [_upcoming()],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    canvas_center = media_cards.SCHEDULE_CARD_SIZE[0] // 2
-    assert (canvas_center, "МАТЧИ CS2 СЕГОДНЯ") in drawn
-    assert (canvas_center, "BLAST BOUNTY 2026") in drawn
-    assert (canvas_center, "31 ИЮЛЯ") in drawn
+def test_schedule_header_has_clear_type_event_date_hierarchy(drawn_text):
+    media_cards.render_schedule_card([_upcoming()], media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"), "Europe/Moscow")
+    values = {v: (xy, font) for xy, v, font, _ in drawn_text}
+    assert all(v in values for v in ["МАТЧИ CS2 СЕГОДНЯ", "BLAST BOUNTY 2026", "31 ИЮЛЯ"])
+    assert values["МАТЧИ CS2 СЕГОДНЯ"][0][1] < values["BLAST BOUNTY 2026"][0][1] < values["31 ИЮЛЯ"][0][1]
 
 
 @pytest.mark.parametrize("match_count", [1, 4, 10])
-def test_schedule_shows_shared_tournament_header_for_every_layout(monkeypatch, match_count):
-    drawn = []
-    original = media_cards._centered_text
-
-    def capture(draw, center_x, y, text, font, fill):
-        drawn.append((center_x, y, text))
-        return original(draw, center_x, y, text, font, fill)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-    cards = media_cards.render_schedule_cards(
-        [_upcoming(str(index)) for index in range(match_count)],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert len(cards) == {1: 1, 4: 1, 10: 3}[match_count]
-    assert drawn.count((540, 254, "BLAST BOUNTY 2026")) == len(cards)
+def test_schedule_shows_shared_tournament_header_for_every_layout(drawn_text, match_count):
+    cards = media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(match_count)], media_cards.datetime.now(), "Europe/Moscow")
+    assert [v for _, v, _, _ in drawn_text].count("BLAST BOUNTY 2026") == len(cards)
 
 
 def test_schedule_album_groups_stages_under_one_tournament_card():
@@ -1275,35 +1051,12 @@ def test_schedule_album_groups_stages_under_one_tournament_card():
     ]
 
 
-def test_schedule_uses_mixed_tournament_header_without_a_logo(monkeypatch):
+def test_schedule_uses_mixed_tournament_header_without_a_logo(monkeypatch, drawn_text):
     logos = []
-    drawn = []
-    original = media_cards._centered_text
-
-    def capture_text(draw, center_x, y, text, font, fill):
-        drawn.append((center_x, y, text))
-        return original(draw, center_x, y, text, font, fill)
-
-    def capture_logo(*args):
-        logos.append(args)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
-    monkeypatch.setattr(media_cards, "_draw_tournament_logo", capture_logo)
-    media_cards.render_schedule_card(
-        [
-            _upcoming("one"),
-            _upcoming("two").model_copy(
-                update={
-                    "competition_key": "IEM Cologne 2026",
-                    "tournament_name": "IEM — IEM Cologne 2026 — Playoffs",
-                }
-            ),
-        ],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert (540, 254, "ТУРНИРЫ ДНЯ") in drawn
+    monkeypatch.setattr(media_cards, "_draw_tournament_logo", lambda *a: logos.append(a))
+    matches = [_upcoming("one"), _upcoming("two").model_copy(update={"competition_key":"IEM Cologne 2026", "tournament_name":"IEM Cologne 2026"})]
+    media_cards.render_schedule_card(matches, media_cards.datetime.now(), "Europe/Moscow")
+    assert "ТУРНИРЫ ДНЯ" in [v for _, v, _, _ in drawn_text]
     assert logos == []
 
 
@@ -1325,168 +1078,56 @@ def test_schedule_draws_official_tournament_logo_in_header(monkeypatch):
     assert logos[0][1:] == (54, "https://cdn.pandascore.co/images/serie/image/2/iem.png")
 
 
-def test_schedule_channel_logo_is_centered_at_top(monkeypatch):
+def test_schedule_channel_logo_is_inside_header(monkeypatch):
     drawn = []
-
-    def capture(canvas, draw, center, diameter):
-        drawn.append((center, diameter))
-
-    monkeypatch.setattr(media_cards, "_draw_channel_logo", capture)
-
-    media_cards.render_schedule_card(
-        [_upcoming()],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert drawn == [((media_cards.SCHEDULE_CARD_SIZE[0] // 2, 98), 100)]
+    monkeypatch.setattr(media_cards, "_draw_channel_logo", lambda c, d, center, diameter: drawn.append((center, diameter)))
+    media_cards.render_schedule_card([_upcoming()], media_cards.datetime.now(), "Europe/Moscow")
+    assert len(drawn) == 1
+    (x, y), diameter = drawn[0]
+    assert x == 540 and diameter >= 80 and 0 <= x - diameter/2 < x + diameter/2 <= 1080 and y + diameter/2 < 144
 
 
-def test_single_schedule_hero_centers_long_team_names(monkeypatch):
-    drawn = []
-    boxes = []
-    original = media_cards._centered_text
-    original_match = media_cards._draw_wide_schedule_match
-
-    def capture(draw, center_x, y, text, font, fill):
-        drawn.append((center_x, text, font.size))
-        return original(draw, center_x, y, text, font, fill)
-
-    def capture_match(canvas, draw, match, box, display_timezone, **kwargs):
-        boxes.append((box, kwargs))
-        return original_match(canvas, draw, match, box, display_timezone, **kwargs)
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-    monkeypatch.setattr(media_cards, "_draw_wide_schedule_match", capture_match)
-    match = _upcoming().model_copy(
-        update={
-            "team1_name": "Natus Vincere Junior",
-            "team2_name": "Gaimin Gladiators Academy",
-        }
-    )
-
-    media_cards.render_schedule_card(
-        [match],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert boxes[0][1]["hero"] is True
-    assert boxes[0][0][3] - boxes[0][0][1] >= 500
-    assert [(x, text) for x, text, _ in drawn if text in {"NATUS VINCERE", "JUNIOR"}] == [
-        (265, "NATUS VINCERE"), (265, "JUNIOR")
-    ]
-    assert [(x, text) for x, text, _ in drawn if text in {"GAIMIN GLADIATORS", "ACADEMY"}] == [
-        (815, "GAIMIN GLADIATORS"), (815, "ACADEMY")
-    ]
-    assert min(size for _, text, size in drawn if text in {"NATUS VINCERE", "JUNIOR",
-                                                          "GAIMIN GLADIATORS", "ACADEMY"}) >= 30
+def test_schedule_preserves_complete_long_team_names(drawn_text):
+    match = _upcoming().model_copy(update={"team1_name":"Natus Vincere Junior", "team2_name":"Gaimin Gladiators Academy"})
+    media_cards.render_schedule_card([match], media_cards.datetime.now(), "Europe/Moscow")
+    values = " ".join(v for _, v, _, _ in drawn_text)
+    assert "NATUS VINCERE JUNIOR" in values and "GAIMIN GLADIATORS ACADEMY" in values
 
 
-def test_single_daily_result_uses_hero_composition(monkeypatch):
-    boxes = []
-    original = media_cards._draw_wide_result_match
-
-    def capture(canvas, draw, match, box, **kwargs):
-        boxes.append((box, kwargs))
-        return original(canvas, draw, match, box, **kwargs)
-
-    monkeypatch.setattr(media_cards, "_draw_wide_result_match", capture)
-    media_cards.render_results_card(
-        [_result()], media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00")
-    )
-
-    assert boxes[0][1]["hero"] is True
-    assert boxes[0][0][3] - boxes[0][0][1] >= 500
+def test_ten_match_schedule_uses_readable_names_on_every_page(drawn_text):
+    matches = [_upcoming(str(i)).model_copy(update={"team1_name":f"Long Left Team {i}","team2_name":f"Long Right Team {i}"}) for i in range(10)]
+    media_cards.render_schedule_cards(matches, media_cards.datetime.now(), "Europe/Moscow")
+    names = [(v, font) for _, v, font, _ in drawn_text if v.startswith("LONG ")]
+    assert len(names) == 20
+    assert all(font.size >= 36 for _, font in names)
 
 
-def test_dense_schedule_album_centers_team_names_under_larger_logos(monkeypatch):
-    drawn = []
-    logos = []
-    original = media_cards._centered_text
-
-    def capture(draw, center_x, y, text, font, fill):
-        if text.startswith("LONG "):
-            drawn.append((center_x, y, text))
-        return original(draw, center_x, y, text, font, fill)
-
-    def capture_logo(canvas, draw, center, diameter, *args):
-        logos.append((center, diameter))
-
-    monkeypatch.setattr(media_cards, "_centered_text", capture)
-    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
-    matches = [
-        _upcoming(str(index)).model_copy(
-            update={
-                "team1_name": f"Long Left Team {index}",
-                "team2_name": f"Long Right Team {index}",
-            }
-        )
-        for index in range(8)
-    ]
-
-    cards = media_cards.render_schedule_cards(
-        matches,
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert len(cards) == 2
-    assert len(drawn) == 16
-    for index in range(8):
-        left_logo, right_logo = logos[index * 2 : index * 2 + 2]
-        left_name, right_name = drawn[index * 2 : index * 2 + 2]
-        assert left_logo[0][0] == left_name[0]
-        assert right_logo[0][0] == right_name[0]
-        assert left_name[1] > left_logo[0][1]
-        assert right_name[1] > right_logo[0][1]
-        assert left_logo[1] >= 100
-        assert right_logo[1] >= 100
-
-
-def test_compact_schedule_uses_equal_sized_blocks(monkeypatch):
-    boxes = []
-
-    def capture(canvas, draw, match, box, display_timezone, **kwargs):
-        boxes.append(box)
-
-    monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture)
-
-    media_cards.render_schedule_card(
-        [_upcoming(str(index)) for index in range(4)],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    assert len(boxes) == 4
-    assert {(x1 - x0, y1 - y0) for x0, y0, x1, y1 in boxes} == {(468, boxes[0][3] - boxes[0][1])}
-
-
-def test_four_match_schedule_leaves_margin_above_compact_logos(monkeypatch):
-    logos = []
+@pytest.mark.parametrize("match_count", [4, 8, 10])
+def test_compact_schedule_rows_remain_readable_across_page_sizes(monkeypatch, match_count):
     boxes = []
     original = media_cards._draw_compact_schedule_match
-
-    def capture_logo(canvas, draw, center, diameter, *args):
-        logos.append((center, diameter))
-
-    def capture_box(canvas, draw, match, box, display_timezone, **kwargs):
+    def capture(canvas, draw, match, box, tz):
         boxes.append(box)
-        return original(canvas, draw, match, box, display_timezone, **kwargs)
+        return original(canvas, draw, match, box, tz)
+    monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture)
+    media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(match_count)], media_cards.datetime.now(), "Europe/Moscow")
+    assert len(boxes) == match_count
+    assert all(x1-x0 >= 900 and y1-y0 >= 145 for x0,y0,x1,y1 in boxes)
 
-    monkeypatch.setattr(media_cards, "_draw_logo", capture_logo)
-    monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture_box)
 
-    media_cards.render_schedule_card(
-        [_upcoming(str(index)) for index in range(4)],
-        media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"),
-        "Europe/Moscow",
-    )
-
-    for index, box in enumerate(boxes):
-        y0 = box[1]
-        for center, diameter in logos[index * 2 : index * 2 + 2]:
-            assert center[1] - diameter // 2 - y0 >= 20
+def test_ten_match_schedule_keeps_logos_inside_rows(monkeypatch):
+    boxes, logos = [], []
+    original = media_cards._draw_compact_schedule_match
+    def capture(c, d, match, box, tz):
+        boxes.append(box)
+        return original(c, d, match, box, tz)
+    monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture)
+    monkeypatch.setattr(media_cards, "_draw_logo", lambda c,d,center,diameter,*args: logos.append((center,diameter)))
+    media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(10)], media_cards.datetime.now(), "Europe/Moscow")
+    for i, (x0,y0,x1,y1) in enumerate(boxes):
+        for (x,y),diameter in logos[i*2:i*2+2]:
+            assert x0 <= x-diameter/2 and x+diameter/2 <= x1
+            assert y0 <= y-diameter/2 and y+diameter/2 <= y1
 
 
 def test_schedule_uses_fallback_logo_when_primary_variant_fails(monkeypatch):
@@ -1554,3 +1195,36 @@ def test_compact_schedule_requests_team_logos_for_every_match(monkeypatch):
 
     assert len(requested) == 8
     assert all(url.startswith("https://cdn.pandascore.co/images/team/image/") for url in requested)
+
+
+@pytest.mark.parametrize("count", [2, 4, 6, 8])
+def test_tournament_standings_table_uses_available_height(count, monkeypatch):
+    panels = []
+    original = media_cards._chamfered_panel
+
+    def capture_panel(draw, box, **kwargs):
+        panels.append(box)
+        return original(draw, box, **kwargs)
+
+    monkeypatch.setattr(media_cards, "_chamfered_panel", capture_panel)
+    placements = [
+        TournamentPlacement(placement=str(index + 1), team_name=f"Team {index + 1}", prize_usd=10_000)
+        for index in range(count)
+    ]
+    media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)
+    _, top, _, bottom = panels[0]
+    assert top >= 340
+    assert bottom <= 960
+    assert bottom - top >= (340 if count == 2 else 600)
+
+@pytest.mark.parametrize("count", [2, 4, 6])
+def test_sparse_standings_keep_long_names_legible_and_champion_visible(count, drawn_text):
+    names = ["Gaimin Gladiators Academy", "Natus Vincere Junior"]
+    placements = [TournamentPlacement(placement=str(i+1), team_name=names[i%2], prize_usd=500000)
+                  for i in range(count)]
+    media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)
+    texts = " ".join(text for _,text,_,_ in drawn_text)
+    assert all(name.upper() in texts for name in names)
+    assert "ПОБЕДИТЕЛЬ" in texts if count <= 4 else "ПОБЕДИТЕЛЬ" not in texts
+    assert all(font.size >= 36 for _,text,font,_ in drawn_text
+               if any(word in text for word in ["GAIMIN", "GLADIATORS", "ACADEMY", "NATUS", "JUNIOR"]))

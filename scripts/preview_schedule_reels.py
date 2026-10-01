@@ -22,7 +22,7 @@ TEAM_NAMES = (
     "FaZe Clan", "The MongolZ", "FURIA", "Astralis", "Team Liquid",
     "Virtus.pro", "Complexity", "3DMAX", "HEROIC", "ENCE", "Aurora",
     "Eternal Fire", "BIG", "GamerLegion", "Falcons",
-    "Очень Длинное Название Команды Для Проверки Размещения", "OG",
+    "Gaimin Gladiators Academy", "OG",
 )
 
 
