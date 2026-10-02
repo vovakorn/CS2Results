@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import unicodedata
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
@@ -76,6 +78,7 @@ def _latest_snapshot_file() -> tuple[str, str, str]:
 def _parse_snapshot(markdown: str, *, effective_at: str, version: str) -> VRSRankingSnapshot:
     teams: list[VRSTeamSnapshot] = []
     seen: set[str] = set()
+    rows = []
     for raw_line in markdown.splitlines():
         match = _ROW_RE.match(raw_line.strip())
         if not match:
@@ -84,6 +87,20 @@ def _parse_snapshot(markdown: str, *, effective_at: str, version: str) -> VRSRan
         if not name:
             continue
         team_id = _team_id(name, raw_line)
+        columns = raw_line.split("|")
+        roster = columns[4].strip() if len(columns) > 4 else ""
+        rows.append((rank, points, name, team_id, roster))
+    counts = Counter(row[3] for row in rows)
+    for rank, points, name, team_id, roster in rows:
+        if counts[team_id] > 1:
+            players = sorted(unicodedata.normalize("NFKC", player.strip()).casefold()
+                             for player in roster.split(","))
+            if not all(players) or len(set(players)) != len(players):
+                raise VRSDataError(f"ambiguous Valve VRS roster {name}")
+            # Valve can rank distinct (including partial) rosters under one name.
+            # Keep both, independent of rank/date/order; unique names retain old IDs.
+            identity = team_id + "\0" + "\0".join(players)
+            team_id = "roster:" + hashlib.sha256(identity.encode()).hexdigest()
         if team_id in seen:
             raise VRSDataError(f"duplicate Valve VRS team {name}")
         seen.add(team_id)

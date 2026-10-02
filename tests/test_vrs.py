@@ -18,6 +18,54 @@ def _snapshot(version, effective_at, teams):
     )
 
 
+def _valve_rosters():
+    # Actual collision in Valve live/global 2026-09-07: two different rosters.
+    return [
+        "| 106 | 911 | Johnny Speeds | bsover, draken, hampus, Rack, Svedjehed | [details](details/2026_09_07/0106--johnny_speeds--one.md) |",
+        "| 111 | 884 | Johnny Speeds | HEAP, jocab, Lekr0, nawwk, titulus | [details](details/2026_09_07/0111--johnny_speeds--two.md) |",
+        "| 1 | 2031 | Spirit | A, B, C, D, E | [details](details/2026_09_07/0001--spirit--players.md) |",
+    ]
+
+
+def test_valve_distinct_rosters_share_a_name_without_losing_rows_or_unique_ids():
+    rows = _valve_rosters()
+    before = _parse_snapshot("\n".join(rows), effective_at="2026-09-07T00:00:00Z", version="before")
+    reordered = [rows[1].replace("HEAP, jocab, Lekr0, nawwk, titulus", "titulus, NAWWK, Lekr0, jocab, HEAP"),
+                 rows[0].replace("106", "107"), rows[2]]
+    after = _parse_snapshot("\n".join(reordered), effective_at="2026-09-08T00:00:00Z", version="after")
+    assert len(before.teams) == 3 and len({team.team_id for team in before.teams}) == 3
+    assert before.teams[2].team_id == "spirit"
+    assert {team.points: team.team_id for team in before.teams} == {team.points: team.team_id for team in after.teams}
+    assert calculate_impacts([TournamentPlacement(placement="1", team_name="Spirit")], before, after)[0].points_delta == 0
+
+
+@pytest.mark.parametrize("collision_phase", ["before", "after"])
+def test_vrs_impact_rejects_ambiguous_tournament_team_even_if_other_names_are_unique(collision_phase):
+    duplicate = _parse_snapshot("\n".join(_valve_rosters()), effective_at="2026-09-07T00:00:00Z", version="first")
+    unique = duplicate.model_copy(update={"teams": [duplicate.teams[0], duplicate.teams[2]]})
+    before = duplicate if collision_phase == "before" else unique
+    after = (duplicate if collision_phase == "after" else unique).model_copy(update={
+        "version": "second", "effective_at": "2026-09-08T00:00:00Z"})
+    with pytest.raises(VRSDataError, match="ambiguous"):
+        calculate_impacts([TournamentPlacement(placement="1", team_name="Johnny Speeds")], before, after)
+
+
+def test_valve_can_declare_a_partial_roster_for_one_of_two_same_named_teams():
+    rows = _valve_rosters()[:2]
+    rows[0] = rows[0].replace("bsover, draken, hampus, Rack, Svedjehed", "h1te, sm3t, Something, sstiNiX")
+    snapshot = _parse_snapshot("\n".join(rows), effective_at="2026-09-07T00:00:00Z", version="first")
+    assert len(snapshot.teams) == len({team.team_id for team in snapshot.teams}) == 2
+
+
+@pytest.mark.parametrize("other_row", [
+    _valve_rosters()[0],
+    _valve_rosters()[0].replace("bsover, draken, hampus, Rack, Svedjehed", ""),
+])
+def test_valve_repeated_or_missing_roster_still_blocks_snapshot(other_row):
+    with pytest.raises(VRSDataError):
+        _parse_snapshot(_valve_rosters()[0] + "\n" + other_row, effective_at="2026-09-07T00:00:00Z", version="first")
+
+
 def test_vrs_calculates_points_and_rank_directions():
     before = _snapshot("week-1", "2026-09-01T00:00:00Z", [
         {"id": "a", "name": "NAVI", "points": 100, "rank": 10},
