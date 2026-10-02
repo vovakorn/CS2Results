@@ -15,7 +15,7 @@ def fixtures(count):
     return [
         UpcomingMatchNormalized(
             match_id=f"match-{index}", tournament_name="IEM TEST",
-            team1_name="Очень длинное название команды " * 4 if index == 0 else "Spirit",
+            team1_name="Gaimin Gladiators Academy " * 4 if index == 0 else "Spirit",
             team2_name="Vitality", scheduled_at=(NOW + timedelta(minutes=index * 30)).isoformat(),
         )
         for index in range(count)

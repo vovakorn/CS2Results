@@ -1,3 +1,5 @@
+import hashlib
+
 import pytest
 import requests
 
@@ -15,8 +17,8 @@ def test_upload_public_cards_persists_threads_urls(monkeypatch):
     monkeypatch.setattr(threads_publish, "_media_client", lambda: Client())
 
     assert threads_publish.upload_public_cards("schedule_2026-08-30", [b"one", b"two"]) == [
-        "https://storage.yandexcloud.net/social-media/threads/schedule_2026-08-30/1.png",
-        "https://storage.yandexcloud.net/social-media/threads/schedule_2026-08-30/2.png",
+        f"https://storage.yandexcloud.net/social-media/threads/schedule_2026-08-30/1-{hashlib.sha256(b'one').hexdigest()}.png",
+        f"https://storage.yandexcloud.net/social-media/threads/schedule_2026-08-30/2-{hashlib.sha256(b'two').hexdigest()}.png",
     ]
     assert all(item["ACL"] == "public-read" for item in uploaded)
     assert all(item["CacheControl"].endswith("immutable") for item in uploaded)

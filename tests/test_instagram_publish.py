@@ -1,9 +1,10 @@
+import hashlib
 import json
 
 import pytest
 import requests
 
-from cs2bot import instagram_publish
+from cs2bot import instagram_publish, threads_publish
 
 
 def test_upload_public_cards_uses_dedicated_bucket(monkeypatch):
@@ -19,8 +20,8 @@ def test_upload_public_cards_uses_dedicated_bucket(monkeypatch):
     urls = instagram_publish.upload_public_cards("schedule_2026-08-30", [b"one", b"two"])
 
     assert urls == [
-        "https://storage.yandexcloud.net/instagram-media/instagram/schedule_2026-08-30/1.png",
-        "https://storage.yandexcloud.net/instagram-media/instagram/schedule_2026-08-30/2.png",
+        f"https://storage.yandexcloud.net/instagram-media/instagram/schedule_2026-08-30/1-{hashlib.sha256(b'one').hexdigest()}.png",
+        f"https://storage.yandexcloud.net/instagram-media/instagram/schedule_2026-08-30/2-{hashlib.sha256(b'two').hexdigest()}.png",
     ]
     assert [entry["Bucket"] for entry in seen] == ["instagram-media", "instagram-media"]
     assert all(entry["ACL"] == "public-read" for entry in seen)
@@ -45,7 +46,7 @@ def test_upload_public_reel_uses_video_content_type(monkeypatch):
     monkeypatch.setattr(instagram_publish, "_media_client", lambda: Client())
     url = instagram_publish.upload_public_reel("schedule_reel_2026-09-25", b"\x00\x00\x00\x18ftypisom")
 
-    assert url.endswith("/instagram/schedule_reel_2026-09-25/reel.mp4")
+    assert url.endswith(f"/instagram/schedule_reel_2026-09-25/reel-{hashlib.sha256(seen[0]['Body']).hexdigest()}.mp4")
     assert seen[0]["ContentType"] == "video/mp4"
     assert seen[0]["ACL"] == "public-read"
 
@@ -187,3 +188,48 @@ def test_publication_key_rejects_path_traversal(monkeypatch):
     monkeypatch.setenv("INSTAGRAM_MEDIA_BUCKET", "instagram-media")
     with pytest.raises(instagram_publish.InstagramPublishError, match="key is invalid"):
         instagram_publish.upload_public_cards("../private", [b"image"])
+
+
+@pytest.mark.parametrize("publisher,env_name", [
+    (instagram_publish, "INSTAGRAM_MEDIA_BUCKET"),
+    (threads_publish, "THREADS_MEDIA_BUCKET"),
+])
+def test_new_card_bytes_get_new_url_without_overwriting_previous_media(monkeypatch, publisher, env_name):
+    monkeypatch.setenv(env_name, "social-media")
+    uploaded = {}
+
+    class Client:
+        def put_object(self, **kwargs):
+            uploaded[kwargs["Key"]] = kwargs["Body"]
+
+    monkeypatch.setattr(publisher, "_media_client", lambda: Client())
+    old_url = publisher.upload_public_cards("same_publication", [b"old layout"])[0]
+    new_url = publisher.upload_public_cards("same_publication", [b"new layout"])[0]
+    retry_url = publisher.upload_public_cards("same_publication", [b"new layout"])[0]
+
+    assert old_url != new_url
+    assert new_url == retry_url
+    assert len(uploaded) == 2
+    assert set(uploaded.values()) == {b"old layout", b"new layout"}
+    assert all("/same_publication/1-" in url for url in (old_url, new_url))
+
+
+def test_new_reel_bytes_get_new_url_without_overwriting_previous_video(monkeypatch):
+    monkeypatch.setenv("INSTAGRAM_MEDIA_BUCKET", "social-media")
+    uploaded = {}
+
+    class Client:
+        def put_object(self, **kwargs):
+            uploaded[kwargs["Key"]] = kwargs["Body"]
+
+    monkeypatch.setattr(instagram_publish, "_media_client", lambda: Client())
+    old_video = b"\x00\x00\x00\x18ftypisom-old"
+    new_video = b"\x00\x00\x00\x18ftypisom-new"
+    old_url = instagram_publish.upload_public_reel("same_publication", old_video)
+    new_url = instagram_publish.upload_public_reel("same_publication", new_video)
+    retry_url = instagram_publish.upload_public_reel("same_publication", new_video)
+
+    assert old_url != new_url
+    assert new_url == retry_url
+    assert len(uploaded) == 2
+    assert set(uploaded.values()) == {old_video, new_video}

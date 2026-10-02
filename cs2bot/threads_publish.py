@@ -7,6 +7,7 @@ uses the Telegram proxy.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from contextlib import contextmanager
 from typing import Any, Iterator, Sequence
@@ -93,7 +94,7 @@ def _media_client() -> Any:
 
 
 def upload_public_cards(publication_key: str, cards: Sequence[bytes]) -> list[str]:
-    """Persist public card URLs under a deterministic, immutable publication key."""
+    """Persist immutable PNGs with content-addressed filenames."""
     if not cards or len(cards) > MAX_CAROUSEL_ITEMS:
         raise ThreadsPublishError("Threads publication must contain between one and twenty cards")
     if not publication_key or any(
@@ -108,7 +109,8 @@ def upload_public_cards(publication_key: str, cards: Sequence[bytes]) -> list[st
     for index, card in enumerate(cards, start=1):
         if not isinstance(card, bytes) or not card:
             raise ThreadsPublishError("Threads card is invalid")
-        key = f"threads/{publication_key}/{index}.png"
+        digest = hashlib.sha256(card).hexdigest()
+        key = f"threads/{publication_key}/{index}-{digest}.png"
         try:
             client.put_object(
                 Bucket=bucket,

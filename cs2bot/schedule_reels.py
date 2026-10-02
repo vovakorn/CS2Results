@@ -22,7 +22,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .match_sources.models import UpcomingMatchNormalized
 from .media_cards import (
     AMBER,
-    CHANNEL_LOGO,
+    MediaCardError,
     CYAN,
     DISPLAY_FONT,
     LATIN_BOLD_FONT,
@@ -30,7 +30,10 @@ from .media_cards import (
     NAVY,
     PANEL,
     WHITE,
+    _draw_channel_brand,
     _draw_logo,
+    _draw_text_block,
+    _uses_cyrillic,
 )
 
 
@@ -138,13 +141,9 @@ def _base() -> Image.Image:
     draw.line((90, 214, 415, 214), fill=(*CYAN, 230), width=6)
     draw.line((665, 214, 990, 214), fill=(*AMBER, 230), width=6)
     try:
-        logo = Image.open(CHANNEL_LOGO).convert("RGBA")
-        logo.thumbnail((116, 116), Image.Resampling.LANCZOS)
-        logo_mask = Image.new("L", logo.size, 0)
-        ImageDraw.Draw(logo_mask).ellipse((0, 0, logo.width - 1, logo.height - 1), fill=255)
-        logo.putalpha(logo_mask)
-        image.alpha_composite(logo, ((1080 - logo.width) // 2, 155))
-    except OSError as exc:
+        _draw_channel_brand(image, draw, center_y=214, logo_diameter=116,
+                            label_center_y=310, label_size=44)
+    except MediaCardError as exc:
         raise ScheduleReelError("Bundled channel logo is unavailable") from exc
     return image
 
@@ -189,20 +188,15 @@ def _match_card(
         if remaining is not None and remaining < 0.1:
             url = fallback = None
         _draw_logo(
-            image, draw, center, 92, name, url, accent, fallback,
+            image, draw, center, 80, name, url, accent, fallback,
             download_timeout=min(0.75, remaining) if remaining is not None and remaining >= 0.1 else None,
         )
     draw = ImageDraw.Draw(image, "RGBA")
-    team1_font_path = DISPLAY_FONT if not match.team1_name.isascii() else LATIN_BOLD_FONT
-    team2_font_path = DISPLAY_FONT if not match.team2_name.isascii() else LATIN_BOLD_FONT
-    team_font_left = _fit(draw, match.team1_name.upper(), team1_font_path, 262, 39, 23)
-    team_font_right = _fit(draw, match.team2_name.upper(), team2_font_path, 262, 39, 23)
-    left = _ellipsis(draw, match.team1_name.upper(), team_font_left, 262)
-    right = _ellipsis(draw, match.team2_name.upper(), team_font_right, 262)
-    draw.text((x0 + 165, y + 151), left, font=team_font_left, fill=WHITE)
-    right_width = draw.textbbox((0, 0), right, font=team_font_right)[2]
-    draw.text((x1 - 165 - right_width, y + 151), right, font=team_font_right, fill=WHITE)
-    _center(draw, y + 166, "VS", _font(LATIN_BOLD_FONT, 25), MUTED)
+    for left, name in ((True, match.team1_name), (False, match.team2_name)):
+        _draw_text_block(draw, x0 + 144 if left else x1 - 144, y + 182,
+                         name.upper(), 296, 42, min_size=36,
+                         display=_uses_cyrillic(name), alignment="left" if left else "right")
+
 
 
 def render_scene(

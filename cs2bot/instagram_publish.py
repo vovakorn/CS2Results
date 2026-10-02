@@ -8,6 +8,7 @@ source caches.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -133,7 +134,7 @@ def _media_client() -> Any:
 
 
 def upload_public_cards(publication_key: str, cards: Sequence[bytes]) -> list[str]:
-    """Upload square PNG cards under a non-secret deterministic publication key."""
+    """Upload immutable PNGs with content-addressed filenames."""
     if not cards or len(cards) > MAX_CAROUSEL_ITEMS:
         raise InstagramPublishError("Instagram publication must contain between one and ten cards")
     if not publication_key or any(part not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for part in publication_key):
@@ -145,7 +146,8 @@ def upload_public_cards(publication_key: str, cards: Sequence[bytes]) -> list[st
     for index, card in enumerate(cards, start=1):
         if not isinstance(card, bytes) or not card:
             raise InstagramPublishError("Instagram card is invalid")
-        key = f"instagram/{publication_key}/{index}.png"
+        digest = hashlib.sha256(card).hexdigest()
+        key = f"instagram/{publication_key}/{index}-{digest}.png"
         try:
             client.put_object(
                 Bucket=bucket,
@@ -168,7 +170,8 @@ def upload_public_reel(publication_key: str, video: bytes) -> str:
     if not isinstance(video, bytes) or not video or b"ftyp" not in video[:32]:
         raise InstagramPublishError("Instagram Reel is not a valid MP4")
     bucket = _media_bucket()
-    key = f"instagram/{publication_key}/reel.mp4"
+    digest = hashlib.sha256(video).hexdigest()
+    key = f"instagram/{publication_key}/reel-{digest}.mp4"
     try:
         _media_client().put_object(
             Bucket=bucket,
