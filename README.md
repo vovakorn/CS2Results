@@ -46,7 +46,7 @@
 | `VRS_SOURCE_NAME` | Стабильная метка источника, по умолчанию `Valve VRS live/global`. |
 | `ENABLE_VRS` | Включает сохранение снимков и публикацию VRS-альбомов; по умолчанию `0`. |
 | `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
-| `ENABLE_TOURNAMENT_PREVIEWS` | Новый формат превью Telegram; `0` по умолчанию, в production не включён. |
+| `ENABLE_TOURNAMENT_PREVIEWS` | Превью в Telegram/Instagram/Threads; `0` по умолчанию. Нужен проверенный профиль. |
 | `TOURNAMENT_PREVIEW_PROFILES_PATH` | JSON проверенных профилей; по умолчанию `data/tournament_preview_profiles.json`. |
 | `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`; безопасное значение по умолчанию — `0`. |
 | `ENABLE_LIQUIPEDIA_SHADOW` | `1` параллельно сравнивает завершённые матчи PandaScore и Liquipedia, не меняя источник публикации; по умолчанию `0`. |
