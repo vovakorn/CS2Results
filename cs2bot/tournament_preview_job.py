@@ -12,6 +12,7 @@ from .tournament_preview import (
     format_preview_threads_caption, load_profiles, publication_window,
 )
 from .tournament_preview_cards import render_preview_cards
+from .tournament_identity import event_key
 
 
 def _deliver(runtime, uid, platform, send, uncertain_error, *, media_card):
@@ -105,10 +106,21 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
                 caption_errors[platform] = str(exc)
         if dry_run:
             item.update({"caption": text, "captions": captions, "caption_errors": caption_errors,
-                         "snapshot": preview.model_dump(mode="json")})
+                         "snapshot": preview.model_dump(mode="json"),
+                         "event_key": event_key(profile), "vrs_baseline": {"status": "dry_run"}})
         elif not eligible:
             item["skipped_reason"] = "outside_publication_window"
         else:
+            try:
+                item["vrs_baseline"] = runtime._capture_preview_vrs_baseline(profile, preview)
+            except Exception as exc:
+                item["vrs_baseline"] = {"status": "failed", "error_type": type(exc).__name__}
+                item["skipped_reason"] = "vrs_baseline_unavailable"
+                body["delivery_failures"] += 1
+                runtime._notify_admin("preview_vrs_baseline_failed",
+                    f"Не сохранён начальный VRS для {profile.key}; анонс ждёт повторной проверки.")
+                body["previews"].append(item)
+                continue
             deliveries = {}
             for channel in runtime._iter_channels():
                 channel_id = str(channel.get("id") or channel.get("name", "unknown"))
@@ -132,11 +144,9 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
                     send = lambda: runtime.publish_rendered_cards(uid, cards, captions[platform], context)
                     uncertain_error = runtime.InstagramDeliveryUncertainError
                 else:
-                    # A reviewed LP passport is the preview identity. A serie is not a
-                    # PandaScore tournament ID and must not be guessed as a chain key.
                     send = lambda: runtime._publish_threads_chain(
-                        f"threads:preview:liquipedia:{profile.liquipedia_page}",
-                        uid, cards, captions[platform], context)
+                        f"threads:{event_key(profile)}",
+                        uid, cards, captions[platform], context, is_root=True)
                     uncertain_error = runtime.ThreadsDeliveryUncertainError
                 deliveries[platform] = _deliver(runtime, uid, platform, send,
                     uncertain_error, media_card=True)

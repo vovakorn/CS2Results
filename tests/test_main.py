@@ -62,14 +62,21 @@ def configured_runtime(monkeypatch):
     monkeypatch.setattr(main, "clear_telegram_media_degraded", no_op)
 
     thread_tails = {}
+    thread_roots = set()
     thread_reservations = set()
-    async def reserve_thread(key):
+    async def reserve_thread(key, **options):
         if key in thread_reservations:
             return None
+        if options.get("require_root") and not options.get("is_root") and key not in thread_roots:
+            return None
+        if options.get("is_root") and key in thread_tails:
+            return None
         thread_reservations.add(key)
-        return ThreadsChainAppend(key, f"append-{len(thread_reservations)}", thread_tails.get(key), '"etag"')
+        return ThreadsChainAppend(key, f"append-{len(thread_reservations)}", thread_tails.get(key), '"etag"', options.get("is_root", False))
     async def confirm_thread(append, post_id):
         thread_tails[append.tournament_key] = post_id
+        if append.is_root:
+            thread_roots.add(append.tournament_key)
         thread_reservations.discard(append.tournament_key)
     async def release_thread(append):
         thread_reservations.discard(append.tournament_key)
@@ -2864,3 +2871,52 @@ def test_threads_schedule_groups_cards_by_stable_tournament_id():
     assert list(groups) == ["threads:pandascore:tournament-1", "threads:pandascore:tournament-2"]
     assert [item.match_id for item in groups["threads:pandascore:tournament-1"]] == ["match-1", "match-2"]
     assert [item.match_id for item in groups["threads:pandascore:tournament-2"]] == ["match-3"]
+
+
+def test_preview_is_root_and_schedule_result_liquipedia_standings_vrs_follow_it(monkeypatch):
+    key = "threads:event:esl-pro-league-season-24-2026"
+    first = _match().model_copy(update={"source_refs": SourceReferences(serie_id="11004", tournament_id="22017")})
+    final = first.model_copy(update={"source": "liquipedia", "source_refs": None,
+        "tournament_parent": "ESL/Pro_League/Season_24", "is_final": True,
+        "tournament_placements": [TournamentPlacement(placement="1", team_name="NAVI", prize_usd=100_000),
+                                   TournamentPlacement(placement="2", team_name="FaZe", prize_usd=60_000)]})
+    pending = PendingDelivery(key="outbox/result", channel_id="threads", channel_name="threads",
+        match=first, created_at="2026-10-03T00:00:00Z")
+    claim = DeliveryClaim("content", "claim", "id")
+    published, deleted, released = [], [], []
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(claim))
+    monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(claim))
+    monkeypatch.setattr(main, "mark_channel_processed", lambda *args: _async(None))
+    monkeypatch.setattr(main, "mark_content_processed", lambda *args: _async(None))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda *args: _async(deleted.append(args)))
+    monkeypatch.setattr(main, "release_delivery_claim", lambda *args: _async(released.append(args)))
+    monkeypatch.setattr(main, "render_result_card", lambda *args: b"result")
+    monkeypatch.setattr(main, "_enqueue_tournament_standings", lambda *args: False)
+    monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
+    def publish(*args):
+        published.append(args)
+        return f"post-{len(published)}"
+    monkeypatch.setattr(main, "publish_threads_rendered_cards", publish)
+
+    # A result cannot create a substitute root; it remains in the outbox.
+    assert main._deliver_threads_result(pending, None) == "failed"
+    assert published == deleted == [] and len(released) == 1
+    main._publish_threads_chain(key, "threads_tournament_preview_epl", [b"preview"], "preview", None, is_root=True)
+    assert main._deliver_threads_content(job="schedule", day_key="2026-10-03", cards=[b"schedule"],
+        caption="schedule", context=None, test_run_id=None, tournament_key=main._threads_tournament_key(first)) == (1, 0, 0)
+    assert main._deliver_threads_result(pending, None) == "sent"
+    monkeypatch.setattr(main, "_can_publish_tournament_standings", lambda *args: True)
+    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: [b"standings"])
+    assert main._deliver_threads_tournament_standings(
+        PendingDelivery(key="outbox/standings", channel_id="threads", channel_name="threads", match=final,
+            created_at=pending.created_at, content_type="tournament_standings"), None) == "sent"
+    impact = main.TournamentVRSImpact(placement="1", team_name="NAVI", team_id="navi", before_points=100,
+        after_points=140, before_rank=2, after_rank=1, points_delta=40, rank_delta=1,
+        source="Valve VRS", before_version="before", after_version="after")
+    monkeypatch.setattr(main, "render_tournament_vrs_cards", lambda *args: [b"vrs"])
+    impacts = (impact, impact.model_copy(update={"placement": "2", "team_name": "FaZe", "team_id": "faze"}))
+    assert main._deliver_threads_tournament_vrs(
+        PendingDelivery(key="outbox/vrs", channel_id="threads", channel_name="threads", match=final,
+            created_at=pending.created_at, content_type="tournament_vrs_standings", vrs_impacts=impacts), None) == "sent"
+    assert [args[4] for args in published] == [None, "post-1", "post-2", "post-3", "post-4"]

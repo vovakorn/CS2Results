@@ -332,6 +332,7 @@ def runtime(tmp_path, monkeypatch, *, enabled=True, uncertain=False, marker_fail
         if uncertain:
             raise Uncertain()
     result = SimpleNamespace(ENABLE_TOURNAMENT_PREVIEWS=enabled, TELEGRAM_MEDIA_CARDS=True,
+        _capture_preview_vrs_baseline=lambda *args: {"status": "disabled"},
         instagram_publishing_enabled=lambda: False, threads_publishing_enabled=lambda: False,
         TOURNAMENT_PREVIEW_PROFILES_PATH=path, _iter_channels=lambda: [{"id": "c", "chat_id": "chat"}],
         _error_response=lambda status, code: {"statusCode": status, "body": json.dumps({"error": code})},
@@ -445,8 +446,8 @@ def social_runtime(tmp_path, monkeypatch, *, failure=None):
         if failure == "instagram":
             raise RuntimeError("rejected")
         return "instagram-post-id"
-    def threads(key, uid, cards, caption, context):
-        sent.append(("threads", uid, cards, caption, context, key))
+    def threads(key, uid, cards, caption, context, **options):
+        sent.append(("threads", uid, cards, caption, context, key, options))
         if failure == "threads":
             raise Uncertain()
         return "threads-post-id"
@@ -466,7 +467,8 @@ def test_all_platforms_publish_independently_with_context_and_stable_identity(tm
     assert outcomes["threads"]["post_id"] == "threads-post-id"
     assert all(len(item[2]) == 2 and item[4] is context for item in sent)
     assert sent[0][1] == "instagram_tournament_preview_test-2026"
-    assert sent[1][5] == "threads:preview:liquipedia:Test/2026"
+    assert sent[1][5] == "threads:event:test-2026"
+    assert sent[1][6] == {"is_root": True}
 
 
 def test_telegram_text_flag_does_not_disable_social_cards(tmp_path, monkeypatch):
@@ -504,3 +506,39 @@ def test_social_deduplication_is_separate_from_telegram(tmp_path, monkeypatch):
     assert first["messages_sent"] == 2 and first["duplicates_skipped"] == 1
     assert second["messages_sent"] == 0 and second["duplicates_skipped"] == 3
     assert len(sent) == 2
+
+
+def test_preview_saves_baseline_before_any_delivery(tmp_path, monkeypatch):
+    r, calls = runtime(tmp_path, monkeypatch)
+    def baseline(*args):
+        calls.append("baseline")
+        return {"status": "saved", "version": "initial-version"}
+    r._capture_preview_vrs_baseline = baseline
+    body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW)["body"])
+    assert calls.index("baseline") < calls.index("claim") < calls.index("send")
+    assert body["previews"][0]["vrs_baseline"]["version"] == "initial-version"
+
+
+def test_missing_baseline_blocks_publication_and_remains_retryable(tmp_path, monkeypatch):
+    r, calls, sent = social_runtime(tmp_path, monkeypatch)
+    def baseline(*args):
+        raise RuntimeError("source unavailable")
+    r._capture_preview_vrs_baseline = baseline
+    response = job.run_preview_job("test-2026", False, r, now=NOW)
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 502 and body["messages_sent"] == 0
+    assert body["previews"][0]["skipped_reason"] == "vrs_baseline_unavailable"
+    assert sent == [] and "claim" not in calls and "send" not in calls
+
+
+@pytest.mark.parametrize("dry_run,now", [(True, NOW), (False, NOW + timedelta(days=1))])
+def test_dry_run_and_late_run_never_capture_baseline(tmp_path, monkeypatch, dry_run, now):
+    r, calls = runtime(tmp_path, monkeypatch)
+    r._capture_preview_vrs_baseline = lambda *args: pytest.fail("baseline must not be written")
+    job.run_preview_job("test-2026", dry_run, r, now=now)
+
+
+@pytest.mark.parametrize("ids", [[True], ["1"], [0], [-1], [1, 1]])
+def test_invalid_reviewed_stage_ids_are_rejected(ids):
+    with pytest.raises(ValidationError):
+        profile(pandascore_serie_id=7, pandascore_tournament_ids=ids)

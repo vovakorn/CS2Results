@@ -59,6 +59,7 @@ class PreviewProfile(BaseModel):
     key: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,99}$")
     liquipedia_page: str = Field(min_length=1, max_length=300)
     pandascore_serie_id: int | None = Field(default=None, gt=0, strict=True)
+    pandascore_tournament_ids: list[int] = Field(default_factory=list, max_length=32)
     approved: bool = False
     verified_at: datetime
     story: str | None = Field(default=None, min_length=20, max_length=240)
@@ -81,6 +82,10 @@ class PreviewProfile(BaseModel):
 
     @model_validator(mode="after")
     def reviewed_sources(self):
+        if self.pandascore_tournament_ids and not self.pandascore_serie_id:
+            raise ValueError("stage IDs require the explicit PandaScore serie")
+        if len(set(self.pandascore_tournament_ids)) != len(self.pandascore_tournament_ids):
+            raise ValueError("duplicate PandaScore stage IDs")
         if self.verified_at.tzinfo is None:
             raise ValueError("verified_at needs a timezone")
         if bool(self.story) != bool(self.story_source_url):
@@ -100,6 +105,13 @@ class PreviewProfile(BaseModel):
             raise ValueError("playoffs must follow the initial stage")
         self.stages.sort(key=lambda stage: stage.start)
         return self
+
+    @field_validator("pandascore_tournament_ids", mode="before")
+    @classmethod
+    def strict_stage_ids(cls, value):
+        if not isinstance(value, list) or any(type(item) is not int or item <= 0 for item in value):
+            raise ValueError("stage IDs must be positive integers")
+        return value
 
 
 class PreviewTeam(BaseModel):
@@ -167,6 +179,16 @@ def load_profiles(path: str | Path) -> list[PreviewProfile]:
     profiles = [PreviewProfile.model_validate(item) for item in data]
     if len({profile.key for profile in profiles}) != len(profiles):
         raise ValueError("duplicate preview profile keys")
+    pages, series, stages = set(), set(), set()
+    for profile in profiles:
+        if profile.liquipedia_page in pages or (profile.pandascore_serie_id is not None and profile.pandascore_serie_id in series):
+            raise ValueError("ambiguous tournament profile identity")
+        if stages.intersection(profile.pandascore_tournament_ids):
+            raise ValueError("ambiguous PandaScore stage identity")
+        pages.add(profile.liquipedia_page)
+        if profile.pandascore_serie_id is not None:
+            series.add(profile.pandascore_serie_id)
+        stages.update(profile.pandascore_tournament_ids)
     return profiles
 
 

@@ -44,10 +44,10 @@
 | `VRS_VIEWS_PATH` | Каталог снимков, по умолчанию `live`. |
 | `VRS_REGION` | Регион рейтинга, по умолчанию `global`. |
 | `VRS_SOURCE_NAME` | Стабильная метка источника, по умолчанию `Valve VRS live/global`. |
-| `ENABLE_VRS` | Включает сохранение снимков и публикацию VRS-альбомов; по умолчанию `0`. |
+| `ENABLE_VRS` | Начальный снимок перед анонсом и итоговый VRS-альбом; по умолчанию `0`. Ошибка начального снимка блокирует анонс. |
 | `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
 | `ENABLE_TOURNAMENT_PREVIEWS` | Превью в Telegram/Instagram/Threads; `0` по умолчанию. Нужен проверенный профиль. |
-| `TOURNAMENT_PREVIEW_PROFILES_PATH` | JSON проверенных профилей; по умолчанию `data/tournament_preview_profiles.json`. |
+| `TOURNAMENT_PREVIEW_PROFILES_PATH` | JSON профилей и точных связей Liquipedia/PandaScore для общей цепочки Threads/VRS; по умолчанию `data/tournament_preview_profiles.json`. Исторические связи сохраняются. |
 | `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`; безопасное значение по умолчанию — `0`. |
 | `ENABLE_LIQUIPEDIA_SHADOW` | `1` параллельно сравнивает завершённые матчи PandaScore и Liquipedia, не меняя источник публикации; по умолчанию `0`. |
 | `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Moscow`. |

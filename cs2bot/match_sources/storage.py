@@ -57,6 +57,7 @@ class ThreadsChainAppend:
     append_id: str
     reply_to_id: str | None
     etag: str
+    is_root: bool = False
 
 
 RESULT_OUTBOX_PREFIX = "outbox/results/"
@@ -116,11 +117,15 @@ async def write_vrs_snapshot(
     snapshot: VRSRankingSnapshot,
     client: Any | None = None,
     bucket: str | None = None,
+    *,
+    initial: bool = False,
 ) -> bool:
     """Write an immutable snapshot; duplicate versions are harmless cache hits."""
     s3 = client or _client()
     bucket_name = bucket or _bucket()
-    key = vrs_snapshot_key(tournament_id, phase, snapshot.version)
+    if initial and phase != "before":
+        raise ValueError("initial VRS snapshot must precede the event")
+    key = vrs_snapshot_key(tournament_id, phase, "initial" if initial else snapshot.version)
     body = json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False, sort_keys=True).encode("utf-8")
     try:
         await asyncio.to_thread(s3.put_object, Bucket=bucket_name, Key=key, Body=body,
@@ -1249,7 +1254,8 @@ def _threads_chain_key(tournament_key: str) -> str:
     return f"threads/chains/{digest}.json"
 
 
-async def reserve_threads_chain_append(tournament_key: str, client: Any | None = None, bucket: str | None = None) -> ThreadsChainAppend | None:
+async def reserve_threads_chain_append(tournament_key: str, client: Any | None = None, bucket: str | None = None,
+                                      *, require_root: bool = False, is_root: bool = False) -> ThreadsChainAppend | None:
     """Atomically lock one tournament chain and return its confirmed parent ID."""
     s3, bucket_name = client or _client(), bucket or _bucket()
     key, append_id = _threads_chain_key(tournament_key), uuid.uuid4().hex
@@ -1266,6 +1272,10 @@ async def reserve_threads_chain_append(tournament_key: str, client: Any | None =
             raise StorageUnavailableError("Threads chain state is invalid") from exc
         if state.get("blocked") or state.get("reservation"):
             return None
+        if is_root and (state.get("root_id") or state.get("tail_id")):
+            return None
+        if require_root and not is_root and not state.get("root_id"):
+            return None
         reply_to_id = state.get("tail_id")
         state["reservation"] = append_id
         put_kwargs = {
@@ -1276,7 +1286,7 @@ async def reserve_threads_chain_append(tournament_key: str, client: Any | None =
         put_kwargs["IfNoneMatch" if etag is None else "IfMatch"] = "*" if etag is None else etag
         try:
             response = await asyncio.to_thread(s3.put_object, **put_kwargs)
-            return ThreadsChainAppend(tournament_key, append_id, reply_to_id, response.get("ETag") or "")
+            return ThreadsChainAppend(tournament_key, append_id, reply_to_id, response.get("ETag") or "", is_root)
         except ClientError as exc:
             if _is_precondition_failed(exc):
                 continue
@@ -1300,6 +1310,8 @@ async def _update_threads_chain(append: ThreadsChainAppend, *, tail_id: str | No
     state.pop("reservation", None)
     if tail_id is not None:
         state["tail_id"] = tail_id
+        if append.is_root:
+            state["root_id"] = tail_id
     if blocked:
         state["blocked"] = True
     try:
@@ -1324,7 +1336,8 @@ async def block_threads_chain_append(append: ThreadsChainAppend, client: Any | N
     await _update_threads_chain(append, blocked=True, client=client, bucket=bucket)
 
 
-async def restore_threads_chain_tail(tournament_key: str, tail_id: str, client: Any | None = None, bucket: str | None = None) -> None:
+async def restore_threads_chain_tail(tournament_key: str, tail_id: str, client: Any | None = None, bucket: str | None = None,
+                                    *, root_id: str | None = None) -> None:
     """Resume a blocked chain after the operator verifies its actual tail ID."""
     if not tail_id:
         raise ValueError("A confirmed Threads post ID is required")
@@ -1336,7 +1349,13 @@ async def restore_threads_chain_tail(tournament_key: str, tail_id: str, client: 
         etag = response["ETag"]
     except Exception as exc:
         raise StorageUnavailableError("Threads chain state read failed") from exc
+    if tournament_key.startswith("threads:event:") and not state.get("root_id") and not root_id:
+        raise ValueError("A confirmed preview root ID is required")
+    if root_id and state.get("root_id") not in (None, root_id):
+        raise ValueError("A confirmed preview root cannot be replaced")
     state.pop("reservation", None)
+    if root_id:
+        state["root_id"] = root_id
     state.update(tail_id=tail_id, blocked=False)
     try:
         await asyncio.to_thread(

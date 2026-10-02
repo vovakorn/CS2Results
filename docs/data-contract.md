@@ -68,8 +68,12 @@ Meta UID: `<platform>_tournament_preview_<profile.key>` для Instagram и Thre
 claims и markers независимы. `short_story` — проверенная версия основной истории
 на 20–100 символов для Threads, с тем же источником; без основной истории
 профиль её не принимает. Полные обязательные факты не сокращаются до лимита.
-Threads preview key — `threads:preview:liquipedia:<page>`, без угадывания
-PandaScore tournament ID по serie ID.
+Профиль хранит точную Liquipedia page, PandaScore serie и проверенные
+`pandascore_tournament_ids` стадий. Page, serie и stage ID не могут принадлежать
+двум профилям. `event:<profile.key>` — общий ключ VRS; `threads:event:<profile.key>` —
+ключ всей цепочки Threads. Сопоставление только по точным provider ID/page,
+без похожих названий. Исторические профили сохраняются: истечение редакционной
+проверки или снятие approval блокируют новый анонс, но не меняют ключ результатов.
 Детали: [`tournament-preview.md`](tournament-preview.md).
 
 ## VRS snapshots
@@ -81,14 +85,24 @@ Liquipedia. Каждый снимок обязан содержать `source`, 
 `version`, `effective_at`, `fetched_at`, а также полный список команд с
 `team_id`, очками и местом.
 
-Baseline сохраняется при обнаружении предстоящего турнира, after-снимок — после
-его финала. After принимается только если его версия и `effective_at` новее
-baseline и не раньше времени завершения турнира. Снимки хранятся неизменно в
-`vrs-snapshots/{tournament}/{before|after}/{version}.json`.
+Baseline сохраняется перед первой доставкой анонса турнира при `ENABLE_VRS=1`.
+Для профиля это неизменяемый объект
+`vrs-snapshots/event_<profile.key>/before/initial.json`: внутри хранится фактическая версия
+Valve. Условный create сохраняет только первый снимок, даже если повторный
+запуск получил более новую версию. `effective_at` и `fetched_at` должны быть
+раньше московского дня начала турнира. Ошибка получения/сохранения baseline
+блокирует анонс до безопасного повтора; dry-run и запуск вне окна его не пишут.
+Радар baseline больше не создаёт. After-снимок — после финала: его версия и
+`effective_at` должны быть новее baseline и не раньше завершения турнира.
+After хранится неизменно в `vrs-snapshots/event_<profile.key>/after/{safe_version}.json`.
+Компоненты Object Storage проходят `safe_storage_part`; логический ключ
+`event:<profile.key>` в имени объекта содержит `_` вместо `:`.
+Для турниров без профиля сохраняется чтение старых versioned baseline.
 
 Если нет версии, даты, baseline, after-снимка или хотя бы одной команды из
 подтверждённой итоговой таблицы, VRS-публикация пропускается. Причина
-фиксируется событиями `vrs_baseline_skipped` или `vrs_publication_skipped`.
+фиксируется статусом `vrs_baseline_unavailable` анонса с алертом или событием
+`vrs_publication_skipped` итогового выпуска.
 
 VRS-альбом использует отдельный outbox `content_type=tournament_vrs_standings`
 и content UID `tournament-vrs-v1:{channel}:{tournament}`, поэтому не дублирует
@@ -96,25 +110,27 @@ VRS-альбом использует отдельный outbox `content_type=to
 
 ## Цепочка турнира в Threads
 
-Ключ цепочки привязан к платформе Threads и турниру. Если источник дал
+Для турнира из реестра ключ — `threads:event:<profile.key>`: анонс, все стадии
+PandaScore и финал Liquipedia используют одну цепочку. Только анонс может создать
+её корень; другие посты ждут подтверждённого `root_id`. Если профиль не найден и источник дал
 `source_refs.tournament_id`, используется он вместе с `source`; иначе —
 `tournament_parent`, затем `competition_key` или название турнира. Имя не
 заменяет доступный стабильный ID. Object Storage хранит JSON по ключу
-`threads/chains/{sha256(tournament_key)}.json` с подтверждённым `tail_id`,
+`threads/chains/{sha256(tournament_key)}.json` с неизменным `root_id` анонса,
+подтверждённым `tail_id`,
 временным `reservation` и признаком `blocked`; секретов в нём нет.
 
 Append резервируется условной записью `If-None-Match` или `If-Match` до запроса
-к Threads. При отсутствии tail создаётся корневой пост; иначе его ID передаётся
+к Threads. Анонс создаёт корневой пост один раз; tail передаётся
 в `reply_to_id` single-image или carousel parent container. Новый tail
 фиксируется только после ответа с post ID. Неопределённый исход блокирует
 цепочку конкретного турнира, определённый отказ снимает reservation. После
 ручной сверки фактического post ID оператор восстанавливает tail через
-`restore_threads_chain_tail(tournament_key, tail_id)`. Старые независимые посты
-в состояние цепочки не импортируются.
-
-Текущие ключи разных источников не сопоставляются между собой: Liquipedia-финал
-может открыть отдельную цепочку от PandaScore-радара того же турнира. Единый
-межисточниковый ключ остаётся задачей развития.
+`restore_threads_chain_tail(tournament_key, tail_id)`. Если исход отправки
+самого анонса был неопределённым, восстановление требует также проверенного
+`root_id`; уже подтверждённый корень заменять нельзя. Старые независимые посты
+в состояние цепочки не импортируются. Без профиля действует прежняя цепочка
+по источнику: её корнем становится первый пост, межисточниковая связь не угадывается.
 
 ## Ответственность delivery-layer
 
