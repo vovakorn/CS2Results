@@ -5,10 +5,11 @@ import math
 import re
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 from . import media_cards as media
 from .tournament_preview import TournamentPreview, date_range, prize_split_text
+from .tournament_visuals import accent_color, event_logo, add_event_glow
 
 SIZE = (1080, 1080)
 TEAMS_PER_PAGE = 16
@@ -50,30 +51,17 @@ def _text(draw, text, box, *, size=40, minimum=20, color=media.WHITE, display=Fa
 
 
 def _accent(preview):
-    value = preview.branding.accent.lstrip("#")
-    return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+    return accent_color(preview.branding)
 
 
 def _event_logo(preview):
-    if not preview.branding.logo_asset:
-        return None
-    path = media.ASSET_DIR / "tournament-preview" / preview.branding.logo_asset
-    try:
-        with Image.open(path) as source:
-            logo = source.convert("RGBA")
-        bounds = logo.getbbox()
-        return logo.crop(bounds) if bounds else None
-    except OSError:
-        return None
+    return event_logo(preview.branding, media.ASSET_DIR)
 
 
 def _canvas(preview, label):
     accent = _accent(preview)
     image = media._background(SIZE, header_accent_colors=(accent, accent)).convert("RGBA")
-    glow = Image.new("RGBA", (180, 180))
-    ImageDraw.Draw(glow).ellipse((50, -20, 210, 110), fill=(*accent, 44))
-    glow = glow.filter(ImageFilter.GaussianBlur(28)).resize(SIZE, Image.Resampling.LANCZOS)
-    image.alpha_composite(glow)
+    add_event_glow(image, accent)
     logo = _event_logo(preview)
     if logo is not None:
         watermark = logo.copy()

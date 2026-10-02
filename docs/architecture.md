@@ -52,7 +52,13 @@ Instagram и Threads claims/publishers. `main.py` маршрутизирует `
 явно; `tournament_identity.py` связывает page, serie и проверенные stage ID
 единым ключом розыгрыша для VRS и Threads. Начальный VRS сохраняется один раз
 условным create до доставки анонса; при ошибке анонс ждёт повтора.
-Внешние API не получают publishing-прав. Дизайн и ограничения:
+Внешние API не получают publishing-прав.
+
+`tournament_visuals.py` объединяет цвет, загрузку локального логотипа и спокойное
+фоновое свечение анонса, финала и итогов. Оформление финала выбирается по точному
+профилю матча при рендере; для итогов handler передаёт тот же `branding` в
+Telegram и общий путь Instagram/Threads. Нормализованные результаты, claims и
+маршруты публикаций от оформления не зависят. Подробности:
 [`tournament-preview.md`](tournament-preview.md). В production включено 2 октября:
 discovery ежедневно в 18:00 МСК, прежний радар PAUSED. Meta использует public media buckets,
 Lockbox и Xray; job передаёт context издателям, не читая токены самостоятельно.

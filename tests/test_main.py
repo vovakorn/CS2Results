@@ -194,7 +194,11 @@ def test_tournament_standings_are_delivered_as_a_separate_confirmed_album(monkey
     deleted = []
     monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
     monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(claim))
-    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: [b"card"])
+    rendered_brands = []
+    brand = object()
+    monkeypatch.setattr(main, "branding_for_match", lambda *args: brand)
+    monkeypatch.setattr(main, "render_tournament_standings_cards",
+                        lambda *args, **kwargs: (rendered_brands.append(kwargs["branding"]), [b"card"])[1])
     monkeypatch.setattr(
         main,
         "send_photo_to_telegram",
@@ -205,6 +209,7 @@ def test_tournament_standings_are_delivered_as_a_separate_confirmed_album(monkey
 
     assert main._deliver_tournament_standings(pending, {"chat_id": "@global"}, "Global") == "sent"
     assert sent and sent[0][0] == "@global"
+    assert rendered_brands == [brand]
     assert marked == [("tournament-standings-v1:global:BLAST/Open/Porto/2026", "tournament_standings")]
     assert deleted == [pending.key]
 
@@ -245,7 +250,11 @@ def test_tournament_standings_are_delivered_to_each_social_platform(
     published = []
     marked = []
     monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(claim))
-    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: [b"card"])
+    rendered_brands = []
+    brand = object()
+    monkeypatch.setattr(main, "branding_for_match", lambda *args: brand)
+    monkeypatch.setattr(main, "render_tournament_standings_cards",
+                        lambda *args, **kwargs: (rendered_brands.append(kwargs["branding"]), [b"card"])[1])
     monkeypatch.setattr(main, publisher_name, lambda *args: published.append(args))
     monkeypatch.setattr(main, "mark_content_processed", lambda uid, kind: _async(marked.append((uid, kind))))
     if platform == "threads":
@@ -256,6 +265,7 @@ def test_tournament_standings_are_delivered_to_each_social_platform(
 
     assert delivery(pending, None) == "sent"
     assert published and published[0][0] == f"{platform}_standings_BLAST_Open_Porto_2026"
+    assert rendered_brands == [brand]
     if platform == "threads":
         assert published[0][4] == "previous-post"
     assert marked == [(f"tournament-standings-v1:{platform}:BLAST/Open/Porto/2026", "tournament_standings")]
@@ -2907,7 +2917,7 @@ def test_preview_is_root_and_schedule_result_liquipedia_standings_vrs_follow_it(
         caption="schedule", context=None, test_run_id=None, tournament_key=main._threads_tournament_key(first)) == (1, 0, 0)
     assert main._deliver_threads_result(pending, None) == "sent"
     monkeypatch.setattr(main, "_can_publish_tournament_standings", lambda *args: True)
-    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args: [b"standings"])
+    monkeypatch.setattr(main, "render_tournament_standings_cards", lambda *args, **kwargs: [b"standings"])
     assert main._deliver_threads_tournament_standings(
         PendingDelivery(key="outbox/standings", channel_id="threads", channel_name="threads", match=final,
             created_at=pending.created_at, content_type="tournament_standings"), None) == "sent"
