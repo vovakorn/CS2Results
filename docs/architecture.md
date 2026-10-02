@@ -43,6 +43,19 @@ flowchart LR
 | `cs2bot/social_oauth.py` | Отдельный OAuth handler для соцсетей и запись токенов в Lockbox | Участвовать в основном Telegram handler |
 | `cs2bot/instagram_publish.py`, `cs2bot/threads_publish.py` | Загрузка публичных карточек и вызовы Meta через Xray | Выбирать контент или разделять Telegram state |
 
+Локальный preview-поток независим от выбора источника матчей:
+`tournament_preview_job.py` → `tournament_preview_source.py` → проверенный
+`TournamentPreview` → `tournament_preview_cards.py` → начальный VRS → независимые Telegram,
+Instagram и Threads claims/publishers. `main.py` только маршрутизирует `tournament_preview`
+и `preview_discovery`. Профили связывают Liquipedia page и PandaScore serie
+явно; `tournament_identity.py` связывает page, serie и проверенные stage ID
+единым ключом розыгрыша для VRS и Threads. Начальный VRS сохраняется один раз
+условным create до доставки анонса; при ошибке анонс ждёт повтора.
+Внешние API не получают publishing-прав. Дизайн и ограничения:
+[`tournament-preview.md`](tournament-preview.md). Флаг выключен, облачные
+таймеры ещё не созданы. Meta использует существующие public media buckets,
+Lockbox и Xray; job передаёт context издателям, не читая токены самостоятельно.
+
 ## Основной поток результатов
 
 1. Trigger вызывает `cs2bot.main.handler` с `job=results`.
@@ -67,14 +80,17 @@ flowchart LR
 10. Отдельный `retry_only` trigger раз в пять минут обрабатывает только outbox и не
     расходует квоту PandaScore или Liquipedia shadow.
 
-Threads ведёт отдельную цепочку для каждого турнира: радар, расписание, результаты,
-итоги и VRS публикуются как root/replies. При append Object Storage атомарно
+Threads ведёт отдельную цепочку для каждого турнира. Для событий из preview-реестра
+корень — анонс; радар, расписание, результаты, итоги дня/турнира и VRS продолжают
+его через подтверждённый tail. До подтверждения анонса они не создают другой
+корень; результаты остаются в outbox. При append Object Storage атомарно
 резервирует цепочку и возвращает подтверждённый tail ID; неопределённый исход
 блокирует только цепочку этого турнира. После ручной проверки tail оператор может
 вызвать `restore_threads_chain_tail` и продолжить публикации.
 Расписание и digest разделяются по турнирам; один Threads carousel содержит
-страницы только одного турнира. Текущий ключ включает источник, поэтому
-Liquipedia-финал может не продолжить цепочку PandaScore-радара того же турнира.
+страницы только одного турнира. Исторические профили сохраняют точную связь
+PandaScore/Liquipedia независимо от давности review. Для событий без профиля
+прежний ключ включает источник, и финал Liquipedia может открыть отдельную цепочку.
 
 ## Поток ежедневных выпусков и контекста
 

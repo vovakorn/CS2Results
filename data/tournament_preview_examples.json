@@ -1,0 +1,76 @@
+[
+  {
+    "key": "blast-rivals-hong-kong-2026",
+    "liquipedia_page": "BLAST/Rivals/2026/Fall",
+    "approved": false,
+    "verified_at": "2026-10-02T07:39:13Z",
+    "story": "В прошлом году первый Rivals в Гонконге собрал полную арену, а кубок подняла FURIA. Теперь BLAST возвращается: восемь команд и три дня плей-офф перед публикой.",
+    "story_source_url": "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026",
+    "prize_money_usd": 350000,
+    "club_reward_usd": 650000,
+    "prize_split_kind": "prize_participation",
+    "prize_source_url": "https://assets.blast.tv/rulebook/BLAST_Premier_Handbook_2026.pdf",
+    "venue_scope": "playoffs",
+    "branding": {
+      "accent": "#00FFF2",
+      "logo_asset": "blast-rivals.png",
+      "logo_source_url": "https://cdn.prod.website-files.com/69f99f5d46e5f137d0578e1d/6a01e15e919a171b6a308730_69f9e16a1b74c7fd459b6af1_RV-FW-26_Logo_Rivals_White.png",
+      "headline": "После аншлага — снова в Гонконге",
+      "headline_source_url": "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026"
+    },
+    "stages": [
+      {
+        "kind": "groups",
+        "start": "2026-11-11",
+        "end": "2026-11-12",
+        "format_text": "2 группы по 4, GSL, BO3. По 3 команды выходят; победители — в полуфинал.",
+        "card_summary": "GSL · BO3 · 8 → 6",
+        "source_url": "https://assets.blast.tv/rulebook/BLAST_Premier_Handbook_2026.pdf"
+      },
+      {
+        "kind": "playoffs",
+        "start": "2026-11-13",
+        "end": "2026-11-15",
+        "format_text": "6 команд, на выбывание. BO3, финал BO5.",
+        "card_summary": "BO3 · финал BO5",
+        "source_url": "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026"
+      }
+    ]
+  },
+  {
+    "key": "pgl-masters-bucharest-2026",
+    "liquipedia_page": "PGL/2026/Masters",
+    "approved": false,
+    "verified_at": "2026-10-02T07:39:13Z",
+    "story": "Masters снова собирает команды в Бухаресте. 12 прямых приглашений по мировому VRS и четыре места через региональные квалификации — путь в один турнир для лучших команд и претендентов.",
+    "story_source_url": "https://news.pglesports.com/news/1768216219785-everything-you-need-to-know-about-pgl-masters-bucharest-2026",
+    "prize_money_usd": 625000,
+    "club_reward_usd": 625000,
+    "prize_source_url": "https://liquipedia.net/counterstrike/PGL/2026/Masters",
+    "branding": {
+      "accent": "#ED3D55",
+      "logo_asset": "pgl.png",
+      "logo_source_url": "https://news.pglesports.com/news-list-assets/pgl_white.webp",
+      "headline": "12 приглашений + 4 пути через квалификации",
+      "headline_source_url": "https://news.pglesports.com/news/1768216219785-everything-you-need-to-know-about-pgl-masters-bucharest-2026"
+    },
+    "stages": [
+      {
+        "kind": "swiss",
+        "start": "2026-10-24",
+        "end": "2026-10-28",
+        "format_text": "16 команд, Swiss, все матчи BO3. В плей-офф выходят 8.",
+        "card_summary": "BO3 · 16 → 8",
+        "source_url": "https://pley.gg/cs2/pgl-masters-bucharest-2026/"
+      },
+      {
+        "kind": "playoffs",
+        "start": "2026-10-29",
+        "end": "2026-10-31",
+        "format_text": "8 команд, на выбывание. BO3, финал BO5; матч за 3-е место BO3.",
+        "card_summary": "BO3 · финал BO5",
+        "source_url": "https://pley.gg/cs2/pgl-masters-bucharest-2026/"
+      }
+    ]
+  }
+]

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from botocore.exceptions import ClientError
 import pytest
 
-from cs2bot.match_sources.models import MatchNormalized
+from cs2bot.match_sources.models import MatchNormalized, VRSRankingSnapshot, VRSTeamSnapshot
 from cs2bot.match_sources.storage import (
     alert_key,
     claim_admin_alert,
@@ -44,6 +44,8 @@ from cs2bot.match_sources.storage import (
     release_threads_chain_append,
     block_threads_chain_append,
     restore_threads_chain_tail,
+    write_vrs_snapshot,
+    read_vrs_snapshot,
 )
 
 
@@ -166,6 +168,50 @@ def test_threads_chain_manual_restore_clears_stale_reservation():
     asyncio.run(restore_threads_chain_tail("threads:pandascore:123", "verified-post", client=s3, bucket="bucket"))
     resumed = asyncio.run(reserve_threads_chain_append("threads:pandascore:123", client=s3, bucket="bucket"))
     assert resumed.reply_to_id == "verified-post"
+
+
+def test_event_chain_requires_preview_root_then_advances_without_changing_root():
+    s3 = FakeS3()
+    key = "threads:event:epl-2026"
+    def reserve(**options):
+        return asyncio.run(reserve_threads_chain_append(key, client=s3, bucket="bucket", require_root=True, **options))
+    assert reserve() is None
+    root = reserve(is_root=True)
+    assert root.reply_to_id is None
+    assert reserve() is None  # An in-flight root is not a confirmed root.
+    asyncio.run(confirm_threads_chain_append(root, "announcement", client=s3, bucket="bucket"))
+    assert reserve(is_root=True) is None
+    child = reserve()
+    assert child.reply_to_id == "announcement"
+    asyncio.run(confirm_threads_chain_append(child, "result", client=s3, bucket="bucket"))
+    following = reserve()
+    assert following.reply_to_id == "result"
+    state = json.loads(next(iter(s3.objects.values()))["Body"])
+    assert state["root_id"] == "announcement"
+
+
+def test_uncertain_root_blocks_children_and_requires_verified_root_to_recover():
+    s3 = FakeS3()
+    key = "threads:event:epl-2026"
+    root = asyncio.run(reserve_threads_chain_append(key, client=s3, bucket="bucket", require_root=True, is_root=True))
+    asyncio.run(block_threads_chain_append(root, client=s3, bucket="bucket"))
+    assert asyncio.run(reserve_threads_chain_append(key, client=s3, bucket="bucket", require_root=True)) is None
+    with pytest.raises(ValueError, match="root ID"):
+        asyncio.run(restore_threads_chain_tail(key, "verified-post", client=s3, bucket="bucket"))
+    asyncio.run(restore_threads_chain_tail(key, "verified-post", client=s3, bucket="bucket", root_id="verified-post"))
+    following = asyncio.run(reserve_threads_chain_append(key, client=s3, bucket="bucket", require_root=True))
+    assert following.reply_to_id == "verified-post"
+
+
+def test_initial_vrs_is_not_replaced_by_a_new_version():
+    s3 = FakeS3()
+    before = VRSRankingSnapshot(source="Valve VRS", version="first", effective_at="2026-10-01T00:00:00Z",
+        fetched_at="2026-10-02T00:00:00Z", teams=[VRSTeamSnapshot(team_id="navi", team_name="NAVI", points=100, rank=1)])
+    new = before.model_copy(update={"version": "second"})
+    assert asyncio.run(write_vrs_snapshot("event:epl", "before", before, client=s3, bucket="bucket", initial=True))
+    assert not asyncio.run(write_vrs_snapshot("event:epl", "before", new, client=s3, bucket="bucket", initial=True))
+    saved = asyncio.run(read_vrs_snapshot("event:epl", "before", "initial", client=s3, bucket="bucket"))
+    assert saved.version == "first" and saved.teams[0].points == 100
 
 
 class PaginatedFakeS3(FakeS3):

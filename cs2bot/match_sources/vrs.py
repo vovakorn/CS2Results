@@ -79,6 +79,14 @@ def normalize_snapshot(payload: Any, *, source: str, fetched_at: str | None = No
     return VRSRankingSnapshot(source=source, version=version, effective_at=effective_at, fetched_at=fetched, teams=teams)
 
 
+def _unique_teams_by_name(snapshot: VRSRankingSnapshot) -> dict[str, VRSTeamSnapshot | None]:
+    result: dict[str, VRSTeamSnapshot | None] = {}
+    for team in snapshot.teams:
+        key = team.team_name.casefold()
+        result[key] = None if key in result else team
+    return result
+
+
 def calculate_impacts(
     placements: Iterable[TournamentPlacement],
     before: VRSRankingSnapshot,
@@ -89,12 +97,14 @@ def calculate_impacts(
         raise VRSDataError("VRS snapshots come from different sources")
     if before.version == after.version or _timestamp(before.effective_at, "effective_at") >= _timestamp(after.effective_at, "effective_at"):
         raise VRSDataError("after VRS snapshot is not newer than baseline")
-    before_by_name = {item.team_name.casefold(): item for item in before.teams}
-    after_by_name = {item.team_name.casefold(): item for item in after.teams}
+    before_by_name = _unique_teams_by_name(before)
+    after_by_name = _unique_teams_by_name(after)
     impacts: list[TournamentVRSImpact] = []
     for placement in placements:
         key = placement.team_name.casefold()
         old, new = before_by_name.get(key), after_by_name.get(key)
+        if (key in before_by_name and old is None) or (key in after_by_name and new is None):
+            raise VRSDataError(f"VRS identity is ambiguous for {placement.team_name}")
         if old is None or new is None or old.team_id != new.team_id:
             raise VRSDataError(f"VRS data is incomplete for {placement.team_name}")
         impacts.append(TournamentVRSImpact(

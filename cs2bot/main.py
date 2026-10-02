@@ -43,6 +43,8 @@ from .threads_publish import (
     threads_publishing_enabled,
 )
 from .logging_utils import log_event
+from .tournament_preview_job import run_preview_job
+from .tournament_identity import event_for_match, event_key, find_event
 from .media_cards import (
     MAX_RESULT_MATCHES,
     MAX_SCHEDULE_TOTAL_MATCHES,
@@ -60,6 +62,8 @@ from .media_cards import (
 )
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
+    ENABLE_TOURNAMENT_PREVIEWS,
+    TOURNAMENT_PREVIEW_PROFILES_PATH,
     ENABLE_VRS,
     ENABLE_LIQUIPEDIA_FALLBACK,
     LIQUIPEDIA_API_KEY,
@@ -112,6 +116,7 @@ from .match_sources.storage import (
     release_delivery_claim,
     result_outbox_key,
     read_latest_vrs_snapshot,
+    read_vrs_snapshot,
     write_vrs_snapshot,
     safe_storage_part,
     StorageUnavailableError,
@@ -128,7 +133,15 @@ class ThreadsChainBusyError(ThreadsPublishError):
     """A prior append is in progress or the chain needs manual recovery."""
 
 
+def _threads_tournament_key_from_id(tournament_id: str) -> str:
+    event = find_event(TOURNAMENT_PREVIEW_PROFILES_PATH, source="pandascore", tournament_id=tournament_id)
+    return f"threads:{event_key(event)}" if event else f"threads:pandascore:{tournament_id}"
+
+
 def _threads_tournament_key(match: Any) -> str:
+    event = event_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH)
+    if event:
+        return f"threads:{event_key(event)}"
     refs = getattr(match, "source_refs", None)
     tournament_id = getattr(refs, "tournament_id", None) if refs else None
     if tournament_id:
@@ -143,10 +156,7 @@ def _group_threads_content(job: str, matches: Sequence[Any], day_key: str) -> di
     groups: dict[str, list[Any]] = {}
     if job == "schedule":
         for upcoming in matches:
-            refs = getattr(upcoming, "source_refs", None)
-            stable_id = getattr(refs, "tournament_id", None) if refs else None
-            label = getattr(upcoming, "competition_key", None) or upcoming.tournament_name
-            key = f"threads:{upcoming.source}:{stable_id or label}"
+            key = _threads_tournament_key(upcoming)
             groups.setdefault(key, []).append(upcoming)
     elif job == "digest":
         for match in matches:
@@ -157,8 +167,9 @@ def _group_threads_content(job: str, matches: Sequence[Any], day_key: str) -> di
 
 
 def _publish_threads_chain(tournament_key: str, publication_key: str,
-                           cards: Sequence[bytes], caption: str, context: Any) -> str:
-    append = asyncio.run(reserve_threads_chain_append(tournament_key))
+                           cards: Sequence[bytes], caption: str, context: Any, *, is_root: bool = False) -> str:
+    options = {"require_root": True, "is_root": is_root} if tournament_key.startswith("threads:event:") else {}
+    append = asyncio.run(reserve_threads_chain_append(tournament_key, **options))
     if append is None:
         raise ThreadsChainBusyError("Threads tournament chain is blocked or another append is active")
     try:
@@ -238,7 +249,8 @@ RUSSIAN_MONTHS = (
     "ноября",
     "декабря",
 )
-CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics"}
+CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics",
+                "tournament_preview", "preview_discovery"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -937,6 +949,9 @@ def format_tournament_vrs(tournament_name: str, impacts: Sequence[TournamentVRSI
 
 
 def _vrs_tournament_id(match: MatchNormalized) -> str | None:
+    event = event_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH)
+    if event:
+        return event_key(event)
     return (
         match.vrs_baseline_id
         or match.tournament_parent
@@ -944,18 +959,28 @@ def _vrs_tournament_id(match: MatchNormalized) -> str | None:
     )
 
 
-def _capture_vrs_baseline(tournament_id: str, *, dry_run: bool = False) -> str:
-    if not ENABLE_VRS or dry_run:
-        return "disabled"
-    try:
+def _capture_preview_vrs_baseline(profile, preview, *, dry_run: bool = False) -> dict:
+    if dry_run or not ENABLE_VRS:
+        return {"status": "dry_run" if dry_run else "disabled"}
+    tournament_id = event_key(profile)
+    snapshot = asyncio.run(read_vrs_snapshot(tournament_id, "before", "initial"))
+    status = "existing"
+    if snapshot is None:
         snapshot = asyncio.run(fetch_vrs_snapshot())
-        asyncio.run(write_vrs_snapshot(tournament_id, "before", snapshot))
-        log_event(logger, logging.INFO, "vrs_baseline_saved", tournament_id=tournament_id, version=snapshot.version)
-        return "saved"
-    except (VRSUnavailableError, VRSDataError, StorageUnavailableError, requests.RequestException) as exc:
-        log_event(logger, logging.WARNING, "vrs_baseline_skipped", tournament_id=tournament_id,
-                  reason=type(exc).__name__, error=_safe_error_message(exc))
-        return "skipped"
+        start = datetime.combine(preview.start, datetime_time.min, tzinfo=ZoneInfo("Europe/Moscow"))
+        for value in (snapshot.effective_at, snapshot.fetched_at):
+            timestamp = _parse_datetime(value)
+            if timestamp is None or timestamp >= start:
+                raise VRSDataError("initial VRS snapshot must be captured before the tournament")
+        created = asyncio.run(write_vrs_snapshot(tournament_id, "before", snapshot, initial=True))
+        status = "saved" if created else "existing"
+        # A concurrent invocation may have won with a different version.
+        snapshot = asyncio.run(read_vrs_snapshot(tournament_id, "before", "initial"))
+        if snapshot is None:
+            raise StorageUnavailableError("initial VRS snapshot was not confirmed")
+    log_event(logger, logging.INFO, "vrs_baseline_saved", tournament_id=tournament_id,
+              version=snapshot.version, status=status)
+    return {"status": status, "version": snapshot.version, "effective_at": snapshot.effective_at}
 
 
 def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
@@ -966,7 +991,10 @@ def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_nam
         log_event(logger, logging.WARNING, "vrs_publication_skipped", match_uid=match.match_uid, reason="missing_tournament_id")
         return False
     try:
-        before = asyncio.run(read_latest_vrs_snapshot(tournament_id, "before"))
+        if tournament_id.startswith("event:"):
+            before = asyncio.run(read_vrs_snapshot(tournament_id, "before", "initial"))
+        else:
+            before = asyncio.run(read_latest_vrs_snapshot(tournament_id, "before"))
         if before is None:
             raise VRSDataError("baseline snapshot is missing")
         after = asyncio.run(fetch_vrs_snapshot())
@@ -2662,7 +2690,6 @@ def _handle_radar_job(
 ) -> Dict[str, Any]:
     try:
         radar = radar or asyncio.run(fetch_tournament_radar(tournament_id))
-        _capture_vrs_baseline(tournament_id, dry_run=dry_run)
         text = format_tournament_radar(radar, tournament_name)
     except Exception as exc:
         log_event(
@@ -2815,7 +2842,7 @@ def _handle_radar_job(
             job="radar", day_key=day_key, cards=media_cards,
             caption=f"🏆 Турнирный радар — {tournament_name}", context=None,
             test_run_id=test_run_id,
-            tournament_key=f"threads:pandascore:{tournament_id}",
+            tournament_key=_threads_tournament_key_from_id(tournament_id),
         )
 
     body = {
@@ -3016,14 +3043,19 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     test_run_id: str | None = None
     tournament_id: str | None = None
     tournament_name = "Турнир"
+    preview_key: str | None = None
     radar_card_variant = "auto"
     try:
         event = _unwrap_timer_event(event)
         if isinstance(event, dict):
             requested_job = event.get("job", "results")
             if requested_job not in CONTENT_JOBS:
-                raise ValueError("job must be results, schedule, schedule_reel, digest, radar, radar_discovery, or analytics")
+                raise ValueError("unsupported job")
             job = requested_job
+            if job == "tournament_preview":
+                preview_key = event.get("preview_key")
+                if not isinstance(preview_key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", preview_key):
+                    raise ValueError("preview_key is required")
             requested_test_run_id = event.get("test_run_id")
             if requested_test_run_id is not None:
                 if job not in {"schedule", "radar"}:
@@ -3087,6 +3119,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         log_event(logger, logging.WARNING, "invalid_request", error=_safe_error_message(exc))
         return _error_response(400, "invalid_request")
 
+    if job in {"tournament_preview", "preview_discovery"} and not dry_run and not ENABLE_TOURNAMENT_PREVIEWS:
+        return run_preview_job(preview_key, dry_run, sys.modules[__name__], context=context)
+
     if not dry_run:
         missing_config = []
         analytics_snapshot = job == "analytics" and (
@@ -3101,6 +3136,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             missing_config.append("object_storage_bucket")
         if job == "analytics":
             pass
+        elif job in {"tournament_preview", "preview_discovery"}:
+            if not LIQUIPEDIA_API_KEY:
+                missing_config.append("preview_source_credentials")
         elif retry_only:
             pass
         elif job in {"schedule", "schedule_reel", "digest", "radar", "radar_discovery"} and not PANDASCORE_API_TOKEN:
@@ -3122,6 +3160,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             )
             _notify_admin("configuration_invalid", "Конфигурация функции неполна.")
             return _error_response(503, "configuration_error")
+
+    if job in {"tournament_preview", "preview_discovery"}:
+        return run_preview_job(preview_key, dry_run, sys.modules[__name__], context=context)
 
     if job == "radar":
         assert tournament_id is not None
