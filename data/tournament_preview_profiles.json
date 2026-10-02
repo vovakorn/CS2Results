@@ -1,0 +1,41 @@
+[
+  {
+    "key": "esl-pro-league-season-24-2026",
+    "liquipedia_page": "ESL/Pro_League/Season_24",
+    "pandascore_serie_id": 11004,
+    "approved": true,
+    "verified_at": "2026-10-02T06:28:57Z",
+    "story": "EPL впервые с 2019 года возвращается на большую арену. В Катовице 16 команд начнут путь к Spodek — перед живой публикой сыграют восемь.",
+    "short_story": "Впервые с 2019 года EPL возвращается на большую арену.",
+    "story_source_url": "https://eslfaceitgroup.com/press/esl-pro-league-returns-to-the-big-stage-as-competition-kicks-off-in-katowice/",
+    "prize_money_usd": 300000,
+    "club_reward_usd": 700000,
+    "prize_source_url": "https://pro.eslgaming.com/csgo/proleague/",
+    "venue_scope": "playoffs",
+    "branding": {
+      "accent": "#12F206",
+      "logo_asset": "esl-pro-league.png",
+      "logo_source_url": "https://pro.eslgaming.com/csgo/proleague/wp-content/uploads/2026/03/ESL-Pro-League-Logo-Green.png",
+      "headline": "Возвращение на большую арену",
+      "headline_source_url": "https://eslfaceitgroup.com/press/esl-pro-league-returns-to-the-big-stage-as-competition-kicks-off-in-katowice/"
+    },
+    "stages": [
+      {
+        "kind": "swiss",
+        "start": "2026-10-03",
+        "end": "2026-10-07",
+        "format_text": "16 команд, Swiss, все матчи BO3. В плей-офф выходят 8.",
+        "card_summary": "BO3 · 16 → 8",
+        "source_url": "https://pro.eslgaming.com/csgo/proleague/"
+      },
+      {
+        "kind": "playoffs",
+        "start": "2026-10-09",
+        "end": "2026-10-11",
+        "format_text": "8 команд, на выбывание. BO3, финал BO5; матч за 3-е место BO3.",
+        "card_summary": "BO3 · финал BO5",
+        "source_url": "https://pro.eslgaming.com/csgo/proleague/"
+      }
+    ]
+  }
+]

@@ -246,6 +246,11 @@ LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS = _int_setting(
     minimum=1,
 )
 DISPLAY_TIMEZONE = os.getenv("DISPLAY_TIMEZONE", "Europe/Moscow")
+ENABLE_TOURNAMENT_PREVIEWS = _bool_env("ENABLE_TOURNAMENT_PREVIEWS", False)
+TOURNAMENT_PREVIEW_PROFILES_PATH = os.getenv(
+    "TOURNAMENT_PREVIEW_PROFILES_PATH",
+    str(Path(__file__).resolve().parents[2] / "data" / "tournament_preview_profiles.json"),
+)
 MAX_SOURCE_STALENESS_HOURS = _int_setting("MAX_SOURCE_STALENESS_HOURS", 48)
 MAX_SOURCE_FUTURE_SKEW_HOURS = _int_setting("MAX_SOURCE_FUTURE_SKEW_HOURS", 6)
 DELIVERY_CLAIM_TTL_SECONDS = _int_setting("DELIVERY_CLAIM_TTL_SECONDS", 300, minimum=30)

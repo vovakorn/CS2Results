@@ -43,6 +43,16 @@ flowchart LR
 | `cs2bot/social_oauth.py` | Отдельный OAuth handler для соцсетей и запись токенов в Lockbox | Участвовать в основном Telegram handler |
 | `cs2bot/instagram_publish.py`, `cs2bot/threads_publish.py` | Загрузка публичных карточек и вызовы Meta через Xray | Выбирать контент или разделять Telegram state |
 
+Локальный preview-поток независим от выбора источника матчей:
+`tournament_preview_job.py` → `tournament_preview_source.py` → проверенный
+`TournamentPreview` → `tournament_preview_cards.py` → независимые Telegram,
+Instagram и Threads claims/publishers. `main.py` только маршрутизирует `tournament_preview`
+и `preview_discovery`. Профили связывают Liquipedia page и PandaScore serie
+явно; внешние API не получают publishing-прав. Дизайн и ограничения:
+[`tournament-preview.md`](tournament-preview.md). Флаг выключен, облачные
+таймеры ещё не созданы. Meta использует существующие public media buckets,
+Lockbox и Xray; job передаёт context издателям, не читая токены самостоятельно.
+
 ## Основной поток результатов
 
 1. Trigger вызывает `cs2bot.main.handler` с `job=results`.

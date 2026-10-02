@@ -22,6 +22,7 @@ LIQUIPEDIA_SECRET_KEY="${YC_LIQUIPEDIA_SECRET_KEY:-LIQUIPEDIA_API_KEY}"
 LIQUIPEDIA_SHADOW_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_SHADOW:-}"
 LIQUIPEDIA_FINAL_CARDS_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_FINAL_CARDS:-}"
 VRS_OVERRIDE="${YC_ENABLE_VRS:-}"
+TOURNAMENT_PREVIEWS_OVERRIDE="${YC_ENABLE_TOURNAMENT_PREVIEWS:-}"
 TELEGRAM_PROXY_SECRET_ID="${YC_TELEGRAM_PROXY_SECRET_ID:-}"
 TELEGRAM_PROXY_SECRET_VERSION_ID="${YC_TELEGRAM_PROXY_SECRET_VERSION_ID:-}"
 TELEGRAM_PROXY_SECRET_KEY="${YC_TELEGRAM_PROXY_SECRET_KEY:-TELEGRAM_PROXY_URL}"
@@ -110,6 +111,9 @@ key value is never read by this script.
 
 To enable or disable the VRS album, use YC_ENABLE_VRS=1 or YC_ENABLE_VRS=0.
 The VRS adapter uses the public versioned Valve repository and needs no secret.
+
+Use YC_ENABLE_TOURNAMENT_PREVIEWS=1 to enable reviewed preview profiles.
+Omitting it preserves the current production value; a timer is configured separately.
 
 To add or rotate an optional Telegram egress proxy, pass all three
 YC_TELEGRAM_PROXY_SECRET_* reference fields. The proxy URL is never read.
@@ -431,6 +435,15 @@ validate_vrs_override() {
   esac
 }
 
+validate_tournament_previews_override() {
+  case "${TOURNAMENT_PREVIEWS_OVERRIDE}" in
+    "") return 0 ;;
+    1|true|TRUE|yes|YES) TOURNAMENT_PREVIEWS_OVERRIDE="1" ;;
+    0|false|FALSE|no|NO) TOURNAMENT_PREVIEWS_OVERRIDE="0" ;;
+    *) die "YC_ENABLE_TOURNAMENT_PREVIEWS must be a boolean" ;;
+  esac
+}
+
 validate_telegram_proxy_override() {
   if [[ -n "${TELEGRAM_PROXY_SECRET_ID}" || -n "${TELEGRAM_PROXY_SECRET_VERSION_ID}" ]]; then
     [[ -n "${TELEGRAM_PROXY_SECRET_ID}" && -n "${TELEGRAM_PROXY_SECRET_VERSION_ID}" && -n "${TELEGRAM_PROXY_SECRET_KEY}" ]] \
@@ -557,11 +570,12 @@ build_create_arguments() {
   value="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r '.concurrency // empty')"
   [[ -z "${value}" ]] || CREATE_ARGS+=(--concurrency "${value}")
 
-  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" --arg final_cards "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" --arg vrs "${VRS_OVERRIDE}" --arg instagram_enabled "${INSTAGRAM_PUBLISHING_OVERRIDE}" --arg instagram_reels "${INSTAGRAM_REELS_OVERRIDE}" --arg instagram_bucket "${INSTAGRAM_MEDIA_BUCKET_OVERRIDE}" --arg instagram_public_base "${INSTAGRAM_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg instagram_lockbox "${INSTAGRAM_LOCKBOX_SECRET_ID_OVERRIDE}" --arg threads_enabled "${THREADS_PUBLISHING_OVERRIDE}" --arg threads_bucket "${THREADS_MEDIA_BUCKET_OVERRIDE}" --arg threads_public_base "${THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg threads_lockbox "${THREADS_LOCKBOX_SECRET_ID_OVERRIDE}" '
+  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" --arg final_cards "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" --arg vrs "${VRS_OVERRIDE}" --arg previews "${TOURNAMENT_PREVIEWS_OVERRIDE}" --arg instagram_enabled "${INSTAGRAM_PUBLISHING_OVERRIDE}" --arg instagram_reels "${INSTAGRAM_REELS_OVERRIDE}" --arg instagram_bucket "${INSTAGRAM_MEDIA_BUCKET_OVERRIDE}" --arg instagram_public_base "${INSTAGRAM_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg instagram_lockbox "${INSTAGRAM_LOCKBOX_SECRET_ID_OVERRIDE}" --arg threads_enabled "${THREADS_PUBLISHING_OVERRIDE}" --arg threads_bucket "${THREADS_MEDIA_BUCKET_OVERRIDE}" --arg threads_public_base "${THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg threads_lockbox "${THREADS_LOCKBOX_SECRET_ID_OVERRIDE}" '
     (.environment // {})
     | if $shadow == "" then . else . + {"ENABLE_LIQUIPEDIA_SHADOW": $shadow} end
     | if $final_cards == "" then . else . + {"ENABLE_LIQUIPEDIA_FINAL_CARDS": $final_cards} end
     | if $vrs == "" then . else . + {"ENABLE_VRS": $vrs} end
+    | if $previews == "" then . else . + {"ENABLE_TOURNAMENT_PREVIEWS": $previews} end
     | if $instagram_enabled == "" then . else . + {"ENABLE_INSTAGRAM_PUBLISHING": $instagram_enabled} end
     | if $instagram_reels == "" then . else . + {"ENABLE_INSTAGRAM_REELS": $instagram_reels} end
     | if $instagram_bucket == "" then . else . + {"INSTAGRAM_MEDIA_BUCKET": $instagram_bucket} end
@@ -691,6 +705,7 @@ preflight() {
   validate_required_configuration "${PRODUCTION_JSON}"
   validate_liquipedia_override
   validate_vrs_override
+  validate_tournament_previews_override
   validate_telegram_proxy_override
   validate_telegram_token_override
   validate_instagram_override

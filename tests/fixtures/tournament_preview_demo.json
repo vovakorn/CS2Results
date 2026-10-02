@@ -1,0 +1,22 @@
+{
+  "key": "demo-cs2-open-2026",
+  "name": "CS2 OPEN INTERNATIONAL 2026",
+  "start": "2026-10-02",
+  "end": "2026-10-08",
+  "prize_pool_usd": 1000000,
+  "locations": ["Копенгаген, Дания · Demo Arena"],
+  "participant_count": 16,
+  "teams": [],
+  "first_match_at": "2026-10-02T10:00:00+03:00",
+  "story": "Демонстрационная история: прошлый розыгрыш закончился решающей пятой картой. Новый турнир собирает 16 команд.",
+  "story_source_url": "https://example.org/history",
+  "stages": [
+    {"kind": "groups", "start": "2026-10-02", "end": "2026-10-05", "format_text": "Две группы GSL, BO3. По три команды выходят в плей-офф.", "card_summary": "GSL · BO3", "source_url": "https://example.org/rules"},
+    {"kind": "playoffs", "start": "2026-10-06", "end": "2026-10-08", "format_text": "Шесть команд, на выбывание. BO3, финал BO5.", "card_summary": "BO3 · финал BO5", "source_url": "https://example.org/rules"}
+  ],
+  "passport_source_url": "https://example.org/demo-event",
+  "participants_source_url": "https://api.pandascore.co/series/demo/tournaments",
+  "verified_at": "2026-10-01T09:00:00Z",
+  "fetched_at": "2026-10-01T09:00:00Z",
+  "warnings": []
+}

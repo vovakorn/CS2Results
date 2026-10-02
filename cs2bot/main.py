@@ -43,6 +43,7 @@ from .threads_publish import (
     threads_publishing_enabled,
 )
 from .logging_utils import log_event
+from .tournament_preview_job import run_preview_job
 from .media_cards import (
     MAX_RESULT_MATCHES,
     MAX_SCHEDULE_TOTAL_MATCHES,
@@ -60,6 +61,8 @@ from .media_cards import (
 )
 from .match_sources.config import (
     DISPLAY_TIMEZONE,
+    ENABLE_TOURNAMENT_PREVIEWS,
+    TOURNAMENT_PREVIEW_PROFILES_PATH,
     ENABLE_VRS,
     ENABLE_LIQUIPEDIA_FALLBACK,
     LIQUIPEDIA_API_KEY,
@@ -238,7 +241,8 @@ RUSSIAN_MONTHS = (
     "ноября",
     "декабря",
 )
-CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics"}
+CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics",
+                "tournament_preview", "preview_discovery"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -3016,14 +3020,19 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     test_run_id: str | None = None
     tournament_id: str | None = None
     tournament_name = "Турнир"
+    preview_key: str | None = None
     radar_card_variant = "auto"
     try:
         event = _unwrap_timer_event(event)
         if isinstance(event, dict):
             requested_job = event.get("job", "results")
             if requested_job not in CONTENT_JOBS:
-                raise ValueError("job must be results, schedule, schedule_reel, digest, radar, radar_discovery, or analytics")
+                raise ValueError("unsupported job")
             job = requested_job
+            if job == "tournament_preview":
+                preview_key = event.get("preview_key")
+                if not isinstance(preview_key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", preview_key):
+                    raise ValueError("preview_key is required")
             requested_test_run_id = event.get("test_run_id")
             if requested_test_run_id is not None:
                 if job not in {"schedule", "radar"}:
@@ -3087,6 +3096,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         log_event(logger, logging.WARNING, "invalid_request", error=_safe_error_message(exc))
         return _error_response(400, "invalid_request")
 
+    if job in {"tournament_preview", "preview_discovery"} and not dry_run and not ENABLE_TOURNAMENT_PREVIEWS:
+        return run_preview_job(preview_key, dry_run, sys.modules[__name__], context=context)
+
     if not dry_run:
         missing_config = []
         analytics_snapshot = job == "analytics" and (
@@ -3101,6 +3113,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             missing_config.append("object_storage_bucket")
         if job == "analytics":
             pass
+        elif job in {"tournament_preview", "preview_discovery"}:
+            if not LIQUIPEDIA_API_KEY:
+                missing_config.append("preview_source_credentials")
         elif retry_only:
             pass
         elif job in {"schedule", "schedule_reel", "digest", "radar", "radar_discovery"} and not PANDASCORE_API_TOKEN:
@@ -3122,6 +3137,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             )
             _notify_admin("configuration_invalid", "Конфигурация функции неполна.")
             return _error_response(503, "configuration_error")
+
+    if job in {"tournament_preview", "preview_discovery"}:
+        return run_preview_job(preview_key, dry_run, sys.modules[__name__], context=context)
 
     if job == "radar":
         assert tournament_id is not None

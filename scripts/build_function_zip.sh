@@ -12,6 +12,8 @@ mkdir -p "${BUILD_DIR}" "${DIST_DIR}"
 cp -R "${ROOT_DIR}/cs2bot" "${BUILD_DIR}/cs2bot"
 cp "${ROOT_DIR}/runtime.txt" "${BUILD_DIR}/runtime.txt"
 cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/requirements.txt"
+mkdir -p "${BUILD_DIR}/data"
+cp "${ROOT_DIR}/data/tournament_preview_profiles.json" "${BUILD_DIR}/data/tournament_preview_profiles.json"
 if [ "${XRAY_ENABLED:-0}" = "1" ]; then
   "${ROOT_DIR}/scripts/fetch_xray_core.sh"
   mkdir -p "${BUILD_DIR}/xray"
