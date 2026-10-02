@@ -2,7 +2,7 @@ import asyncio
 import io
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from cs2bot.match_sources.models import TournamentPlacement, TournamentVRSImpact
 from cs2bot.match_sources.vrs import VRSDataError, calculate_impacts, normalize_snapshot
@@ -63,24 +63,24 @@ def test_vrs_card_renders_snapshot_dates_and_change_signs(monkeypatch):
     ], before, after)
     drawn = []
     arrows = []
-    original = media_cards._centered_text
+    original = ImageDraw.ImageDraw.text
     original_arrow = media_cards._draw_vrs_rank_arrow
 
-    def capture_text(draw, center_x, y, text, font, fill):
-        drawn.append((text, font))
-        return original(draw, center_x, y, text, font, fill)
+    def capture_text(draw, xy, text, *args, **kwargs):
+        drawn.append((text, kwargs.get("font")))
+        return original(draw, xy, text, *args, **kwargs)
 
     def capture_arrow(draw, center_x, center_y, *, up, color):
         arrows.append((up, color))
         return original_arrow(draw, center_x, center_y, up=up, color=color)
 
-    monkeypatch.setattr(media_cards, "_centered_text", capture_text)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     monkeypatch.setattr(media_cards, "_draw_vrs_rank_arrow", capture_arrow)
     card = media_cards.render_tournament_vrs_cards("Test Tournament", impacts)[0]
     assert Image.open(io.BytesIO(card)).size == (1080, 1080)
     rendered_text = {text for text, _ in drawn}
     assert "VRS ПОСЛЕ ТУРНИРА" in rendered_text
-    assert "ДО 01.09.2026  |  ПОСЛЕ 08.09.2026" in rendered_text
+    assert "ДО 01.09.2026 · ПОСЛЕ 08.09.2026" in rendered_text
     assert {"+42", "-18", "0", "3", "2"} <= rendered_text
     assert arrows == [(True, media_cards.VRS_UP), (False, media_cards.VRS_DOWN)]
     for text, font in drawn:
@@ -196,14 +196,21 @@ def test_vrs_cards_reject_odd_team_count():
 
 @pytest.mark.parametrize("count", [2, 4, 6, 8])
 def test_vrs_table_uses_available_height(count, monkeypatch):
-    panels = []
+    panels, footer_tops = [], []
     original = media_cards._chamfered_panel
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(draw, xy, text, *args, **kwargs):
+        if str(text).startswith("ИСТОЧНИК:"):
+            footer_tops.append(draw.textbbox(xy, text, font=kwargs["font"])[1])
+        return original_text(draw, xy, text, *args, **kwargs)
 
     def capture_panel(draw, box, **kwargs):
         panels.append(box)
         return original(draw, box, **kwargs)
 
     monkeypatch.setattr(media_cards, "_chamfered_panel", capture_panel)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     impacts = [TournamentVRSImpact(
         placement=str(index + 1), team_name=f"Team {index + 1}", team_id=f"team-{index}",
         before_points=100, after_points=142, before_rank=index + 2, after_rank=index + 1,
@@ -214,5 +221,5 @@ def test_vrs_table_uses_available_height(count, monkeypatch):
     media_cards.render_tournament_vrs_cards("BLAST Open Porto", impacts)
     _, top, _, bottom = panels[0]
     assert top >= 340
-    assert bottom <= 946
+    assert footer_tops and bottom + 24 <= min(footer_tops)
     assert bottom - top >= (330 if count == 2 else 600)

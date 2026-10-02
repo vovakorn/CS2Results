@@ -7,6 +7,18 @@ Instagram delivery is an opt-in companion to Telegram.  It has independent
 Object Storage claims and processed markers, so a confirmed Telegram post does
 not mark an Instagram post as delivered (or vice versa).
 
+## Public media addresses
+
+Instagram PNG filenames contain the page index and full SHA-256 of their bytes:
+`instagram/<publication_key>/<index>-<sha256>.png`. Reel filenames use
+`instagram/<publication_key>/reel-<sha256>.mp4`. Threads uses the equivalent
+`threads/<publication_key>/<index>-<sha256>.png` path.
+
+The same bytes keep the same address on retry; changed bytes get a new address.
+This makes the one-year immutable cache policy safe for updated layouts.
+Publication IDs, delivery claims, processed markers and existing posts are not
+changed. Previous public objects are retained; they are not overwritten.
+
 ## Required resources
 
 Create a **separate** Object Storage bucket for public publication cards.  Do

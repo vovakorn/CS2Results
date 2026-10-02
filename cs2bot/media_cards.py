@@ -321,7 +321,15 @@ def _card_footer(draw, source="PANDASCORE", page_number=1, page_count=1):
     _aligned_text(draw, 1020, 1002, right, _font(28), CYAN, "right")
 
 
-def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None):
+def _shared_fixture_format(matches):
+    """Share a page format only when every fixture has the same known value."""
+    formats = {match.best_of for match in matches}
+    if len(formats) == 1 and (best_of := next(iter(formats))):
+        return f"BO{best_of}"
+    return ""
+
+
+def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, show_format=True):
     x0, y0, x1, y1 = box
     draw.rounded_rectangle(box, radius=18, fill=(*PANEL, 245))
     draw.line((x0, y0 + 18, x0, y1 - 18), fill=(*CYAN, 180), width=3)
@@ -339,14 +347,16 @@ def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None):
     value = time_label if time_label is not None else f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
     _centered_text_on_point(draw, (x0 + x1) // 2, round(center_y), value,
                             _font(64 if time_label is not None else 76), AMBER if time_label is not None else WHITE)
-    label = event or (f"BO{match.best_of}" if match.best_of else "")
+    match_format = f"BO{match.best_of}" if show_format and match.best_of else ""
+    # Keep the format visible even when a long event label is shortened.
+    label = " · ".join(part for part in (match_format, event) if part)
     if label:
         _draw_text_block(draw, (x0 + x1) // 2, y1 - 22, label.upper(), x1 - x0 - 70,
                          23 if _uses_cyrillic(label) else 28, display=_uses_cyrillic(label),
                          fill=MUTED, max_lines=1)
 
 
-def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None, value_label=None):
+def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None, value_label=None, show_format=True):
     x0, y0, x1, y1 = box
     draw.rounded_rectangle(box, radius=24, fill=(*PANEL, 240))
     center_x = (x0 + x1) // 2
@@ -373,7 +383,7 @@ def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None,
     value = value_label if value_label is not None else time_label if time_label is not None else f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
     _centered_text_on_point(draw, center_x, logo_y, value, _font(72 if value_label is not None else 104 if time_label is not None else 164),
                             AMBER if time_label is not None else WHITE)
-    if getattr(match, "best_of", None):
+    if show_format and getattr(match, "best_of", None):
         _centered_text_on_point(draw, center_x, logo_y + 92, f"BO{match.best_of}", _font(32), MUTED)
     if event:
         _draw_text_block(draw, center_x, y1 - 20, event.upper(), 860, 26,
@@ -808,6 +818,8 @@ def _schedule_match_event_label(match: UpcomingMatchNormalized) -> str:
 def _draw_schedule_header(canvas, draw, matches, local_now, page_number, page_count):
     event, logo_url = _schedule_tournament_header(matches)
     date = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
+    if shared_format := _shared_fixture_format(matches):
+        date += f" · {shared_format}"
     _card_header(canvas, draw, "МАТЧИ CS2 СЕГОДНЯ", event, date, logo_url)
 
 
@@ -846,12 +858,14 @@ def _schedule_time(match: UpcomingMatchNormalized, display_timezone: object) -> 
         return "—"
 
 
-def _draw_wide_schedule_match(canvas, draw, match, box, display_timezone):
-    _draw_fixture_hero(canvas, draw, match, box, time_label=_schedule_time(match, display_timezone))
+def _draw_wide_schedule_match(canvas, draw, match, box, display_timezone, *, show_format=True):
+    _draw_fixture_hero(canvas, draw, match, box, time_label=_schedule_time(match, display_timezone),
+                       show_format=show_format)
 
 
-def _draw_compact_schedule_match(canvas, draw, match, box, display_timezone):
-    _draw_fixture_row(canvas, draw, match, box, time_label=_schedule_time(match, display_timezone))
+def _draw_compact_schedule_match(canvas, draw, match, box, display_timezone, *, show_format=True):
+    _draw_fixture_row(canvas, draw, match, box, time_label=_schedule_time(match, display_timezone),
+                      show_format=show_format)
 
 
 def _radar_standing_entries(radar: TournamentRadar) -> list[tuple[int, str, str | None]]:
@@ -993,17 +1007,22 @@ def _draw_radar_bracket_match(canvas, draw, match, box, *, reference=""):
                    CYAN if index == 0 else AMBER, fallback)
         _draw_text_block(draw, x0 + 62, y, (name or "TBD").upper(), x1 - x0 - 78,
                          38, min_size=36, alignment="left")
-    reference += " · LIVE" if (match.status or "").casefold() == "running" else ""
-    _draw_text_block(draw, x0 + 16, y1 - 17, reference, x1 - x0 - 32, 22,
-                     display=True, alignment="left", fill=CYAN, max_lines=1)
+    if match.team1_name and match.team2_name:
+        reference = ""
+    labels = [reference] if reference else []
+    if (match.status or "").casefold() == "running":
+        labels.append("LIVE")
+    if labels:
+        _draw_text_block(draw, x0 + 16, y1 - 17, " · ".join(labels), x1 - x0 - 32, 22,
+                         display=True, alignment="left", fill=CYAN, max_lines=1)
 
 
-def _draw_radar_single_pair(canvas, draw, match, *, reference=""):
+def _draw_radar_single_pair(canvas, draw, match):
     _draw_fixture_hero(canvas, draw, match, _fixture_page_boxes(1)[0], value_label="VS")
     _draw_text_block(draw, 540, 448, _radar_round_label([match]) if match.round_name else "МАТЧ ТУРНИРА",
                      860, 24, display=True, fill=MUTED, max_lines=1)
-    reference += " · LIVE" if (match.status or "").casefold() == "running" else ""
-    _draw_text_block(draw, 540, 806, reference, 860, 22, display=True, fill=CYAN, max_lines=1)
+    if (match.status or "").casefold() == "running":
+        _draw_text_block(draw, 540, 806, "LIVE", 860, 22, display=True, fill=CYAN, max_lines=1)
 
 
 def _draw_radar_bracket(canvas, draw, matches, page_number, page_count, *, references=None):
@@ -1011,10 +1030,11 @@ def _draw_radar_bracket(canvas, draw, matches, page_number, page_count, *, refer
         _draw_text_block(draw, 540, 600, "СЕТКА ТУРНИРА ПОКА НЕ ОПУБЛИКОВАНА", 860, 32, display=True)
         return
     if len(matches) == 1 and _radar_has_only_confirmed_pairs(matches):
-        _draw_radar_single_pair(canvas, draw, matches[0], reference=(references or {}).get(matches[0].match_id, ""))
+        _draw_radar_single_pair(canvas, draw, matches[0])
         return
     columns, _ = _radar_bracket_columns(matches)
-    if len(columns) > 2 or any(len(column) > 3 for column in columns):
+    list_layout = len(columns) > 2 or any(len(column) > 3 for column in columns)
+    if list_layout:
         # A list of numbered slots keeps text readable for deep or uneven graphs.
         split = math.ceil(len(matches) / 2)
         columns = [list(matches[:split]), list(matches[split:])]
@@ -1029,17 +1049,18 @@ def _draw_radar_bracket(canvas, draw, matches, page_number, page_count, *, refer
         for i, node in enumerate(members):
             y0 = top + i * (height + 12)
             slots[node.match_id] = (x0, y0, x0 + width, y0 + height)
-    # Draw only genuine local forward links. Every other link remains explicit
-    # in the numbered predecessor references printed on the target slot.
-    for node in matches:
-        target = slots[node.match_id]
-        for parent_id in node.previous_match_ids:
-            parent = slots.get(parent_id)
-            if parent is not None and parent[0] < target[0]:
-                sx, sy = parent[2], (parent[1] + parent[3]) // 2
-                ex, ey = target[0], (target[1] + target[3]) // 2
-                mid = (sx + ex) // 2
-                draw.line((sx, sy, mid, sy, mid, ey, ex, ey), fill=(92, 135, 172, 200), width=2)
+    # Connectors clarify a compact bracket. In the numbered list, predecessor
+    # references carry the links without suggesting a bracket between columns.
+    if not list_layout:
+        for node in matches:
+            target = slots[node.match_id]
+            for parent_id in node.previous_match_ids:
+                parent = slots.get(parent_id)
+                if parent is not None and parent[0] < target[0]:
+                    sx, sy = parent[2], (parent[1] + parent[3]) // 2
+                    ex, ey = target[0], (target[1] + target[3]) // 2
+                    mid = (sx + ex) // 2
+                    draw.line((sx, sy, mid, sy, mid, ey, ex, ey), fill=(92, 135, 172, 200), width=2)
     for node in matches:
         _draw_radar_bracket_match(canvas, draw, node, slots[node.match_id],
                                  reference=(references or {}).get(node.match_id, ""))
@@ -1158,8 +1179,9 @@ def _winner_side(match: MatchNormalized) -> str | None:
     return "left" if match.score1 > match.score2 else "right"
 
 
-def _draw_wide_result_match(canvas, draw, match, box, *, show_tournament=True):
-    _draw_fixture_hero(canvas, draw, match, box, event=match.tournament_name if show_tournament else None)
+def _draw_wide_result_match(canvas, draw, match, box, *, show_tournament=True, show_format=True):
+    _draw_fixture_hero(canvas, draw, match, box, event=match.tournament_name if show_tournament else None,
+                       show_format=show_format)
 
 
 def _draw_compact_result_match(canvas, draw, match, box):
@@ -1802,14 +1824,19 @@ def render_results_card(matches, local_now, *, page_number=1, page_count=1):
     draw = ImageDraw.Draw(canvas, "RGBA")
     ordered = sorted(matches, key=lambda x: _fixture_timestamp(x.end_date or x.date or x.start_date or ""))
     events = list(dict.fromkeys(x.competition_key or x.tournament_name for x in ordered))
-    _card_header(canvas, draw, "ИТОГИ ДНЯ", events[0] if len(events) == 1 else "ТУРНИРЫ ДНЯ",
-                 f"{local_now.day} {MONTH_NAMES[local_now.month]}")
+    shared_format = _shared_fixture_format(ordered)
+    meta = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
+    if shared_format:
+        meta += f" · {shared_format}"
+    _card_header(canvas, draw, "ИТОГИ ДНЯ", events[0] if len(events) == 1 else "ТУРНИРЫ ДНЯ", meta)
     for match, box in zip(ordered, _fixture_page_boxes(len(ordered))):
         if len(ordered) == 1:
-            _draw_wide_result_match(canvas, draw, match, box, show_tournament=False)
+            _draw_wide_result_match(canvas, draw, match, box, show_tournament=False,
+                                    show_format=not shared_format)
         else:
             _draw_fixture_row(canvas, draw, match, box,
-                              event=match.tournament_name if len(events) > 1 else None)
+                              event=match.tournament_name if len(events) > 1 else None,
+                              show_format=not shared_format)
     sources = list(dict.fromkeys(x.source for x in ordered))
     _card_footer(draw, " / ".join(sources), page_number, page_count)
     return _as_png(canvas)
@@ -1837,14 +1864,15 @@ def render_schedule_card(matches, local_now, timezone_name, *, page_number=1, pa
     ordered = sorted(matches, key=lambda x: _fixture_timestamp(x.scheduled_at))
     _draw_schedule_header(canvas, draw, ordered, local_now, page_number, page_count)
     mixed = len({_schedule_tournament_key(x) for x in ordered}) > 1
+    show_format = not _shared_fixture_format(ordered)
     for match, box in zip(ordered, _fixture_page_boxes(len(ordered))):
         if len(ordered) == 1:
-            _draw_wide_schedule_match(canvas, draw, match, box, tz)
+            _draw_wide_schedule_match(canvas, draw, match, box, tz, show_format=show_format)
         elif mixed:
             _draw_fixture_row(canvas, draw, match, box, time_label=_schedule_time(match, tz),
-                              event=_schedule_match_event_label(match))
+                              event=_schedule_match_event_label(match), show_format=show_format)
         else:
-            _draw_compact_schedule_match(canvas, draw, match, box, tz)
+            _draw_compact_schedule_match(canvas, draw, match, box, tz, show_format=show_format)
     _card_footer(draw, "PANDASCORE", page_number, page_count)
     return _as_png(canvas)
 

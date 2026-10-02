@@ -740,7 +740,7 @@ def test_schedule_album_marks_page_number(drawn_text):
     media_cards.render_schedule_card([_upcoming(str(i)) for i in range(4)],
         media_cards.datetime.fromisoformat("2026-08-12T10:00:00+03:00"), "Europe/Moscow", page_number=2, page_count=2)
     values = [v for _, v, _, _ in drawn_text]
-    assert "12 АВГУСТА" in values
+    assert "12 АВГУСТА · BO3" in values
     assert "2/2" in values
 
 
@@ -1010,8 +1010,8 @@ def test_schedule_match_event_label_falls_back_to_tournament_name():
 def test_schedule_header_has_clear_type_event_date_hierarchy(drawn_text):
     media_cards.render_schedule_card([_upcoming()], media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"), "Europe/Moscow")
     values = {v: (xy, font) for xy, v, font, _ in drawn_text}
-    assert all(v in values for v in ["МАТЧИ CS2 СЕГОДНЯ", "BLAST BOUNTY 2026", "31 ИЮЛЯ"])
-    assert values["МАТЧИ CS2 СЕГОДНЯ"][0][1] < values["BLAST BOUNTY 2026"][0][1] < values["31 ИЮЛЯ"][0][1]
+    assert all(v in values for v in ["МАТЧИ CS2 СЕГОДНЯ", "BLAST BOUNTY 2026", "31 ИЮЛЯ · BO3"])
+    assert values["МАТЧИ CS2 СЕГОДНЯ"][0][1] < values["BLAST BOUNTY 2026"][0][1] < values["31 ИЮЛЯ · BO3"][0][1]
 
 
 @pytest.mark.parametrize("match_count", [1, 4, 10])
@@ -1106,9 +1106,9 @@ def test_ten_match_schedule_uses_readable_names_on_every_page(drawn_text):
 def test_compact_schedule_rows_remain_readable_across_page_sizes(monkeypatch, match_count):
     boxes = []
     original = media_cards._draw_compact_schedule_match
-    def capture(canvas, draw, match, box, tz):
+    def capture(canvas, draw, match, box, tz, **kwargs):
         boxes.append(box)
-        return original(canvas, draw, match, box, tz)
+        return original(canvas, draw, match, box, tz, **kwargs)
     monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture)
     media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(match_count)], media_cards.datetime.now(), "Europe/Moscow")
     assert len(boxes) == match_count
@@ -1118,9 +1118,9 @@ def test_compact_schedule_rows_remain_readable_across_page_sizes(monkeypatch, ma
 def test_ten_match_schedule_keeps_logos_inside_rows(monkeypatch):
     boxes, logos = [], []
     original = media_cards._draw_compact_schedule_match
-    def capture(c, d, match, box, tz):
+    def capture(c, d, match, box, tz, **kwargs):
         boxes.append(box)
-        return original(c, d, match, box, tz)
+        return original(c, d, match, box, tz, **kwargs)
     monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture)
     monkeypatch.setattr(media_cards, "_draw_logo", lambda c,d,center,diameter,*args: logos.append((center,diameter)))
     media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(10)], media_cards.datetime.now(), "Europe/Moscow")
