@@ -6,11 +6,13 @@ selected fixtures as the daily schedule, in chronological order.
 from __future__ import annotations
 
 import math
+import random
 import struct
 import subprocess
 import tempfile
 import time
 import wave
+from array import array
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +44,9 @@ from .media_cards import (
 REEL_SIZE = (1080, 1920)
 REEL_FPS = 24
 ANIMATION_FPS = 12
+REEL_LOGO_DIAMETER = 144
+REEL_BEAT_BPM = 150
+REEL_AUDIO_FADE_SECONDS = 0.25
 MAX_REEL_MATCHES = 20
 MATCHES_PER_SCENE = 4
 INTRO_SECONDS = 1.5
@@ -145,7 +150,7 @@ def _base() -> Image.Image:
     draw.line((90, 214, 415, 214), fill=(*CYAN, 230), width=6)
     draw.line((665, 214, 990, 214), fill=(*AMBER, 230), width=6)
     try:
-        _draw_channel_brand(image, draw, center_y=214, logo_diameter=116,
+        _draw_channel_brand(image, draw, center_y=214, logo_diameter=REEL_LOGO_DIAMETER,
                             label_center_y=310, label_size=44)
     except MediaCardError as exc:
         raise ScheduleReelError("Bundled channel logo is unavailable") from exc
@@ -287,26 +292,78 @@ def animated_scene_frames(scene, local_now, count, timezone_name, *, elapsed_bef
 
 
 def _write_original_loop(path: Path) -> None:
-    """Synthesize a quiet four-bar instrumental loop with seamless boundaries."""
+    """Synthesize a deterministic four-bar esports beat without external audio."""
     sample_rate = 48_000
-    duration = 8.0
-    samples = int(sample_rate * duration)
-    melody = (220.0, 261.63, 329.63, 293.66, 220.0, 261.63, 392.0, 329.63)
+    beat_seconds = 60 / REEL_BEAT_BPM
+    samples = round(sample_rate * beat_seconds * 16)
+    mix = array("f", [0.0]) * samples
+    noise = random.Random(20261003)
+
+    def instrument(kind: str, duration: float, frequency: float = 0) -> array:
+        signal = array("f")
+        previous_noise = 0.0
+        for index in range(round(sample_rate * duration)):
+            t = index / sample_rate
+            attack = min(1.0, t * 1200)
+            if kind == "kick":
+                phase = 2 * math.pi * (48 * t + 110 * (1 - math.exp(-t * 38)) / 38)
+                value = math.sin(phase) * math.exp(-t * 13)
+                value += noise.uniform(-1, 1) * .1 * math.exp(-t * 180)
+            elif kind == "snare":
+                value = (.72 * noise.uniform(-1, 1) + .28 * math.sin(2 * math.pi * 185 * t))
+                value *= math.exp(-t * 26)
+            elif kind == "hat":
+                current = noise.uniform(-1, 1)
+                value = (current - previous_noise) * .5 * math.exp(-t * 70)
+                previous_noise = current
+            elif kind == "bass":
+                phase = 2 * math.pi * frequency * t
+                value = (math.sin(phase) + .35 * math.sin(2 * phase) + .18 * math.sin(3 * phase))
+                value = math.tanh(value * 1.5) * math.exp(-t * 9)
+            else:  # Short minor-chord stab, not a repeating lead melody.
+                value = (math.sin(2 * math.pi * 146.832 * t)
+                         + .6 * math.sin(2 * math.pi * 174.614 * t)
+                         + .25 * math.sin(2 * math.pi * 293.664 * t))
+                value *= math.exp(-t * 23)
+            # Bring every hit back to zero before wrapping its tail around the loop.
+            signal.append(value * attack * min(1.0, (duration - t) * 200))
+        return signal
+
+    def add(signal: array, step: int, gain: float) -> None:
+        start = round(step * beat_seconds / 4 * sample_rate)
+        for index, value in enumerate(signal):
+            position = (start + index) % samples
+            mix[position] += value * gain
+
+    kick = instrument("kick", .38)
+    snare = instrument("snare", .18)
+    hat = instrument("hat", .055)
+    bass = {root: instrument("bass", .22, root) for root in (36.708, 43.654)}
+    stab = instrument("stab", .14)
+    for bar in range(4):
+        offset = bar * 16
+        for step in (0, 3, 6, 8, 10):
+            add(kick, offset + step, .78 if step in (0, 8) else .6)
+        for step in (4, 12):
+            add(snare, offset + step, .58)
+        for step in range(0, 16, 2):
+            add(hat, offset + step, .15 if step % 4 else .11)
+        for step in ((13, 14, 15) if bar == 3 else (7, 15)):
+            add(hat, offset + step, .09)
+        for step in (1, 5, 7, 9, 13, 15):
+            root = 43.654 if bar == 3 and step >= 13 else 36.708
+            add(bass[root], offset + step, .32)
+        for step in (2, 11):
+            add(stab, offset + step, .12)
+
     with wave.open(str(path), "wb") as stream:
         stream.setnchannels(1)
         stream.setsampwidth(2)
         stream.setframerate(sample_rate)
         chunk = bytearray()
         for index in range(samples):
-            t = index / sample_rate
-            beat = int(t * 2) % len(melody)
-            phase = (t * 2) % 1
-            envelope = min(1.0, phase * 16) * max(0.0, 1 - phase ** 1.6)
-            bass = 0.17 * math.sin(2 * math.pi * (melody[beat] / 2) * t) * envelope
-            bell = 0.095 * math.sin(2 * math.pi * melody[beat] * t) * envelope
-            air = 0.025 * math.sin(2 * math.pi * 440 * t) * (1 - phase) ** 3
-            edge = min(1.0, t * 8, (duration - t) * 8)
-            value = max(-1.0, min(1.0, (bass + bell + air) * edge))
+            # Soft limiting leaves headroom for AAC rather than clipping peaks.
+            value = .82 * math.tanh(mix[index] * 1.4)
             chunk.extend(struct.pack("<h", int(value * 32767)))
             if len(chunk) >= 48_000:
                 stream.writeframes(chunk)
@@ -363,6 +420,9 @@ def render_schedule_reel(
             "-stream_loop", "-1", "-i", str(audio_path),
             "-vf", f"fps={REEL_FPS},fade=t=in:st=0:d=0.22,fade=t=out:st={total_seconds - 0.22:.2f}:d=0.22,format=yuv420p",
             "-map", "0:v:0", "-map", "1:a:0", "-t", str(total_seconds),
+            "-af", (f"afade=t=in:st=0:d={REEL_AUDIO_FADE_SECONDS},"
+                    f"afade=t=out:st={total_seconds - REEL_AUDIO_FADE_SECONDS:.2f}:"
+                    f"d={REEL_AUDIO_FADE_SECONDS}"),
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "25", "-pix_fmt", "yuv420p",
             "-r", str(REEL_FPS), "-threads", "1", "-c:a", "aac", "-b:a", "128k",
             "-ar", "48000", "-movflags", "+faststart", str(output),
