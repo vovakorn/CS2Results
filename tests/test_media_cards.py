@@ -301,11 +301,23 @@ def test_tournament_standings_reject_odd_team_count():
         media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)
 
 
-def test_tournament_standings_use_subtle_podium_colors_for_top_four():
+def test_tournament_standings_use_bronze_only_for_third_or_shared_third_fourth():
     assert media_cards._standings_row_color("1") == media_cards.STANDINGS_GOLD
     assert media_cards._standings_row_color("2") == media_cards.STANDINGS_SILVER
+    assert media_cards._standings_row_color("3") == media_cards.STANDINGS_BRONZE
+    assert media_cards._standings_row_color("4") == media_cards.WHITE
     assert media_cards._standings_row_color("3–4") == media_cards.STANDINGS_BRONZE
     assert media_cards._standings_row_color("3-4") == media_cards.STANDINGS_BRONZE
+
+
+@pytest.mark.parametrize("placement,has_medal", [("3", True), ("4", False),
+                                                ("3–4", True), ("3-4", True)])
+def test_standings_medal_respects_separate_and_shared_places(placement, has_medal):
+    from PIL import ImageDraw
+    canvas = Image.new("RGBA", (300, 100), (0, 0, 0, 255))
+    media_cards._draw_standings_medal(canvas, ImageDraw.Draw(canvas), 146, 0,
+                                     placement, row_height=68)
+    assert (canvas.getpixel((146, 13)) != (0, 0, 0, 255)) == has_medal
 
 
 def test_tournament_standings_draws_metallic_podium_medals_and_a_distinct_header():

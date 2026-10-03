@@ -314,11 +314,11 @@ def _card_header(canvas, draw, title, tournament, meta="", tournament_logo_url=N
                          display=True, fill=MUTED, max_lines=1)
 
 
-def _card_footer(draw, source="PANDASCORE", page_number=1, page_count=1):
+def _card_footer(draw, source="PANDASCORE", page_number=1, page_count=1, *, accent=CYAN):
     _draw_text_block(draw, 60, 1018, f"ИСТОЧНИК: {source.upper()}", 730, 22,
                      display=True, fill=MUTED, alignment="left", max_lines=1)
     right = f"{page_number}/{page_count}" if page_count > 1 else "@CS2_RESULTS"
-    _aligned_text(draw, 1020, 1002, right, _font(28), CYAN, "right")
+    _aligned_text(draw, 1020, 1002, right, _font(28), accent, "right")
 
 
 def _shared_fixture_format(matches):
@@ -1323,28 +1323,65 @@ def can_render_final_card(match: MatchNormalized) -> bool:
     )
 
 
-def render_final_card(match: MatchNormalized) -> bytes:
+def _final_event_branding(match):
+    from .tournament_visuals import branding_for_match
+    return branding_for_match(match)
+
+
+def _branded_tournament_header(canvas, draw, tournament_name, branding, accent, *, label):
+    from .tournament_visuals import event_logo, add_event_watermark
+
+    logo = event_logo(branding, ASSET_DIR)
+    add_event_watermark(canvas, logo)
+    _draw_channel_logo(canvas, draw, (540, 90), 64)
+    draw.rounded_rectangle((70, 116, 340, 156), radius=9, fill=accent)
+    _draw_text_block(draw, 205, 136, label, 248, 24,
+                     display=True, fill=NAVY, max_lines=1)
+    title_width = 680 if logo is not None else 940
+    _draw_text_block(draw, 70, 230, tournament_name.upper(), title_width, 44,
+                     min_size=26, alignment="left", max_lines=2)
+    if logo is not None:
+        logo.thumbnail((220, 130), Image.Resampling.LANCZOS)
+        canvas.alpha_composite(logo, (round(890 - logo.width / 2), round(223 - logo.height / 2)))
+
+
+def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     """Render a deterministic 1080px final card with map scores and champion payout."""
     if not can_render_final_card(match):
         raise MediaCardError("Final card requires confirmed final maps and winner payout")
 
+    from .tournament_visuals import accent_color, add_event_glow
+
+    branding = branding if branding is not None else _final_event_branding(match)
+    accent = accent_color(branding) if branding is not None else FINAL_GOLD
     canvas = _background(
         RESULT_CARD_SIZE,
         header_accent_y=90,
-        header_accent_colors=(FINAL_GOLD, FINAL_GOLD),
-        header_foil=True,
+        header_accent_colors=(accent, accent),
+        header_foil=branding is None,
     ).convert("RGBA")
+    if branding is not None:
+        add_event_glow(canvas, accent)
     width = RESULT_CARD_SIZE[0]
     row_height = {3: 112, 4: 84, 5: 68}[len(match.maps)]
     table = (190, 510, 890, 510 + row_height * len(match.maps))
     prize_top = table[3] + 30
     prize = (190, prize_top, 890, prize_top + 86)
-    _draw_final_foil_panel(canvas, table)
+    if branding is None:
+        _draw_final_foil_panel(canvas, table)
+    else:
+        outline = tuple(round(channel * .65 + background * .35)
+                        for channel, background in zip(accent, PANEL))
+        _chamfered_panel(ImageDraw.Draw(canvas, "RGBA"), table, accent=outline)
     _draw_final_foil_panel(canvas, prize)
 
     draw = ImageDraw.Draw(canvas, "RGBA")
-    _card_header(canvas, draw, "ГРАНД-ФИНАЛ", match.tournament_name,
-                 title_fill=FINAL_GOLD, tournament_fill=FINAL_GOLD, foil=True)
+    if branding is None:
+        _card_header(canvas, draw, "ГРАНД-ФИНАЛ", match.tournament_name,
+                     title_fill=FINAL_GOLD, tournament_fill=FINAL_GOLD, foil=True)
+    else:
+        _branded_tournament_header(canvas, draw, match.tournament_name, branding, accent,
+                                   label="ГРАНД-ФИНАЛ")
 
     score = f"{match.score1}:{match.score2}"
     score_font = _font(150, display=True)
@@ -1363,13 +1400,13 @@ def render_final_card(match: MatchNormalized) -> bytes:
 
     x0, y0, x1, _ = table
     divider_x = (x0 + x1) // 2
-    draw.line((divider_x, y0 + 16, divider_x, table[3] - 16), fill=(*FINAL_GOLD, 180), width=2)
+    draw.line((divider_x, y0 + 16, divider_x, table[3] - 16), fill=(*accent, 180), width=2)
     map_size = {3: 44, 4: 40, 5: 36}[len(match.maps)]
     score_size = {3: 46, 4: 42, 5: 38}[len(match.maps)]
     for index, item in enumerate(match.maps):
         row_y = y0 + index * row_height
         if index:
-            draw.line((x0 + 18, row_y, x1 - 18, row_y), fill=(*FINAL_GOLD, 150), width=1)
+            draw.line((x0 + 18, row_y, x1 - 18, row_y), fill=(*accent, 150), width=1)
         text_y = row_y + max(14, (row_height - map_size) // 2 - 3)
         _centered_text(
             draw,
@@ -1381,7 +1418,7 @@ def render_final_card(match: MatchNormalized) -> bytes:
         )
     draw.line((divider_x, prize_top + 16, divider_x, prize_top + 70), fill=(*FINAL_GOLD, 180), width=2)
     amount = _format_usd(match.winner_prize_usd)
-    _card_footer(draw, "LIQUIPEDIA")
+    _card_footer(draw, "LIQUIPEDIA", accent=accent if branding is not None else CYAN)
 
     # Logos and names occupy separate rows and share the same team-column centre.
     # The plate shadow therefore cannot touch the lettering, even for long names.
@@ -1445,7 +1482,7 @@ def _standings_row_color(placement: str) -> tuple[int, int, int]:
         return STANDINGS_GOLD
     if placement == "2":
         return STANDINGS_SILVER
-    if placement in {"3", "4", "3-4", "3–4"}:
+    if placement in {"3", "3-4", "3–4"}:
         return STANDINGS_BRONZE
     return WHITE
 
@@ -1541,7 +1578,7 @@ def _draw_standings_medal(
         )
         return
 
-    is_single_place = placement in {"1", "2", "3", "4"}
+    is_single_place = placement in {"1", "2", "3"}
     if is_single_place and row_height > 68:
         badge_width = badge_height = 62 if prominent else 54
     elif not is_single_place and row_height > 68:
@@ -1612,10 +1649,22 @@ def _draw_standings_metal_text(
     canvas.alpha_composite(metal, (left, top))
 
 
-def _render_tournament_standings_page(tournament_name, placements, *, source_label, page_number, page_count):
-    canvas = _background(RESULT_CARD_SIZE, header_accent_y=90).convert("RGBA")
+def _render_tournament_standings_page(tournament_name, placements, *, source_label, page_number,
+                                      page_count, branding=None):
+    from .tournament_visuals import accent_color, add_event_glow
+
+    accent = accent_color(branding) if branding is not None else AMBER
+    canvas = _background(RESULT_CARD_SIZE, header_accent_y=90,
+                          header_accent_colors=(accent, accent) if branding is not None
+                          else (CYAN, AMBER)).convert("RGBA")
+    if branding is not None:
+        add_event_glow(canvas, accent)
     draw = ImageDraw.Draw(canvas, "RGBA")
-    _card_header(canvas, draw, "ИТОГИ ТУРНИРА", tournament_name)
+    if branding is None:
+        _card_header(canvas, draw, "ИТОГИ ТУРНИРА", tournament_name)
+    else:
+        _branded_tournament_header(canvas, draw, tournament_name, branding, accent,
+                                   label="ИТОГИ ТУРНИРА")
     header_height = 72
     champion_index = next((i for i, item in enumerate(placements) if item.placement == "1"), None)
     sparse = len(placements) < TOURNAMENT_STANDINGS_PER_CARD
@@ -1625,15 +1674,22 @@ def _render_tournament_standings_page(tournament_name, placements, *, source_lab
     else:
         top, row_heights = 342, [68] * len(placements)
     table = (64, top, 1016, top + header_height + sum(row_heights))
-    _chamfered_panel(draw, table, cut=20)
+    _chamfered_panel(draw, table, cut=20, accent=accent)
     x0, y0, x1, y1 = table
     place_divider, prize_divider = 228, 760
     header_points = [(x0 + 20, y0), (x1 - 20, y0), (x1, y0 + 20), (x1, y0 + header_height),
                      (x0, y0 + header_height), (x0, y0 + 20)]
-    draw.polygon(header_points, fill=(*STANDINGS_HEADER, 255))
-    draw.line(header_points + [header_points[0]], fill=(*STANDINGS_HEADER_LINE, 230), width=2)
+    header_color = STANDINGS_HEADER
+    line_color = STANDINGS_HEADER_LINE
+    if branding is not None:
+        header_color = tuple(round(channel * .12 + background * .88)
+                             for channel, background in zip(accent, PANEL))
+        line_color = tuple(round(channel * .55 + background * .45)
+                           for channel, background in zip(accent, PANEL))
+    draw.polygon(header_points, fill=(*header_color, 255))
+    draw.line(header_points + [header_points[0]], fill=(*line_color, 230), width=2)
     for divider in (place_divider, prize_divider):
-        draw.line((divider, y0 + 14, divider, y1 - 14), fill=(*STANDINGS_HEADER_LINE, 145), width=1)
+        draw.line((divider, y0 + 14, divider, y1 - 14), fill=(*line_color, 145), width=1)
     for x, value, width in [(146, "МЕСТО", 140), (270, "КОМАНДА", 470), (888, "ПРИЗОВЫЕ", 230)]:
         _draw_text_block(draw, x, y0 + 36, value, width, 27, display=True,
                          alignment="left" if value == "КОМАНДА" else "center", max_lines=1)
@@ -1659,7 +1715,8 @@ def _render_tournament_standings_page(tournament_name, placements, *, source_lab
         _draw_text_block(draw, 888, center_y, amount, 230, 42 if sparse else 38, min_size=30,
                          fill=color, max_lines=2)
         row_top += row_height
-    _card_footer(draw, source_label, page_number, page_count)
+    _card_footer(draw, source_label, page_number, page_count,
+                  accent=accent if branding is not None else CYAN)
     return _as_png(canvas)
 
 
@@ -1667,6 +1724,8 @@ def render_tournament_standings_cards(
     tournament_name: str,
     placements: Sequence[TournamentPlacement],
     source_label: str = "Liquipedia",
+    *,
+    branding=None,
 ) -> list[bytes]:
     """Render every confirmed placement, splitting long tables into an album."""
     if not tournament_name.strip() or not source_label.strip() or not can_render_tournament_standings(placements):
@@ -1683,6 +1742,7 @@ def render_tournament_standings_cards(
             source_label=source_label,
             page_number=index,
             page_count=len(chunks),
+            branding=branding,
         )
         for index, chunk in enumerate(chunks, start=1)
     ]

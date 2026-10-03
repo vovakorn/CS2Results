@@ -45,6 +45,7 @@ from .threads_publish import (
 from .logging_utils import log_event
 from .tournament_preview_job import run_preview_job
 from .tournament_identity import event_for_match, event_key, find_event
+from .tournament_visuals import branding_for_match
 from .media_cards import (
     MAX_RESULT_MATCHES,
     MAX_SCHEDULE_TOTAL_MATCHES,
@@ -1118,6 +1119,7 @@ def _deliver_tournament_standings(
                 cards = render_tournament_standings_cards(
                     match.tournament_name,
                     match.tournament_placements,
+                    branding=branding_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH),
                 )
             except Exception as exc:
                 log_event(
@@ -1855,7 +1857,8 @@ def _deliver_social_tournament_standings(
         claim = asyncio.run(claim_content_delivery(content_uid))
         if claim is None:
             return "duplicate"
-        cards = render_tournament_standings_cards(match.tournament_name, match.tournament_placements)
+        cards = render_tournament_standings_cards(match.tournament_name, match.tournament_placements,
+            branding=branding_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH))
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         if platform == "threads":
             _publish_threads_chain(
