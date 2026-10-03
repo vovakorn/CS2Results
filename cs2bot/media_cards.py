@@ -1329,13 +1329,14 @@ def _final_event_branding(match):
 
 
 def _branded_tournament_header(canvas, draw, tournament_name, branding, accent, *, label):
-    from .tournament_visuals import event_logo
+    from .tournament_visuals import event_logo, add_event_watermark
 
-    _draw_channel_logo(canvas, draw, (540, 70), 64)
+    logo = event_logo(branding, ASSET_DIR)
+    add_event_watermark(canvas, logo)
+    _draw_channel_logo(canvas, draw, (540, 90), 64)
     draw.rounded_rectangle((70, 116, 340, 156), radius=9, fill=accent)
     _draw_text_block(draw, 205, 136, label, 248, 24,
                      display=True, fill=NAVY, max_lines=1)
-    logo = event_logo(branding, ASSET_DIR)
     title_width = 680 if logo is not None else 940
     _draw_text_block(draw, 70, 230, tournament_name.upper(), title_width, 44,
                      min_size=26, alignment="left", max_lines=2)
@@ -1481,7 +1482,7 @@ def _standings_row_color(placement: str) -> tuple[int, int, int]:
         return STANDINGS_GOLD
     if placement == "2":
         return STANDINGS_SILVER
-    if placement in {"3", "4", "3-4", "3–4"}:
+    if placement in {"3", "3-4", "3–4"}:
         return STANDINGS_BRONZE
     return WHITE
 
@@ -1577,7 +1578,7 @@ def _draw_standings_medal(
         )
         return
 
-    is_single_place = placement in {"1", "2", "3", "4"}
+    is_single_place = placement in {"1", "2", "3"}
     if is_single_place and row_height > 68:
         badge_width = badge_height = 62 if prominent else 54
     elif not is_single_place and row_height > 68:

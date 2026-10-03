@@ -31,6 +31,16 @@ def event_logo(branding, asset_dir):
         return None
 
 
+def add_event_watermark(image, logo):
+    """Add the same subdued logo backdrop without modifying the foreground logo."""
+    if logo is None:
+        return
+    watermark = logo.copy()
+    watermark.thumbnail((365, 440), Image.Resampling.LANCZOS)
+    watermark.putalpha(watermark.getchannel("A").point(lambda value: round(value * .065)))
+    image.alpha_composite(watermark, (690, 110))
+
+
 def add_event_glow(image, accent):
     glow = Image.new("RGBA", (180, 180))
     ImageDraw.Draw(glow).ellipse((50, -20, 210, 110), fill=(*accent, 44))

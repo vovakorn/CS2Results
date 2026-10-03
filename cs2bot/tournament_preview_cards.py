@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 
 from . import media_cards as media
 from .tournament_preview import TournamentPreview, date_range, prize_split_text
-from .tournament_visuals import accent_color, event_logo, add_event_glow
+from .tournament_visuals import accent_color, event_logo, add_event_glow, add_event_watermark
 
 SIZE = (1080, 1080)
 TEAMS_PER_PAGE = 16
@@ -63,19 +63,15 @@ def _canvas(preview, label):
     image = media._background(SIZE, header_accent_colors=(accent, accent)).convert("RGBA")
     add_event_glow(image, accent)
     logo = _event_logo(preview)
-    if logo is not None:
-        watermark = logo.copy()
-        watermark.thumbnail((365, 440), Image.Resampling.LANCZOS)
-        watermark.putalpha(watermark.getchannel("A").point(lambda value: round(value * .065)))
-        image.alpha_composite(watermark, (690, 110))
+    add_event_watermark(image, logo)
     draw = ImageDraw.Draw(image)
-    media._draw_channel_logo(image, draw, (540, 58), 56)
+    media._draw_channel_logo(image, draw, (540, 90), 64)
     if label == "ПЕРЕД СТАРТОМ":
-        draw.rounded_rectangle((70, 91, 340, 130), radius=9, fill=accent)
+        draw.rounded_rectangle((70, 116, 340, 156), radius=9, fill=accent)
         font = media._font(20, display=True)
         left, top, right, bottom = draw.textbbox((0, 0), label, font=font)
         position = ((70 + 340 - (right - left)) / 2 - left,
-                    (91 + 130 - (bottom - top)) / 2 - top)
+                    (116 + 156 - (bottom - top)) / 2 - top)
         draw.text(position, label, font=font, fill=media.NAVY)
     else:
         _text(draw, label, (70, 96, 800, 136), size=24, minimum=24, color=accent, display=True)
@@ -148,10 +144,10 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False)
     title = preview.name.upper()
     season = re.fullmatch(r"(.+?)\s+(SEASON\s+\d+)", title)
     if season:
-        _text(draw, season[1], (70, 151, title_right, 287), size=68, minimum=26, display=True)
+        _text(draw, season[1], (70, 176, title_right, 287), size=68, minimum=26, display=True)
         _text(draw, season[2], (70, 303, title_right, 359), size=44, minimum=26, display=True)
     else:
-        _text(draw, title, (70, 151, title_right, 359), size=68, minimum=26, display=True)
+        _text(draw, title, (70, 176, title_right, 359), size=68, minimum=26, display=True)
     if preview.branding.headline:
         _text(draw, preview.branding.headline, (70, 372, title_right, 417), size=28, minimum=16,
               color=media.WHITE)

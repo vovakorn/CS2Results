@@ -45,6 +45,39 @@ def test_missing_logo_keeps_brand_and_render_usable():
     assert image.size == (1080, 1080)
 
 
+def test_watermark_is_subtle_and_preserves_foreground_logo():
+    from cs2bot.tournament_visuals import add_event_watermark
+    canvas = Image.new("RGBA", (1080, 1080), (0, 0, 0, 255))
+    logo = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
+    original = logo.tobytes()
+    add_event_watermark(canvas, logo)
+    assert canvas.getpixel((700, 120)) == (17, 17, 17, 255)
+    assert canvas.getpixel((680, 120)) == (0, 0, 0, 255)
+    assert logo.tobytes() == original
+    add_event_watermark(canvas, None)
+
+
+def test_final_and_all_standings_pages_add_tournament_watermark(monkeypatch):
+    from cs2bot import tournament_visuals
+    calls = []
+    logo = Image.new("RGBA", (100, 100), (255, 255, 255, 255))
+    monkeypatch.setattr(tournament_visuals, "event_logo", lambda *args: logo.copy())
+    original = tournament_visuals.add_event_watermark
+
+    def capture(canvas, event_logo):
+        calls.append(event_logo.size)
+        original(canvas, event_logo)
+
+    monkeypatch.setattr(tournament_visuals, "add_event_watermark", capture)
+    brand = PreviewBranding(accent="#ED3D55")
+    for count in (3, 4, 5):
+        media_cards.render_final_card(final(count), branding=brand)
+    placements = [TournamentPlacement(placement=str(i + 1), team_name=f"Team {i}", prize_usd=10000)
+                  for i in range(16)]
+    media_cards.render_tournament_standings_cards("PGL Masters", placements, branding=brand)
+    assert calls == [(100, 100)] * 5
+
+
 @pytest.mark.parametrize("team_count", [2, 4, 10, 16])
 def test_standings_keep_every_team_and_brand_on_every_page(team_count, monkeypatch):
     placements = [TournamentPlacement(placement=str(i + 1), team_name=f"Team {i + 1}",

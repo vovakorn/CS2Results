@@ -225,6 +225,44 @@ def test_draft_is_explicit_keeps_review_age_limit_and_default_fetch_is_blocked(m
         check_profile(profile(approved=False, verified_at=NOW-timedelta(days=8)), NOW, allow_draft=True)
 
 
+@pytest.mark.parametrize("name", ["PGL Masters Bucharest 2026", "ESL Pro League Season 24",
+                                 "A Very Long Official Tournament Name Bucharest 2026"])
+def test_cover_badge_has_clearance_from_stripe_and_title(monkeypatch, name):
+    from cs2bot import tournament_preview_cards as cards
+    p = preview()
+    p.name = name
+    boxes = []
+    original_text = cards._text
+
+    def tracked(draw, text, box, **kwargs):
+        if text == name.upper() or text == "ESL PRO LEAGUE":
+            boxes.append(box)
+        return original_text(draw, text, box, **kwargs)
+
+    monkeypatch.setattr(cards, "_text", tracked)
+    image = Image.open(io.BytesIO(cards.render_preview_cover(p))).convert("RGB")
+    assert image.size == (1080, 1080)
+    accent = cards._accent(p)
+    assert image.getpixel((100, 100)) != accent
+    assert image.getpixel((100, 120)) == accent
+    assert boxes[0][1] >= 176  # 20 px below the badge's bottom edge.
+
+
+def test_series_channel_logo_is_centered_on_header_stripe(monkeypatch):
+    from cs2bot import tournament_preview_cards as cards
+    from PIL import ImageDraw
+    positions = []
+    monkeypatch.setattr(media_cards, "_draw_channel_logo",
+                        lambda image, draw, center, diameter: positions.append((center, diameter)))
+    p = preview()
+    cards._canvas(p, "ПЕРЕД СТАРТОМ")
+    image = Image.new("RGBA", (1080, 1080))
+    for label in ("ГРАНД-ФИНАЛ", "ИТОГИ ТУРНИРА"):
+        media_cards._branded_tournament_header(image, ImageDraw.Draw(image), p.name,
+                                               p.branding, cards._accent(p), label=label)
+    assert positions == [((540, 90), 64)] * 3
+
+
 def test_missing_event_logo_uses_full_title_space_without_losing_passport(monkeypatch, tmp_path):
     from cs2bot import tournament_preview_cards as cards
     p = preview()
