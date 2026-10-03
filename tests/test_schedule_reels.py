@@ -123,6 +123,51 @@ def test_esports_beat_is_deterministic_loopable_and_has_headroom(tmp_path):
     assert abs(sum(values) / len(values)) < .01
 
 
+def test_minimal_beat_is_distinct_deterministic_and_loopable(tmp_path):
+    paths = [tmp_path / f"minimal-{index}.wav" for index in range(2)]
+    for path in paths:
+        schedule_reels._write_minimal_loop(path)
+    assert paths[0].read_bytes() == paths[1].read_bytes()
+    energetic = tmp_path / "esports.wav"
+    schedule_reels._write_original_loop(energetic)
+    assert paths[0].read_bytes() != energetic.read_bytes()
+    with wave.open(str(paths[0]), "rb") as stream:
+        assert stream.getframerate() == 48000 and stream.getnchannels() == 1
+        assert stream.getnframes() / 48000 == pytest.approx(16 * 60 / 120)
+        pcm = stream.readframes(stream.getnframes())
+    values = [item[0] / 32767 for item in struct.iter_unpack("<h", pcm)]
+    assert .35 < max(abs(value) for value in values) < .82
+    assert .06 < math.sqrt(sum(value * value for value in values) / len(values)) < .3
+    assert abs(values[-1] - values[0]) < .01
+    assert abs(sum(values) / len(values)) < .01
+
+
+def test_unknown_audio_style_is_rejected_before_encoding(monkeypatch):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Invalid audio style must not start rendering")
+    monkeypatch.setattr(schedule_reels, "storyboard", unexpected)
+    with pytest.raises(schedule_reels.ScheduleReelError, match="audio style"):
+        schedule_reels.render_schedule_reel(fixtures(1), NOW, audio_style="unknown")
+
+
+@pytest.mark.parametrize("style", [None, "esports", "minimal"])
+def test_audio_selection_preserves_default_and_changes_only_audio(monkeypatch, style):
+    calls = []
+    original_esports = schedule_reels._write_original_loop
+    original_minimal = schedule_reels._write_minimal_loop
+    def energetic(path):
+        calls.append("esports")
+        return original_esports(path)
+    def minimal(path):
+        calls.append("minimal")
+        return original_minimal(path)
+    monkeypatch.setattr(schedule_reels, "_write_original_loop", energetic)
+    monkeypatch.setattr(schedule_reels, "_write_minimal_loop", minimal)
+    kwargs = {} if style is None else {"audio_style": style}
+    assert b"ftyp" in schedule_reels.render_schedule_reel(fixtures(1), NOW, **kwargs)[:32]
+    assert calls == [style or "esports"]
+
+
 def test_encoder_fades_beat_in_and_out_without_changing_duration(monkeypatch):
     commands = []
     original = schedule_reels.subprocess.run

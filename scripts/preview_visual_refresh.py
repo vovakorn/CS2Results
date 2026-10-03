@@ -20,6 +20,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--encode-reel', action='store_true')
+    parser.add_argument('--audio-style', choices=('esports', 'minimal', 'both'), default='esports')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     m.fetch_team_logo = _synthetic_logo
@@ -87,8 +88,11 @@ def main():
         draw.text((x+8,y+8),label,font=m._font(18,display=True),fill=m.WHITE)
     sheet.save(args.output/'series.png')
     if args.encode_reel:
-        (args.output/'reel-demo.mp4').write_bytes(r.render_schedule_reel(fixtures[:4],now,
-            preview_watermark=True))
+        styles = ('esports', 'minimal') if args.audio_style == 'both' else (args.audio_style,)
+        for style in styles:
+            name = f'reel-{style}.mp4' if args.audio_style == 'both' else 'reel-demo.mp4'
+            (args.output/name).write_bytes(r.render_schedule_reel(fixtures[:4],now,
+                preview_watermark=True, audio_style=style))
     print(args.output.resolve())
 
 

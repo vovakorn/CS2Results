@@ -46,6 +46,7 @@ REEL_FPS = 24
 ANIMATION_FPS = 12
 REEL_LOGO_DIAMETER = 144
 REEL_BEAT_BPM = 150
+MINIMAL_BEAT_BPM = 120
 REEL_AUDIO_FADE_SECONDS = 0.25
 MAX_REEL_MATCHES = 20
 MATCHES_PER_SCENE = 4
@@ -372,6 +373,67 @@ def _write_original_loop(path: Path) -> None:
             stream.writeframes(chunk)
 
 
+def _write_minimal_loop(path: Path) -> None:
+    """Synthesize a sparse electronic beat: steady kick, warm bass, quiet hats."""
+    sample_rate = 48_000
+    beat_seconds = 60 / MINIMAL_BEAT_BPM
+    samples = round(sample_rate * beat_seconds * 16)
+    mix = array("f", [0.0]) * samples
+    noise = random.Random(20261004)
+
+    def instrument(kind: str, duration: float) -> array:
+        signal = array("f")
+        previous_noise = 0.0
+        for index in range(round(sample_rate * duration)):
+            t = index / sample_rate
+            if kind == "kick":
+                phase = 2 * math.pi * (52 * t + 65 * (1 - math.exp(-t * 45)) / 45)
+                value = math.sin(phase) * math.exp(-t * 15) * min(1.0, t * 1000)
+            elif kind == "bass":
+                phase = 2 * math.pi * 55 * t
+                value = (math.sin(phase) + .2 * math.sin(2 * phase))
+                value *= math.exp(-t * 7) * min(1.0, t * 60)
+            elif kind == "rim":
+                value = (.45 * math.sin(2 * math.pi * 1700 * t)
+                         + .25 * math.sin(2 * math.pi * 2600 * t)
+                         + .12 * noise.uniform(-1, 1))
+                value *= math.exp(-t * 85) * min(1.0, t * 1500)
+            else:
+                current = noise.uniform(-1, 1)
+                value = (current - previous_noise) * .5 * math.exp(-t * 95)
+                value *= min(1.0, t * 1500)
+                previous_noise = current
+            signal.append(value * min(1.0, (duration - t) * 200))
+        return signal
+
+    def add(signal: array, step: int, gain: float) -> None:
+        start = round(step * beat_seconds / 2 * sample_rate)
+        for index, value in enumerate(signal):
+            mix[(start + index) % samples] += value * gain
+
+    kick, bass = instrument("kick", .3), instrument("bass", .34)
+    rim, hat = instrument("rim", .065), instrument("hat", .045)
+    for beat in range(16):
+        add(kick, beat * 2, .82)
+        add(bass, beat * 2 + 1, .47)
+        add(hat, beat * 2 + 1, .075)
+        if beat % 2:
+            add(rim, beat * 2, .19)
+
+    with wave.open(str(path), "wb") as stream:
+        stream.setnchannels(1)
+        stream.setsampwidth(2)
+        stream.setframerate(sample_rate)
+        chunk = bytearray()
+        for value in mix:
+            chunk.extend(struct.pack("<h", int(.82 * math.tanh(value * 1.4) * 32767)))
+            if len(chunk) >= 48_000:
+                stream.writeframes(chunk)
+                chunk.clear()
+        if chunk:
+            stream.writeframes(chunk)
+
+
 def _ffmpeg_executable() -> str:
     try:
         import imageio_ffmpeg
@@ -387,8 +449,11 @@ def render_schedule_reel(
     timezone_name: str = "Europe/Moscow",
     *,
     preview_watermark: bool = False,
+    audio_style: str = "esports",
 ) -> bytes:
-    """Encode one complete MP4, using static scenes rather than frame buffers."""
+    """Encode complete cached scene frames with one of the original audio loops."""
+    if audio_style not in {"esports", "minimal"}:
+        raise ScheduleReelError("Unknown Reel audio style")
     scenes = storyboard(matches)
     total_seconds = sum(scene.duration for scene in scenes)
     with tempfile.TemporaryDirectory(prefix="cs2-reel-") as temp_dir:
@@ -412,7 +477,10 @@ def render_schedule_reel(
         concat_path = work / "scenes.ffconcat"
         concat_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
         audio_path = work / "original-loop.wav"
-        _write_original_loop(audio_path)
+        if audio_style == "minimal":
+            _write_minimal_loop(audio_path)
+        else:
+            _write_original_loop(audio_path)
         output = work / "schedule-reel.mp4"
         command = [
             _ffmpeg_executable(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
