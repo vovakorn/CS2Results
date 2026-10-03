@@ -142,12 +142,13 @@ def test_minimal_beat_is_distinct_deterministic_and_loopable(tmp_path):
     assert abs(sum(values) / len(values)) < .01
 
 
-def test_unknown_audio_style_is_rejected_before_encoding(monkeypatch):
+@pytest.mark.parametrize("style", ["unknown", "melodic", "original"])
+def test_unknown_audio_style_is_rejected_before_encoding(monkeypatch, style):
     def unexpected(*args, **kwargs):
         raise AssertionError("Invalid audio style must not start rendering")
     monkeypatch.setattr(schedule_reels, "storyboard", unexpected)
     with pytest.raises(schedule_reels.ScheduleReelError, match="audio style"):
-        schedule_reels.render_schedule_reel(fixtures(1), NOW, audio_style="unknown")
+        schedule_reels.render_schedule_reel(fixtures(1), NOW, audio_style=style)
 
 
 @pytest.mark.parametrize("style", [None, "esports", "minimal"])
