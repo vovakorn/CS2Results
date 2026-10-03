@@ -52,6 +52,18 @@ class PendingDelivery:
 
 
 @dataclass(frozen=True)
+class PendingLiquipediaFinal:
+    """A validated Liquipedia final held briefly for a matching PandaScore result."""
+
+    key: str
+    bridge_uid: str
+    match: MatchNormalized
+    created_at: str
+    status: str
+    created: bool = False
+
+
+@dataclass(frozen=True)
 class ThreadsChainAppend:
     tournament_key: str
     append_id: str
@@ -61,6 +73,7 @@ class ThreadsChainAppend:
 
 
 RESULT_OUTBOX_PREFIX = "outbox/results/"
+LIQUIPEDIA_FINAL_PENDING_PREFIX = "pending/liquipedia-finals/"
 VRS_SNAPSHOT_PREFIX = "vrs-snapshots/"
 TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
 CLAIM_CREATE_MAX_ATTEMPTS = 3
@@ -334,8 +347,80 @@ async def enqueue_result_delivery(
         return True
     except ClientError as exc:
         if _is_precondition_failed(exc):
+            if content_type == "result":
+                await _enrich_existing_result_delivery(
+                    match,
+                    channel_id,
+                    key=key,
+                    client=s3,
+                    bucket=bucket_name,
+                )
             return False
         raise StorageUnavailableError(f"result outbox write failed for {key}") from exc
+
+
+async def _enrich_existing_result_delivery(
+    match: MatchNormalized,
+    channel_id: str,
+    *,
+    key: str,
+    client: Any,
+    bucket: str,
+) -> bool:
+    """Replace a queued PandaScore result with its confirmed Liquipedia final data."""
+    if match.source != "liquipedia" or not match.final_identity_confirmed:
+        return False
+    try:
+        response = await asyncio.to_thread(client.get_object, Bucket=bucket, Key=key)
+        stream = response["Body"]
+        try:
+            payload = json.loads(stream.read())
+        finally:
+            stream.close()
+        existing = MatchNormalized.model_validate(payload["match"])
+        etag = response.get("ETag")
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return False
+        raise StorageUnavailableError("result outbox enrichment read failed") from exc
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise StorageUnavailableError("result outbox enrichment payload is invalid") from exc
+    if existing.source != "pandascore" or existing.match_uid != match.match_uid or not etag:
+        return False
+
+    claim_uid = channel_match_uid(match, channel_id)
+    try:
+        claim = await asyncio.to_thread(
+            client.head_object,
+            Bucket=bucket,
+            Key=claim_key(claim_uid),
+        )
+        if _object_metadata(claim).get("delivery-state") != "released":
+            return False
+    except ClientError as exc:
+        if not _is_not_found(exc):
+            raise StorageUnavailableError("result outbox enrichment claim check failed") from exc
+
+    payload["match"] = match.model_dump(mode="json")
+    try:
+        await asyncio.to_thread(
+            client.put_object,
+            Bucket=bucket,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            ContentType="application/json",
+            IfMatch=etag,
+        )
+        logger.info(
+            "event=liquipedia_final_outbox_enriched channel=%s match_uid=%s",
+            channel_id,
+            match.match_uid,
+        )
+        return True
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return False
+        raise StorageUnavailableError("result outbox enrichment write failed") from exc
 
 
 async def list_pending_result_deliveries(
@@ -742,7 +827,7 @@ async def is_match_processed(
     client: Any | None = None,
     bucket: str | None = None,
 ) -> bool:
-    for uid in dict.fromkeys((match.match_uid, match.legacy_match_uid)):
+    for uid in match.canonical_match_uid_candidates:
         if await is_processed(uid, client=client, bucket=bucket):
             return True
     return False
@@ -755,18 +840,220 @@ async def is_channel_processed(
     client: Any | None = None,
     bucket: str | None = None,
 ) -> bool:
-    identifiers = [channel_match_uid(match, channel_id), legacy_channel_match_uid(match, channel_id)]
+    identifiers = [
+        *(f"{safe_storage_part(channel_id)}_{uid}" for uid in match.canonical_match_uid_candidates),
+        legacy_channel_match_uid(match, channel_id),
+    ]
     if legacy_channel_name and legacy_channel_name != channel_id:
         identifiers.extend(
             [
-                channel_match_uid(match, legacy_channel_name),
+                *(f"{safe_storage_part(legacy_channel_name)}_{uid}" for uid in match.canonical_match_uid_candidates),
                 legacy_channel_match_uid(match, legacy_channel_name),
             ]
         )
     for uid in dict.fromkeys(identifiers):
         if await is_processed(uid, client=client, bucket=bucket):
+            if match.source == "liquipedia" and match.final_identity_confirmed and match.final_bridge_uid:
+                await _mark_final_bridge_processed(match, channel_id, client=client, bucket=bucket)
+            return True
+    bridge_uid = match.final_bridge_uid
+    if bridge_uid:
+        if await is_processed(f"{safe_storage_part(channel_id)}_{bridge_uid}", client=client, bucket=bucket):
+            logger.info(
+                "event=duplicate_prevented reason=final_bridge_alias channel=%s bridge_uid=%s",
+                channel_id,
+                bridge_uid,
+            )
             return True
     return False
+
+
+def _liquipedia_final_pending_key(bridge_uid: str) -> str:
+    return f"{LIQUIPEDIA_FINAL_PENDING_PREFIX}{safe_storage_part(bridge_uid)}.json"
+
+
+async def _read_pending_liquipedia_final(
+    key: str,
+    bridge_uid: str,
+    *,
+    client: Any,
+    bucket: str,
+) -> PendingLiquipediaFinal | None:
+    try:
+        response = await asyncio.to_thread(client.get_object, Bucket=bucket, Key=key)
+        stream = response["Body"]
+        try:
+            payload = json.loads(stream.read())
+        finally:
+            stream.close()
+        return PendingLiquipediaFinal(
+            key=key,
+            bridge_uid=bridge_uid,
+            match=MatchNormalized.model_validate(payload["match"]),
+            created_at=str(payload["created_at"]),
+            status=str(payload.get("status", "waiting")),
+        )
+    except ClientError as exc:
+        if _is_not_found(exc):
+            return None
+        raise StorageUnavailableError("Liquipedia final pending state read failed") from exc
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        logger.error(
+            "event=liquipedia_final_pending_invalid key=%s error_type=%s",
+            key,
+            type(exc).__name__,
+        )
+        raise StorageUnavailableError("Liquipedia final pending state is invalid") from exc
+
+
+async def get_or_create_pending_liquipedia_final(
+    match: MatchNormalized,
+    *,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> PendingLiquipediaFinal:
+    if match.source != "liquipedia" or not match.final_identity_confirmed or not match.final_bridge_uid:
+        raise ValueError("only confirmed Liquipedia finals can enter pending state")
+    s3, bucket_name = client or _client(), bucket or _bucket()
+    bridge_uid = match.final_bridge_uid
+    key = _liquipedia_final_pending_key(bridge_uid)
+    existing = await _read_pending_liquipedia_final(
+        key, bridge_uid, client=s3, bucket=bucket_name
+    )
+    if existing:
+        return existing
+    created_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
+    body = json.dumps(
+        {"version": 1, "match": match.model_dump(mode="json"), "created_at": created_at, "status": "waiting"},
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+    created = True
+    try:
+        await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=key,
+            Body=body,
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+    except ClientError as exc:
+        if not _is_precondition_failed(exc):
+            raise StorageUnavailableError("Liquipedia final pending state write failed") from exc
+        created = False
+    pending = await _read_pending_liquipedia_final(
+        key, bridge_uid, client=s3, bucket=bucket_name
+    )
+    if pending is None:
+        raise StorageUnavailableError("Liquipedia final pending state disappeared")
+    return PendingLiquipediaFinal(
+        key=pending.key,
+        bridge_uid=pending.bridge_uid,
+        match=pending.match,
+        created_at=pending.created_at,
+        status=pending.status,
+        created=created,
+    )
+
+
+async def mark_pending_liquipedia_final_ready(
+    pending: PendingLiquipediaFinal,
+    *,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> PendingLiquipediaFinal:
+    if pending.status == "ready":
+        return pending
+    s3, bucket_name = client or _client(), bucket or _bucket()
+    body = json.dumps(
+        {
+            "version": 1,
+            "match": pending.match.model_dump(mode="json"),
+            "created_at": pending.created_at,
+            "status": "ready",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    ).encode("utf-8")
+    try:
+        await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=pending.key,
+            Body=body,
+            ContentType="application/json",
+        )
+    except ClientError as exc:
+        raise StorageUnavailableError("Liquipedia final pending promotion failed") from exc
+    return PendingLiquipediaFinal(
+        key=pending.key,
+        bridge_uid=pending.bridge_uid,
+        match=pending.match,
+        created_at=pending.created_at,
+        status="ready",
+        created=pending.created,
+    )
+
+
+async def clear_pending_liquipedia_final(
+    bridge_uid: str,
+    *,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> None:
+    s3, bucket_name = client or _client(), bucket or _bucket()
+    key = _liquipedia_final_pending_key(bridge_uid)
+    try:
+        await asyncio.to_thread(s3.delete_object, Bucket=bucket_name, Key=key)
+    except ClientError as exc:
+        raise StorageUnavailableError("Liquipedia final pending state cleanup failed") from exc
+
+
+async def _mark_final_bridge_processed(
+    match: MatchNormalized,
+    channel_id: str,
+    *,
+    client: Any | None = None,
+    bucket: str | None = None,
+) -> None:
+    bridge_uid = match.final_bridge_uid
+    if not bridge_uid:
+        return
+    s3, bucket_name = client or _client(), bucket or _bucket()
+    uid = f"{safe_storage_part(channel_id)}_{bridge_uid}"
+    key = processed_key(uid)
+    payload = {
+        "match_uid": uid,
+        "bridge_uid": bridge_uid,
+        "source": match.source,
+        "channel_id": channel_id,
+        "tournament_name": match.tournament_name,
+        "team1_name": match.team1_name,
+        "team2_name": match.team2_name,
+        "score1": match.score1,
+        "score2": match.score2,
+        "processed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    try:
+        await asyncio.to_thread(
+            s3.put_object,
+            Bucket=bucket_name,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            ContentType="application/json",
+            IfNoneMatch="*",
+        )
+        logger.info(
+            "event=final_identity_alias_written channel=%s bridge_uid=%s",
+            channel_id,
+            bridge_uid,
+        )
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return
+        raise StorageUnavailableError("final bridge alias write failed") from exc
 
 
 async def claim_channel_delivery(
@@ -790,8 +1077,52 @@ async def claim_channel_delivery(
         return None
 
     uid = channel_match_uid(match, channel_id)
-    key = claim_key(uid)
     reference = now or datetime.now(timezone.utc)
+    candidate_uids = match.canonical_match_uid_candidates
+    for previous_uid in candidate_uids:
+        if previous_uid == match.match_uid:
+            continue
+        previous_key = claim_key(f"{safe_storage_part(channel_id)}_{previous_uid}")
+        try:
+            previous_claim = await asyncio.to_thread(
+                s3.head_object, Bucket=bucket_name, Key=previous_key
+            )
+        except ClientError as exc:
+            if _is_not_found(exc):
+                continue
+            raise StorageUnavailableError("previous identity claim check failed") from exc
+        metadata = _object_metadata(previous_claim)
+        state = metadata.get("delivery-state")
+        if state in DELIVERY_NON_RECLAIMABLE_STATES:
+            logger.info(
+                "event=duplicate_prevented reason=previous_identity_claim channel=%s match_uid=%s state=%s",
+                channel_id,
+                previous_uid,
+                state,
+            )
+            return None
+        if state == "sending":
+            try:
+                expiry = int(metadata.get("expires-at", "0"))
+            except (TypeError, ValueError):
+                expiry = 0
+            if expiry > int(reference.timestamp()):
+                logger.info(
+                    "event=duplicate_prevented reason=previous_identity_lease channel=%s match_uid=%s",
+                    channel_id,
+                    previous_uid,
+                )
+                return None
+        elif state != "released":
+            # An unknown legacy claim state is ambiguous; fail closed.
+            logger.warning(
+                "event=previous_identity_claim_blocked channel=%s match_uid=%s reason=unknown_state",
+                channel_id,
+                previous_uid,
+            )
+            return None
+
+    key = claim_key(uid)
     expires_at = reference + timedelta(seconds=DELIVERY_CLAIM_TTL_SECONDS)
     claim_id = uuid.uuid4().hex
     body = json.dumps(
@@ -1216,6 +1547,8 @@ async def mark_channel_processed(
     except ClientError as exc:
         logger.error('storage_error="put_object failed" key="%s" error="%s"', key, exc)
         raise StorageUnavailableError(f"put_object failed for {key}") from exc
+    if match.source == "liquipedia" and match.final_identity_confirmed:
+        await _mark_final_bridge_processed(match, channel_name, client=s3, bucket=bucket_name)
 
 
 async def mark_content_processed(

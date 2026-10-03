@@ -906,6 +906,7 @@ def _can_publish_tournament_standings(match: MatchNormalized) -> bool:
     return (
         match.source == "liquipedia"
         and match.is_final
+        and match.final_identity_confirmed
         and bool(match.tournament_parent)
         and can_render_tournament_standings(match.tournament_placements)
     )
@@ -987,6 +988,8 @@ def _capture_preview_vrs_baseline(profile, preview, *, dry_run: bool = False) ->
 def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
     if not ENABLE_VRS or not match.is_final or not match.tournament_placements:
         return False
+    if match.source == "liquipedia" and not match.final_identity_confirmed:
+        return False
     tournament_id = _vrs_tournament_id(match)
     if not tournament_id:
         log_event(logger, logging.WARNING, "vrs_publication_skipped", match_uid=match.match_uid, reason="missing_tournament_id")
@@ -1019,7 +1022,7 @@ def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_nam
 
 def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], channel_name: str) -> str:
     impacts = pending.vrs_impacts
-    if not can_render_tournament_vrs(impacts):
+    if (pending.match.source == "liquipedia" and not pending.match.final_identity_confirmed) or not can_render_tournament_vrs(impacts):
         asyncio.run(delete_result_delivery(pending))
         log_event(logger, logging.WARNING, "vrs_outbox_discarded", match_uid=pending.match.match_uid, reason="incomplete_data")
         return "duplicate"
@@ -1942,7 +1945,7 @@ def _deliver_social_tournament_vrs(
     uncertain_error: type[Exception],
 ) -> str:
     impacts = pending.vrs_impacts
-    if not can_render_tournament_vrs(impacts):
+    if (pending.match.source == "liquipedia" and not pending.match.final_identity_confirmed) or not can_render_tournament_vrs(impacts):
         asyncio.run(delete_result_delivery(pending))
         return "duplicate"
     content_uid = f"tournament-vrs-v1:{platform}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"

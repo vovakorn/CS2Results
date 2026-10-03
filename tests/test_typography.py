@@ -170,7 +170,7 @@ def test_every_template_has_a_centered_emblem_and_readable_name_below_it(monkeyp
     elif template == "context":
         m.render_schedule_context_covers([upcoming()], NOW)
     elif template == "final":
-        m.render_final_card(result(source="liquipedia", is_final=True,
+        m.render_final_card(result(source="liquipedia", is_final=True, final_identity_confirmed=True,
             winner_prize_usd=500000, maps=[MapResult(name=n, score1=a, score2=b)
                 for n,a,b in [("Mirage",13,9),("Nuke",9,13),("Ancient",13,8)]]))
     else:

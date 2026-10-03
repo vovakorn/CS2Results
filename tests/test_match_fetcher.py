@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -12,6 +13,8 @@ from cs2bot.match_sources.models import (
     SourceUnavailableError,
     TournamentPlacement,
 )
+from cs2bot.media_cards import can_render_final_card, can_render_tournament_standings
+from cs2bot.match_sources import storage
 
 
 def _match(source="pandascore", match_id="1", tournament_name="IEM Cologne 2026"):
@@ -26,6 +29,135 @@ def _match(source="pandascore", match_id="1", tournament_name="IEM Cologne 2026"
         score2=1,
         location="Cologne, Germany",
     )
+
+
+def _incident_profile():
+    parent = "StarLadder_StarSeries_Fall_2026"
+    placements = [
+        TournamentPlacement(placement="1", team_name="Vitality", prize_usd=500_000),
+        TournamentPlacement(placement="2", team_name="Aurora Gaming", prize_usd=250_000),
+        TournamentPlacement(placement="3", team_name="FURIA", prize_usd=125_000),
+        TournamentPlacement(placement="4", team_name="MIBR", prize_usd=75_000),
+        TournamentPlacement(placement="5", team_name="MOUZ", prize_usd=30_000),
+        TournamentPlacement(placement="6", team_name="NRG", prize_usd=20_000),
+    ]
+    rows = [
+        ("Aurora Gaming", "Vitality", 1, 3, "2026-09-20T21:00:00Z", "aurora-vitality-final"),
+        ("Vitality", "FURIA", 2, 0, "2026-09-20T19:00:00Z", "vitality-furia"),
+        ("FURIA", "MIBR", 2, 0, "2026-09-20T17:00:00Z", "furia-mibr"),
+        ("Aurora Gaming", "Vitality", 2, 1, "2026-09-19T21:00:00Z", "aurora-vitality-earlier"),
+        ("FURIA", "MOUZ", 2, 1, "2026-09-19T19:00:00Z", "furia-mouz"),
+        ("NRG", "MIBR", 0, 2, "2026-09-19T17:00:00Z", "nrg-mibr"),
+    ]
+    matches = []
+    for team1, team2, score1, score2, date, match_id in rows:
+        matches.append(
+            MatchNormalized(
+                source="liquipedia",
+                match_id=match_id,
+                tournament_name="StarLadder StarSeries Fall 2026",
+                competition_key="StarLadder StarSeries Fall 2026",
+                tournament_parent=parent,
+                tournament_placements_complete=True,
+                tournament_section="Results",
+                # Simulates the unreliable {1, 2} lookup hint on every match.
+                final_candidate_hint=True,
+                tournament_placements=placements,
+                team1_name=team1,
+                team2_name=team2,
+                score1=score1,
+                score2=score2,
+                date=date,
+                start_date=date,
+                winner_prize_usd=500_000 if match_id == "aurora-vitality-final" else None,
+                maps=(
+                    [
+                        MapResult(name="Mirage", score1=13, score2=9),
+                        MapResult(name="Nuke", score1=10, score2=13),
+                        MapResult(name="Ancient", score1=8, score2=13),
+                    ]
+                    if match_id == "aurora-vitality-final"
+                    else []
+                ),
+            )
+        )
+    return matches
+
+
+def _incident_pandascore_matches(liquipedia_matches):
+    return [
+        MatchNormalized(
+            source="pandascore",
+            match_id=f"ps-{match.match_id}",
+            tournament_name="StarLadder — Fall 2026 — Playoffs",
+            competition_key="StarLadder Fall 2026",
+            competition_key_aliases=["Fall 2026"],
+            team1_name=match.team1_name,
+            team2_name=match.team2_name,
+            score1=match.score1,
+            score2=match.score2,
+            date=match.date,
+            start_date=match.start_date,
+        )
+        for match in liquipedia_matches
+    ]
+
+
+def test_final_dry_run_never_writes_pending_state(monkeypatch):
+    profile = _incident_profile()
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FINAL_CARDS", True)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_API_KEY", "configured")
+
+    async def fetch(*args):
+        return profile
+
+    async def unexpected_write(*args, **kwargs):
+        pytest.fail("dry-run must not mutate durable pending state")
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fetch)
+    for name in ("clear_pending_liquipedia_final", "get_or_create_pending_liquipedia_final", "mark_pending_liquipedia_final_ready"):
+        monkeypatch.setattr(match_fetcher, name, unexpected_write)
+    selected = asyncio.run(match_fetcher._apply_liquipedia_final_card_selection(
+        _incident_pandascore_matches(profile), 100, False, dry_run=True,
+    ))
+    assert selected[0].source == "liquipedia"
+    assert asyncio.run(match_fetcher._apply_liquipedia_final_card_selection([], 100, False, dry_run=True)) == []
+
+
+def test_final_does_not_replace_the_same_teams_at_another_event():
+    final = match_fetcher.confirm_liquipedia_final_candidates(_incident_profile())[0][0]
+    unrelated = _incident_pandascore_matches([final])[0].model_copy(update={
+        "competition_key": "Another Fall 2026", "tournament_name": "Another Fall 2026",
+    })
+    assert match_fetcher._replace_with_liquipedia_finals([unrelated], [final]) == [unrelated]
+
+
+def test_shared_first_place_cannot_confirm_a_grand_final():
+    profile = _incident_profile()
+    for match in profile:
+        match.tournament_placements[0].placement = "1–2"
+    confirmed, reasons = match_fetcher.confirm_liquipedia_final_candidates(profile)
+    assert confirmed == []
+    assert reasons[profile[0].match_id] == "incomplete_standings"
+
+
+class _MemoryS3:
+    def __init__(self):
+        self.objects = {}
+
+    def put_object(self, Bucket, Key, Body, ContentType, IfNoneMatch=None):
+        self.objects[Key] = Body
+        return {"ETag": '"memory"'}
+
+    def head_object(self, Bucket, Key):
+        if Key not in self.objects:
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+                "HeadObject",
+            )
+        return {"ETag": '"memory"', "Metadata": {}}
 
 
 def test_auto_uses_pandascore_when_it_returns_matches(monkeypatch):
@@ -47,6 +179,7 @@ def test_final_card_selection_replaces_primary_with_complete_liquipedia_final():
     final = _match(source="liquipedia", match_id="liquipedia-final")
     final.date = primary.date
     final.is_final = True
+    final.final_identity_confirmed = True
     final.winner_prize_usd = 500_000
     final.maps = [
         MapResult(name="Mirage", score1=13, score2=9),
@@ -56,7 +189,9 @@ def test_final_card_selection_replaces_primary_with_complete_liquipedia_final():
 
     selected = match_fetcher._replace_with_liquipedia_finals([primary], [final])
 
+    assert selected[0].source == "liquipedia"
     assert selected[0].match_id == final.match_id
+    assert selected[0].match_uid == primary.match_uid
     assert selected[0].vrs_baseline_id == "pandascore-tournament-42"
     assert selected[0].team1_logo_url == primary.team1_logo_url
     assert selected[0].team2_logo_url == primary.team2_logo_url
@@ -71,6 +206,7 @@ def test_final_card_selection_maps_logos_by_team_when_providers_reverse_sides():
     final.team1_name, final.team2_name = "FaZe", "NAVI"
     final.date = primary.date
     final.is_final = True
+    final.final_identity_confirmed = True
     final.winner_prize_usd = 500_000
     final.maps = [
         MapResult(name="Mirage", score1=13, score2=9),
@@ -103,13 +239,175 @@ def test_final_card_selection_uses_liquipedia_when_complete_standings_are_availa
     final = _match(source="liquipedia", match_id="liquipedia-final")
     final.date = primary.date
     final.is_final = True
+    final.final_identity_confirmed = True
     final.tournament_parent = "IEM/Cologne/2026"
     final.tournament_placements = [
         TournamentPlacement(placement="1", team_name="NAVI", prize_usd=400_000),
         TournamentPlacement(placement="2", team_name="FaZe", prize_usd=180_000),
     ]
 
-    assert match_fetcher._replace_with_liquipedia_finals([primary], [final]) == [final]
+    selected = match_fetcher._replace_with_liquipedia_finals([primary], [final])
+    assert selected[0].source == "liquipedia"
+    assert selected[0].final_identity_confirmed is True
+
+
+def test_starladder_incident_profile_confirms_only_the_actual_final(caplog):
+    caplog.set_level(logging.INFO)
+    liquipedia_matches = _incident_profile()
+    confirmed, rejected = match_fetcher.confirm_liquipedia_final_candidates(liquipedia_matches)
+
+    assert [match.match_id for match in confirmed] == ["aurora-vitality-final"]
+    assert len(rejected) == 5
+    pandascore_matches = _incident_pandascore_matches(liquipedia_matches)
+    selected = match_fetcher._replace_with_liquipedia_finals(pandascore_matches, confirmed)
+
+    assert len(selected) == 6
+    assert sum(match.source == "liquipedia" for match in selected) == 1
+    assert sum(match.source == "pandascore" for match in selected) == 5
+    final = next(match for match in selected if match.source == "liquipedia")
+    assert final.team1_name == "Aurora Gaming"
+    assert final.team2_name == "Vitality"
+    assert (final.score1, final.score2) == (1, 3)
+    assert final.final_identity_confirmed is True
+    assert liquipedia_matches[0].match_uid in final.canonical_match_uid_candidates
+    assert can_render_final_card(final) is True
+    assert can_render_tournament_standings(final.tournament_placements) is True
+    assert len(final.tournament_placements) == 6
+    assert rejected["aurora-vitality-earlier"] == "winner_not_first_place"
+    assert "event=liquipedia_final_identity_confirmed" in caplog.text
+    assert "reason=winner_not_first_place" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("change", "expected_reason"),
+    [
+        ("incomplete_table", "incomplete_standings"),
+        ("winner", "winner_not_first_place"),
+        ("not_latest", "not_latest_in_tournament_parent"),
+    ],
+)
+def test_liquipedia_final_requires_complete_winner_and_latest_evidence(change, expected_reason):
+    profile = _incident_profile()
+    final = profile[0]
+    if change == "incomplete_table":
+        for match in profile:
+            match.tournament_placements = match.tournament_placements[:2]
+    elif change == "winner":
+        final.score1, final.score2 = 3, 1
+    else:
+        profile.append(
+            final.model_copy(
+                update={
+                    "match_id": "later-competitive-match",
+                    "team1_name": "FURIA",
+                    "team2_name": "MIBR",
+                    "score1": 2,
+                    "score2": 1,
+                    "date": "2026-09-20T22:00:00Z",
+                    "start_date": "2026-09-20T22:00:00Z",
+                    "is_final": False,
+                    "final_identity_confirmed": False,
+                }
+            )
+        )
+
+    confirmed, rejected = match_fetcher.confirm_liquipedia_final_candidates(profile)
+
+    assert not any(match.match_id == "aurora-vitality-final" for match in confirmed)
+    assert rejected["aurora-vitality-final"] == expected_reason
+
+
+def test_liquipedia_first_final_waits_then_bridge_suppresses_late_pandascore_duplicate(monkeypatch, caplog):
+    caplog.set_level(logging.INFO)
+    profile = _incident_profile()
+    final = profile[0]
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FINAL_CARDS", True)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_API_KEY", "configured")
+
+    async def fetch(source, limit):
+        assert source == "liquipedia"
+        return profile
+
+    pending_state = {}
+
+    async def get_or_create(match, *, now=None):
+        bridge_uid = match.final_bridge_uid
+        pending = pending_state.get(bridge_uid)
+        if pending is None:
+            pending = SimpleNamespace(
+                key=f"pending/{bridge_uid}",
+                bridge_uid=bridge_uid,
+                match=match,
+                created_at=now.isoformat().replace("+00:00", "Z"),
+                status="waiting",
+                created=True,
+            )
+            pending_state[bridge_uid] = pending
+        else:
+            pending.created = False
+        return pending
+
+    async def mark_ready(pending):
+        pending.status = "ready"
+        return pending
+
+    async def clear_pending(bridge_uid):
+        pending_state.pop(bridge_uid, None)
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fetch)
+    monkeypatch.setattr(match_fetcher, "get_or_create_pending_liquipedia_final", get_or_create)
+    monkeypatch.setattr(match_fetcher, "mark_pending_liquipedia_final_ready", mark_ready)
+    monkeypatch.setattr(match_fetcher, "clear_pending_liquipedia_final", clear_pending)
+
+    seen_at = datetime(2026, 9, 20, 22, 0, tzinfo=timezone.utc)
+    early = asyncio.run(
+        match_fetcher._apply_liquipedia_final_card_selection([], 100, False, now=seen_at)
+    )
+    assert early == []
+
+    due = asyncio.run(
+        match_fetcher._apply_liquipedia_final_card_selection(
+            [], 100, False, now=seen_at + timedelta(minutes=11)
+        )
+    )
+    assert len(due) == 1
+    assert due[0].source == "liquipedia"
+
+    s3 = _MemoryS3()
+    published = []
+    asyncio.run(storage.mark_channel_processed(due[0], "global", client=s3, bucket="bucket"))
+    published.append(due[0].match_uid)
+
+    still_due = asyncio.run(
+        match_fetcher._apply_liquipedia_final_card_selection(
+            [], 100, False, now=seen_at + timedelta(minutes=12)
+        )
+    )
+    if still_due and not asyncio.run(
+        storage.is_channel_processed(still_due[0], "global", client=s3, bucket="bucket")
+    ):
+        asyncio.run(storage.mark_channel_processed(still_due[0], "global", client=s3, bucket="bucket"))
+        published.append(still_due[0].match_uid)
+
+    late_pandascore = _incident_pandascore_matches([final])[0].model_copy(
+        update={
+            "competition_key": "StarLadder Fall 2026",
+            "tournament_name": "StarLadder — Fall 2026 — Playoffs",
+        }
+    )
+    replaced = asyncio.run(
+        match_fetcher._apply_liquipedia_final_card_selection(
+            [late_pandascore], 100, False, now=seen_at + timedelta(minutes=13)
+        )
+    )
+    assert replaced[0].source == "liquipedia"
+    assert replaced[0].match_uid == late_pandascore.match_uid
+    assert asyncio.run(
+        storage.is_channel_processed(replaced[0], "global", client=s3, bucket="bucket")
+    ) is True
+    assert len(published) == 1
+    assert "event=liquipedia_final_pending_created" in caplog.text
+    assert "resolution=wait_elapsed" in caplog.text
 
 
 def test_liquipedia_shadow_timeout_does_not_block_primary_results(monkeypatch, caplog):

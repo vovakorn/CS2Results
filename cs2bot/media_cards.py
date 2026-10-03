@@ -1397,6 +1397,7 @@ def can_render_final_card(match: MatchNormalized) -> bool:
     """Require explicit final metadata and complete, source-confirmed display data."""
     return (
         match.is_final
+        and (match.source != "liquipedia" or match.final_identity_confirmed)
         and match.winner_prize_usd is not None
         and 3 <= len(match.maps) <= 5
         and all(item.score1 is not None and item.score2 is not None for item in match.maps)

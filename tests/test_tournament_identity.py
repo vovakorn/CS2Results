@@ -26,7 +26,7 @@ def event(tmp_path, monkeypatch):
 
 def match(source="pandascore", stage="41"):
     return MatchNormalized(source=source, match_id="one", tournament_name="Test 2026", team1_name="NAVI",
-        team2_name="FaZe", score1=3, score2=1, best_of=5, is_final=True, end_date="2026-10-08T20:00:00Z",
+        team2_name="FaZe", score1=3, score2=1, best_of=5, is_final=True, final_identity_confirmed=True, end_date="2026-10-08T20:00:00Z",
         source_refs=SourceReferences(serie_id="7", tournament_id=stage) if source == "pandascore" else None,
         tournament_parent="Test/2026" if source == "liquipedia" else None,
         tournament_placements=[TournamentPlacement(placement="1", team_name="NAVI"), TournamentPlacement(placement="2", team_name="FaZe")])

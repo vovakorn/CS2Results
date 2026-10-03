@@ -107,7 +107,7 @@ def _normalize_games(value: Any) -> list[MapResult]:
 
 
 def _is_grand_final(section: Any, opponents: Any = None) -> bool:
-    """Accept an explicit final stage or explicit first/second-place opponents."""
+    """Return a lookup hint only; neither the stage nor placements confirm a final."""
     value = _optional_text(section)
     if value:
         normalized = value.casefold().replace("-", " ")
@@ -176,7 +176,8 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         tournament_tier_type=_optional_text(item.get("liquipediatiertype")),
         publisher_tier=_optional_text(item.get("publishertier")),
         tournament_section=_optional_text(item.get("section")),
-        is_final=_is_grand_final(item.get("section"), opponents),
+        final_candidate_hint=_is_grand_final(item.get("section"), opponents),
+        is_final=False,
         team1_name=str(team1),
         team2_name=str(team2),
         score1=score1,
@@ -283,6 +284,20 @@ def _tournament_placements_from_response(data: Any) -> list[TournamentPlacement]
     return placements if 2 <= len(placements) <= 64 and len(placements) % 2 == 0 else []
 
 
+def _has_complete_tournament_placements(
+    data: Any,
+    placements: list[TournamentPlacement],
+) -> bool:
+    return (
+        isinstance(data, dict)
+        and isinstance(data.get("result"), list)
+        and len(data["result"]) < 100
+        and len(data["result"]) == len(placements)
+        and 4 <= len(placements) <= 64
+        and all(item.prize_usd is not None for item in placements)
+    )
+
+
 def _winner_prize_from_tournament_placements(
     match: MatchNormalized,
     placements: list[TournamentPlacement],
@@ -306,7 +321,7 @@ async def _fetch_tournament_placements(
     session: aiohttp.ClientSession,
     *,
     parent: str,
-) -> list[TournamentPlacement]:
+) -> tuple[list[TournamentPlacement], bool]:
     url = f"{source_config.LIQUIPEDIA_API_BASE_URL.rstrip('/')}/placement"
     params = {
         "wiki": source_config.LIQUIPEDIA_WIKI,
@@ -319,7 +334,10 @@ async def _fetch_tournament_placements(
         if response.status >= 300:
             raise SourceUnavailableError(f"Liquipedia placement returned HTTP {response.status}")
         raw = await read_limited_response(response, source_config.MAX_SOURCE_RESPONSE_BYTES, "Liquipedia placement")
-    return _tournament_placements_from_response(json.loads(raw))
+    data = json.loads(raw)
+    placements = _tournament_placements_from_response(data)
+    complete = _has_complete_tournament_placements(data, placements)
+    return placements, complete
 
 
 async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
@@ -360,23 +378,40 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
                 for item in data.get("result", [])
                 if isinstance(item, dict) and item.get("match2id")
             }
+            parent_by_match: dict[str, str] = {}
+            candidate_parents: set[str] = set()
             for match in matches:
                 item = raw_matches.get(match.match_id or "")
                 parent = _optional_text(item.get("parent")) if item else None
-                if not match.is_final or not parent:
+                if not parent:
                     continue
+                match.tournament_parent = parent
+                parent_by_match[match.match_id or ""] = parent
+                if match.final_candidate_hint:
+                    candidate_parents.add(parent)
+            placements_by_parent: dict[str, tuple[list[TournamentPlacement], bool]] = {}
+            for parent in candidate_parents:
                 try:
-                    placements = await _fetch_tournament_placements(session, parent=parent)
-                    if placements:
-                        match.tournament_parent = parent
-                        match.tournament_placements = placements
-                        match.winner_prize_usd = _winner_prize_from_tournament_placements(match, placements)
+                    placements_by_parent[parent] = await _fetch_tournament_placements(
+                        session, parent=parent
+                    )
                 except Exception as exc:
                     logger.warning(
-                        "source=liquipedia standings_unavailable match_id=%s error_type=%s",
-                        match.match_id,
+                        "source=liquipedia standings_unavailable tournament_parent=%s error_type=%s",
+                        parent,
                         type(exc).__name__,
                     )
+                    placements_by_parent[parent] = ([], False)
+            for match in matches:
+                parent = parent_by_match.get(match.match_id or "")
+                if not parent:
+                    continue
+                placements, complete = placements_by_parent.get(parent, ([], False))
+                match.tournament_placements = placements
+                match.tournament_placements_complete = complete
+                match.winner_prize_usd = _winner_prize_from_tournament_placements(
+                    match, match.tournament_placements
+                )
     except SourceUnavailableError:
         raise
     except Exception as exc:

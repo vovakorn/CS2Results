@@ -97,7 +97,18 @@ def _tournament_name(item: dict[str, Any]) -> str | None:
 
 
 def _competition_key(item: dict[str, Any]) -> str | None:
-    return _name(item.get("serie")) or _name(item.get("league")) or _name(item.get("tournament"))
+    league = _name(item.get("league"))
+    serie = _name(item.get("serie"))
+    tournament = _name(item.get("tournament"))
+    if league and serie:
+        league_identity = MatchNormalized._identity_part(league)
+        serie_identity = MatchNormalized._identity_part(serie)
+        if league_identity in serie_identity:
+            return serie
+        if serie_identity in league_identity:
+            return league
+        return f"{league} {serie}"[:300]
+    return serie or league or tournament
 
 
 def _tournament_logo_url(item: dict[str, Any]) -> str | None:
@@ -211,6 +222,9 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
         tournament_name=tournament_name,
         tournament_logo_url=_tournament_logo_url(item),
         competition_key=_competition_key(item),
+        competition_key_aliases=[_name(item.get("serie"))]
+        if _name(item.get("serie")) and _name(item.get("serie")) != _competition_key(item)
+        else [],
         source_refs=_source_references(
             item,
             normalized_opponents[0][1],

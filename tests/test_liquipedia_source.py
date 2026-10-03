@@ -41,6 +41,13 @@ def _sample_response():
     }
 
 
+def test_partial_normalized_placement_response_is_not_complete():
+    from cs2bot.match_sources.models import TournamentPlacement
+    placements = [TournamentPlacement(placement=str(i), team_name=f"Team {i}", prize_usd=100) for i in range(1, 5)]
+    assert liquipedia_source._has_complete_tournament_placements({"result": [{}] * 4}, placements)
+    assert not liquipedia_source._has_complete_tournament_placements({"result": [{}] * 5}, placements)
+
+
 def test_liquipedia_normalizes_finished_offline_match():
     matches = liquipedia_source._normalize_raw_matches(_sample_response())
 
@@ -82,17 +89,23 @@ def test_liquipedia_accepts_explicit_grand_final_only():
     response = _sample_response()
     response["result"][0]["section"] = "Grand Final"
 
-    assert liquipedia_source._normalize_raw_matches(response)[0].is_final is True
+    match = liquipedia_source._normalize_raw_matches(response)[0]
+    assert match.final_candidate_hint is True
+    assert match.is_final is False
+    assert match.final_identity_confirmed is False
 
 
-def test_liquipedia_accepts_explicit_finalist_placements_in_generic_playoffs_section():
+def test_liquipedia_placement_pair_is_only_a_lookup_hint():
     response = _sample_response()
     opponents = json.loads(response["result"][0]["match2opponents"])
     opponents[0]["placement"] = 2
     opponents[1]["placement"] = 1
     response["result"][0]["match2opponents"] = json.dumps(opponents)
 
-    assert liquipedia_source._normalize_raw_matches(response)[0].is_final is True
+    match = liquipedia_source._normalize_raw_matches(response)[0]
+    assert match.final_candidate_hint is True
+    assert match.is_final is False
+    assert match.final_identity_confirmed is False
 
 
 def test_liquipedia_excludes_unplayed_map_slots_from_finished_final():
@@ -177,6 +190,22 @@ def test_liquipedia_ignores_showmatch_rows_and_sorts_tournament_standings():
         ("3-4", "Spirit"),
         ("3-4", "Vitality"),
     ]
+
+
+def test_liquipedia_only_marks_untruncated_four_team_standings_complete():
+    rows = [
+        {"placement": str(place), "opponentname": team, "prizemoney": str(1000 // place)}
+        for place, team in enumerate(("Vitality", "Aurora", "FURIA", "MIBR"), start=1)
+    ]
+    response = {"result": rows}
+    placements = liquipedia_source._tournament_placements_from_response(response)
+
+    assert liquipedia_source._has_complete_tournament_placements(response, placements) is True
+    truncated = {"result": rows + [{"placement": "W", "opponentname": f"showmatch-{i}"} for i in range(96)]}
+    assert liquipedia_source._has_complete_tournament_placements(
+        truncated,
+        liquipedia_source._tournament_placements_from_response(truncated),
+    ) is False
 
 
 def test_liquipedia_skips_match_not_confirmed_finished():

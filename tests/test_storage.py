@@ -44,6 +44,9 @@ from cs2bot.match_sources.storage import (
     release_threads_chain_append,
     block_threads_chain_append,
     restore_threads_chain_tail,
+    get_or_create_pending_liquipedia_final,
+    mark_pending_liquipedia_final_ready,
+    clear_pending_liquipedia_final,
     write_vrs_snapshot,
     read_vrs_snapshot,
 )
@@ -442,6 +445,42 @@ def test_result_outbox_keeps_standings_as_a_separate_delivery_type():
     assert pending[0].key.endswith("-tournament_standings.json")
 
 
+def test_confirmed_liquipedia_final_enriches_queued_pandascore_item_without_resetting_retry():
+    s3 = FakeS3()
+    primary = _match()
+    asyncio.run(enqueue_result_delivery(primary, "global", "Global", client=s3, bucket="bucket"))
+    queued = asyncio.run(list_pending_result_deliveries(client=s3, bucket="bucket"))[0]
+    queued = asyncio.run(
+        record_result_delivery_attempt(
+            queued,
+            client=s3,
+            bucket="bucket",
+            now=datetime(2026, 8, 28, 8, 5, tzinfo=timezone.utc),
+        )
+    )
+    final = primary.model_copy(
+        update={
+            "source": "liquipedia",
+            "match_id": "lp-final",
+            "competition_key": "IEM Cologne 2026",
+            "canonical_uid_override": primary.match_uid,
+            "final_identity_confirmed": True,
+            "is_final": True,
+            "winner_prize_usd": 500_000,
+        }
+    )
+
+    assert asyncio.run(
+        enqueue_result_delivery(final, "global", "Global", client=s3, bucket="bucket")
+    ) is False
+    enriched = asyncio.run(list_pending_result_deliveries(client=s3, bucket="bucket"))[0]
+
+    assert enriched.match.source == "liquipedia"
+    assert enriched.match.match_uid == primary.match_uid
+    assert enriched.attempt_count == 1
+    assert enriched.last_attempt_at == queued.last_attempt_at
+
+
 def test_result_outbox_prioritizes_never_attempted_and_least_recent_items():
     s3 = FakeS3()
     first = _match()
@@ -583,6 +622,117 @@ def test_channel_processed_uses_channel_specific_uid():
     uid = channel_match_uid(match, "global")
     assert uid.startswith("global_match_v1_")
     assert asyncio.run(is_processed(uid, client=s3, bucket="bucket")) is True
+
+
+def test_liquipedia_final_bridge_alias_suppresses_late_pandascore_duplicate(caplog):
+    caplog.set_level("INFO")
+    s3 = FakeS3()
+    liquipedia = _match().model_copy(
+        update={
+            "source": "liquipedia",
+            "match_id": "lp-final",
+            "tournament_name": "StarLadder StarSeries Fall 2026",
+            "competition_key": "StarLadder StarSeries Fall 2026",
+            "team1_name": "Aurora Gaming",
+            "team2_name": "Vitality",
+            "score1": 1,
+            "score2": 3,
+            "date": "2026-09-20T21:00:00Z",
+            "final_identity_confirmed": True,
+            "is_final": True,
+        }
+    )
+    pandascore = liquipedia.model_copy(
+        update={
+            "source": "pandascore",
+            "match_id": "ps-final",
+            "tournament_name": "StarLadder — Fall 2026 — Playoffs",
+            "competition_key": "StarLadder Fall 2026",
+        }
+    )
+    assert liquipedia.match_uid != pandascore.match_uid
+    assert asyncio.run(
+        is_channel_processed(pandascore, "global", client=s3, bucket="bucket")
+    ) is False
+
+    asyncio.run(mark_channel_processed(liquipedia, "global", client=s3, bucket="bucket"))
+
+    assert asyncio.run(
+        is_channel_processed(pandascore, "global", client=s3, bucket="bucket")
+    ) is True
+    assert "event=duplicate_prevented reason=final_bridge_alias" in caplog.text
+
+
+def test_claim_with_richer_competition_key_respects_old_nonreclaimable_claim():
+    s3 = FakeS3()
+    previous = _match().model_copy(
+        update={
+            "competition_key": "Fall 2026",
+            "date": "2026-09-20",
+            "team1_name": "Aurora Gaming",
+            "team2_name": "Vitality",
+            "score1": 1,
+            "score2": 3,
+        }
+    )
+    current = previous.model_copy(
+        update={
+            "competition_key": "StarLadder StarSeries Fall 2026",
+            "competition_key_aliases": ["Fall 2026"],
+        }
+    )
+    old_claim_key = claim_key(f"global_{previous.match_uid}")
+    s3.put_object(
+        Bucket="bucket",
+        Key=old_claim_key,
+        Body=b"{}",
+        ContentType="application/json",
+        Metadata={"delivery-state": "attempting", "expires-at": "0"},
+    )
+
+    claim = asyncio.run(claim_channel_delivery(current, "global", client=s3, bucket="bucket"))
+
+    assert claim is None
+
+
+def test_pending_liquipedia_final_has_waiting_and_ready_lifecycle():
+    s3 = FakeS3()
+    match = _match().model_copy(
+        update={
+            "source": "liquipedia",
+            "match_id": "lp-final",
+            "tournament_name": "StarLadder StarSeries Fall 2026",
+            "competition_key": "StarLadder StarSeries Fall 2026",
+            "team1_name": "Aurora Gaming",
+            "team2_name": "Vitality",
+            "score1": 1,
+            "score2": 3,
+            "date": "2026-09-20T21:00:00Z",
+            "final_identity_confirmed": True,
+            "is_final": True,
+        }
+    )
+    now = datetime(2026, 9, 20, 22, 0, tzinfo=timezone.utc)
+
+    first = asyncio.run(
+        get_or_create_pending_liquipedia_final(match, client=s3, bucket="bucket", now=now)
+    )
+    second = asyncio.run(
+        get_or_create_pending_liquipedia_final(
+            match, client=s3, bucket="bucket", now=now + timedelta(minutes=5)
+        )
+    )
+    ready = asyncio.run(
+        mark_pending_liquipedia_final_ready(second, client=s3, bucket="bucket")
+    )
+
+    assert first.created is True
+    assert first.status == "waiting"
+    assert second.created is False
+    assert second.created_at == first.created_at
+    assert ready.status == "ready"
+    asyncio.run(clear_pending_liquipedia_final(first.bridge_uid, client=s3, bucket="bucket"))
+    assert first.key not in s3.objects
 
 
 def test_channel_processed_accepts_legacy_source_specific_key():
