@@ -10,6 +10,8 @@ from PIL import Image, ImageDraw
 from . import media_cards as media
 from .tournament_preview import TournamentPreview, date_range, prize_split_text
 from .tournament_visuals import accent_color, event_logo, add_event_glow, add_event_watermark
+from .tournament_branding import resolve_branding
+from .tournament_theme_patterns import panel_color, preview_background
 
 SIZE = (1080, 1080)
 TEAMS_PER_PAGE = 16
@@ -60,7 +62,7 @@ def _event_logo(preview):
 
 def _canvas(preview, label):
     accent = _accent(preview)
-    image = media._background(SIZE, header_accent_colors=(accent, accent)).convert("RGBA")
+    image = preview_background(SIZE, preview.branding)
     add_event_glow(image, accent)
     logo = _event_logo(preview)
     add_event_watermark(image, logo)
@@ -78,9 +80,9 @@ def _canvas(preview, label):
     return image, draw
 
 
-def _panel(draw, box, accent):
-    outline = tuple(round(channel * .3 + background * .7) for channel, background in zip(accent, media.PANEL))
-    draw.rounded_rectangle(box, radius=22, fill=media.PANEL, outline=outline, width=2)
+def _panel(draw, box, accent, background=media.PANEL):
+    outline = tuple(round(channel * .3 + base * .7) for channel, base in zip(accent, background))
+    draw.rounded_rectangle(box, radius=22, fill=background, outline=outline, width=2)
 
 
 def _location_pin(image, position, accent):
@@ -132,8 +134,10 @@ def _footer(draw, demo, draft=False):
 
 
 def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False) -> bytes:
+    preview = preview.model_copy(update={"branding": resolve_branding(preview.branding, event_key=preview.key)})
     image, draw = _canvas(preview, "ПЕРЕД СТАРТОМ")
     accent = _accent(preview)
+    panel = panel_color(preview.branding, media.PANEL)
     logo = _event_logo(preview)
     title_right = 735 if logo is not None else 1010
     if logo is not None:
@@ -154,7 +158,7 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False)
     _text(draw, date_range(preview.start, preview.end), (70, 431, 1010, 488),
           size=44, minimum=30, color=accent)
 
-    _panel(draw, (70, 499, 590, 669), accent)
+    _panel(draw, (70, 499, 590, 669), accent, panel)
     _text(draw, "ПРИЗОВЫЕ", (94, 518, 566, 547), size=22, minimum=22,
           color=media.MUTED, display=True)
     money = f"${preview.prize_pool_usd:,}".replace(",", " ")
@@ -162,7 +166,7 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False)
     if preview.prize_money_usd is not None:
         split = prize_split_text(preview)
         _text(draw, split, (94, 633, 566, 660), size=18, minimum=14)
-    _panel(draw, (614, 499, 1010, 669), accent)
+    _panel(draw, (614, 499, 1010, 669), accent, panel)
     if preview.participant_count:
         _text(draw, "УЧАСТНИКИ", (640, 518, 985, 547), size=22, minimum=22,
               color=media.MUTED, display=True)
@@ -186,7 +190,7 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False)
     width = (940 - (len(preview.stages) - 1) * gap) / len(preview.stages)
     for index, stage in enumerate(preview.stages):
         x = 70 + index * (width + gap)
-        _panel(draw, (x, 810, x + width, 955), accent)
+        _panel(draw, (x, 810, x + width, 955), accent, panel)
         _text(draw, stage.label.upper(), (x + 18, 826, x + width - 18, 855),
               size=21, minimum=18, color=accent, display=True)
         _text(draw, date_range(stage.start, stage.end), (x + 18, 861, x + width - 18, 914),
@@ -205,6 +209,7 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False)
 
 
 def render_preview_cards(preview: TournamentPreview, *, demo=False, draft=False) -> list[bytes]:
+    preview = preview.model_copy(update={"branding": resolve_branding(preview.branding, event_key=preview.key)})
     cards = [render_preview_cover(preview, demo=demo, draft=draft)]
     for offset in range(0, len(preview.teams), TEAMS_PER_PAGE):
         teams = preview.teams[offset:offset + TEAMS_PER_PAGE]
@@ -223,7 +228,8 @@ def render_preview_cards(preview: TournamentPreview, *, demo=False, draft=False)
         for index, team in enumerate(teams):
             x = 70 + (index % columns) * (cell_width + gap)
             y = 250 + (index // columns) * (cell_height + gap)
-            _panel(draw, (x, y, x + cell_width, y + cell_height), accent)
+            _panel(draw, (x, y, x + cell_width, y + cell_height), accent,
+                   panel_color(preview.branding, media.PANEL))
             diameter = int(min(200, cell_width * .58, cell_height * .50))
             center = (int(x + cell_width / 2), int(y + 18 + diameter / 2))
             media._draw_logo(image, draw, center, diameter, team.name, team.logo_url,
