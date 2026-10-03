@@ -627,15 +627,22 @@ def render_schedule_reel(
         return data
 
 
-def probe_reel_runtime(local_now: datetime) -> dict[str, int]:
-    """Exercise the packaged FFmpeg on synthetic data without uploading media."""
+def probe_reel_runtime(local_now: datetime) -> dict[str, int | bool]:
+    """Exercise branded animation/FFmpeg on synthetic data without uploading media."""
     start = local_now.replace(hour=10, minute=0, second=0, microsecond=0)
     from datetime import timedelta
+    from .match_sources.config import TOURNAMENT_PREVIEW_PROFILES_PATH
+    from .match_sources.models import SourceReferences
+    from .tournament_preview import load_profiles
+
+    profile = next((profile for profile in load_profiles(TOURNAMENT_PREVIEW_PROFILES_PATH)
+                    if profile.pandascore_serie_id is not None), None)
 
     fixtures = [
         UpcomingMatchNormalized(
             match_id=f"probe-{index}",
             tournament_name="DEMO RUNTIME PROBE",
+            source_refs=SourceReferences(serie_id=str(profile.pandascore_serie_id)) if profile else None,
             team1_name=f"DEMO TEAM {index * 2 + 1}",
             team2_name=f"DEMO TEAM {index * 2 + 2}",
             scheduled_at=(start + timedelta(minutes=25 * index)).isoformat(),
@@ -648,6 +655,7 @@ def probe_reel_runtime(local_now: datetime) -> dict[str, int]:
         "render_ms": round((time.monotonic() - started) * 1000),
         "mp4_bytes": len(video),
         "duration_seconds": 29,
+        "tournament_theme": profile is not None,
     }
     try:
         import resource

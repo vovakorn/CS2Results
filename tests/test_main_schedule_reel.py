@@ -86,9 +86,33 @@ def test_existing_reel_state_is_not_rerendered(monkeypatch):
     monkeypatch.setattr(main, "fetch_upcoming_matches", fetched)
     monkeypatch.setattr(main, "_select_schedule_matches", lambda matches: matches)
     monkeypatch.setattr(main, "load_pending_reel", lambda day: state)
+    monkeypatch.setattr(main, "next_reel_audio_style", lambda *args: (_ for _ in ()).throw(AssertionError("changed sound on retry")))
     monkeypatch.setattr(main, "render_schedule_reel", lambda *args: (_ for _ in ()).throw(AssertionError("rerendered")))
     monkeypatch.setattr(main, "advance_pending_reel", lambda *args: "processing")
 
     response = main._handle_schedule_reel_job(False, None)
 
     assert json.loads(response["body"])["state"] == "processing"
+
+
+def test_new_reel_renders_and_persists_selected_sound(monkeypatch):
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "instagram_reels_enabled", lambda: True)
+    monkeypatch.setattr(main, "_local_day_window", lambda: (NOW, NOW, NOW))
+    async def fetched(*args):
+        return [match(0)]
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fetched)
+    monkeypatch.setattr(main, "_select_schedule_matches", lambda matches: matches)
+    monkeypatch.setattr(main, "load_pending_reel", lambda day: None)
+    monkeypatch.setattr(main, "next_reel_audio_style", lambda day: "minimal")
+    selected = []
+    monkeypatch.setattr(main, "render_schedule_reel", lambda *args, **kwargs: selected.append(kwargs["audio_style"]) or b"video")
+    monkeypatch.setattr(main, "upload_public_reel", lambda *args: "https://example.invalid/reel.mp4")
+    monkeypatch.setattr(main, "create_reel_container", lambda *args: "12345")
+    def save(day, container, count, **kwargs):
+        selected.append(kwargs["audio_style"])
+        return PendingReel(day, container, count, NOW.isoformat(), kwargs["audio_style"])
+    monkeypatch.setattr(main, "save_pending_reel", save)
+    monkeypatch.setattr(main, "advance_pending_reel", lambda *args: "processing")
+    assert main._handle_schedule_reel_job(False, None)["statusCode"] == 200
+    assert selected == ["minimal", "minimal"]

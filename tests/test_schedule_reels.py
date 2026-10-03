@@ -181,3 +181,15 @@ def test_encoder_fades_beat_in_and_out_without_changing_duration(monkeypatch):
     command = commands[0]
     assert command[command.index("-t") + 1] == "8.0"
     assert command[command.index("-af") + 1] == "afade=t=in:st=0:d=0.25,afade=t=out:st=7.75:d=0.25"
+def test_runtime_probe_exercises_bundled_tournament_brand_without_publication(monkeypatch):
+    from cs2bot import schedule_reels as renderer
+    calls = []
+    def render(matches, now, **kwargs):
+        calls.append((matches, kwargs))
+        assert renderer._resolve_reel_visuals(matches).shared is not None
+        return b"fake-mp4"
+    monkeypatch.setattr(renderer, "render_schedule_reel", render)
+    result = renderer.probe_reel_runtime(datetime(2026, 10, 3, 9, tzinfo=ZoneInfo("Europe/Moscow")))
+    assert result["tournament_theme"] is True
+    assert len(calls[0][0]) == 20
+    assert calls[0][1] == {"preview_watermark": True}
