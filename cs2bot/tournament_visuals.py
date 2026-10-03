@@ -47,14 +47,14 @@ def event_logo(branding, asset_dir):
         return None
 
 
-def add_event_watermark(image, logo):
+def add_event_watermark(image, logo, *, position=(690, 110), size=(365, 440), opacity=.065):
     """Add the same subdued logo backdrop without modifying the foreground logo."""
     if logo is None:
         return
     watermark = logo.copy()
-    watermark.thumbnail((365, 440), Image.Resampling.LANCZOS)
-    watermark.putalpha(watermark.getchannel("A").point(lambda value: round(value * .065)))
-    image.alpha_composite(watermark, (690, 110))
+    watermark.thumbnail(size, Image.Resampling.LANCZOS)
+    watermark.putalpha(watermark.getchannel("A").point(lambda value: round(value * opacity)))
+    image.alpha_composite(watermark, position)
 
 
 def add_event_glow(image, accent):
