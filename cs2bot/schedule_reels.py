@@ -34,11 +34,14 @@ from .media_cards import (
     _draw_logo,
     _draw_text_block,
     _uses_cyrillic,
+    _draw_fixture_hero,
+    _schedule_time,
 )
 
 
 REEL_SIZE = (1080, 1920)
 REEL_FPS = 24
+ANIMATION_FPS = 12
 MAX_REEL_MATCHES = 20
 MATCHES_PER_SCENE = 4
 INTRO_SECONDS = 1.5
@@ -62,6 +65,7 @@ class ReelScene:
     duration: float
     page: int = 0
     pages: int = 0
+    featured_match: UpcomingMatchNormalized | None = None
 
 
 def storyboard(matches: Sequence[UpcomingMatchNormalized]) -> tuple[ReelScene, ...]:
@@ -84,7 +88,7 @@ def storyboard(matches: Sequence[UpcomingMatchNormalized]) -> tuple[ReelScene, .
         for offset in range(0, len(ordered), MATCHES_PER_SCENE)
     )
     return (
-        ReelScene("intro", (), INTRO_SECONDS),
+        ReelScene("intro", (), INTRO_SECONDS, featured_match=ordered[0]),
         *middle,
         ReelScene("outro", (), OUTRO_SECONDS),
     )
@@ -203,6 +207,7 @@ def render_scene(
     scene: ReelScene, local_now: datetime, count: int,
     timezone_name: str = "Europe/Moscow", *, preview_watermark: bool = False,
     logo_deadline: float | None = None,
+    hide_matches: bool = False,
 ) -> Image.Image:
     try:
         tz = ZoneInfo(timezone_name)
@@ -211,17 +216,23 @@ def render_scene(
     image = _base()
     draw = ImageDraw.Draw(image, "RGBA")
     if scene.kind == "intro":
-        _center(draw, 650, "МАТЧИ CS2", _font(DISPLAY_FONT, 99), WHITE)
-        _center(draw, 790, "СЕГОДНЯ", _font(DISPLAY_FONT, 99), CYAN)
-        _center(draw, 990, f"{local_now.day} {MONTHS[local_now.month]}", _font(DISPLAY_FONT, 50), AMBER)
-        _center(draw, 1110, f"{count} {_match_noun(count).upper()}  ·  ВРЕМЯ МСК", _font(DISPLAY_FONT, 35), MUTED)
+        _heading(draw, local_now, count)
+        _center(draw, 650, "БЛИЖАЙШИЙ МАТЧ", _font(DISPLAY_FONT, 46), CYAN)
+        if scene.featured_match is not None:
+            _draw_fixture_hero(image, draw, scene.featured_match, (80, 760, 1000, 1250),
+                               time_label=_schedule_time(scene.featured_match, tz),
+                               logo_deadline=logo_deadline, subtle=True)
+        else:
+            _center(draw, 960, "МАТЧИ CS2 СЕГОДНЯ", _font(DISPLAY_FONT, 64), WHITE)
+        _center(draw, 1350, "ВРЕМЯ МСК", _font(DISPLAY_FONT, 35), MUTED)
     elif scene.kind == "matches":
         _heading(draw, local_now, count)
         card_height, gap = 250, 24
         group_height = len(scene.matches) * card_height + (len(scene.matches) - 1) * gap
         start_y = 550 + (1090 - group_height) // 2
         for index, match in enumerate(scene.matches):
-            _match_card(image, match, start_y + index * (card_height + gap), tz, logo_deadline)
+            if not hide_matches:
+                _match_card(image, match, start_y + index * (card_height + gap), tz, logo_deadline)
         draw = ImageDraw.Draw(image, "RGBA")
         _center(draw, 1640, f"{scene.page} / {scene.pages}  ·  ИСТОЧНИК: PANDASCORE", _font(DISPLAY_FONT, 25), MUTED)
     elif scene.kind == "outro":
@@ -236,6 +247,43 @@ def render_scene(
         draw.rounded_rectangle((238, 1770, 842, 1840), radius=20, fill=(127, 31, 31, 235))
         _center(draw, 1781, "ДЕМО · НЕ ПУБЛИКОВАТЬ", _font(DISPLAY_FONT, 30), WHITE)
     return image.convert("RGB")
+
+
+def _reveal_opacity(elapsed: float, index: int) -> float:
+    value = max(0.0, min(1.0, (elapsed - index * .16) / .22))
+    return value * value * (3 - 2 * value)
+
+
+def _progress(image: Image.Image, fraction: float) -> None:
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((98, 1672, 982, 1682), radius=5, fill=PANEL)
+    width = round(884 * max(0.0, min(1.0, fraction)))
+    if width:
+        draw.rounded_rectangle((98, 1672, 98 + width, 1682), radius=5, fill=CYAN)
+
+
+def animated_scene_frames(scene, local_now, count, timezone_name, *, elapsed_before,
+                          total_seconds, preview_watermark=False, logo_deadline=None):
+    """Reuse one raster per scene; fade cards in without repeated logo downloads."""
+    full = render_scene(scene, local_now, count, timezone_name,
+                        preview_watermark=preview_watermark, logo_deadline=logo_deadline)
+    background = (render_scene(scene, local_now, count, timezone_name,
+                   preview_watermark=preview_watermark, hide_matches=True)
+                  if scene.kind == "matches" else full)
+    frames = math.ceil(scene.duration * ANIMATION_FPS)
+    group_height = len(scene.matches) * 250 + max(0, len(scene.matches) - 1) * 24
+    top = 550 + (1090 - group_height) // 2
+    for index in range(frames):
+        elapsed = index / ANIMATION_FPS
+        frame = full.copy() if elapsed >= .75 or scene.kind != "matches" else background.copy()
+        if scene.kind == "matches" and elapsed < .75:
+            for row in range(len(scene.matches)):
+                y = top + row * 274
+                box = (97, y - 1, 984, y + 252)
+                opacity = _reveal_opacity(elapsed, row)
+                frame.paste(Image.blend(background.crop(box), full.crop(box), opacity), box)
+        _progress(frame, (elapsed_before + elapsed + 1 / ANIMATION_FPS) / total_seconds)
+        yield frame, min(1 / ANIMATION_FPS, scene.duration - elapsed)
 
 
 def _write_original_loop(path: Path) -> None:
@@ -290,16 +338,20 @@ def render_schedule_reel(
         work = Path(temp_dir)
         logo_deadline = time.monotonic() + 15
         concat_lines = ["ffconcat version 1.0"]
+        elapsed_before = 0.0
+        frame_index = 0
+        last_frame_name = None
         for index, scene in enumerate(scenes):
-            scene_path = work / f"scene-{index}.png"
-            render_scene(
-                scene, local_now, len(matches), timezone_name,
-                preview_watermark=preview_watermark,
-                logo_deadline=logo_deadline,
-            ).save(scene_path)
-            concat_lines.extend((f"file 'scene-{index}.png'", f"duration {scene.duration}"))
+            for frame, duration in animated_scene_frames(scene, local_now, len(matches), timezone_name,
+                    elapsed_before=elapsed_before, total_seconds=total_seconds,
+                    preview_watermark=preview_watermark, logo_deadline=logo_deadline):
+                last_frame_name = f"frame-{frame_index}.png"
+                frame.save(work / last_frame_name)
+                concat_lines.extend((f"file '{last_frame_name}'", f"duration {duration:.9f}"))
+                frame_index += 1
+            elapsed_before += scene.duration
         # Repeat the last still so the concat demuxer honours its duration.
-        concat_lines.append(f"file 'scene-{len(scenes) - 1}.png'")
+        concat_lines.append(f"file '{last_frame_name}'")
         concat_path = work / "scenes.ffconcat"
         concat_path.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
         audio_path = work / "original-loop.wav"

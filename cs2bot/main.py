@@ -1031,7 +1031,8 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
     confirmed = False
     try:
         text = format_tournament_vrs(pending.match.tournament_name, impacts)
-        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source) if TELEGRAM_MEDIA_CARDS else []
+        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source,
+            branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH)) if TELEGRAM_MEDIA_CARDS else []
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         if cards:
             try:
@@ -1954,7 +1955,8 @@ def _deliver_social_tournament_vrs(
         claim = asyncio.run(claim_content_delivery(content_uid))
         if claim is None:
             return "duplicate"
-        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source)
+        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source,
+            branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH))
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         if platform == "threads":
             _publish_threads_chain(
