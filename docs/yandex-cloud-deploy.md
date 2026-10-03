@@ -50,12 +50,14 @@ TELEGRAM_MEDIA_CARDS=0
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
+YC_EXPECTED_TRIGGER_COUNT=7 \
 YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
 YC_TELEGRAM_PROXY_SECRET_ID=<lockbox_secret_id> \
 YC_TELEGRAM_PROXY_SECRET_VERSION_ID=<pinned_version_id> \
 scripts/deploy_yandex_function.sh candidate
 
 YC_FUNCTION_ID=<function_id> \
+YC_EXPECTED_TRIGGER_COUNT=7 \
 YC_PROMOTE_APPROVED=1 \
 scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
 ```
@@ -168,10 +170,11 @@ VRS-альбом не создаётся.
 успешного promote: ежедневно в 18:00 МСК (`0 15 ? * * *`), только тег `production`,
 с тремя повторами через 30 секунд. После его создания ожидаемое число timer
 trigger — 7: `YC_EXPECTED_TRIGGER_COUNT=7`. Счётчик включает PAUSED timers:
-2 октября существуют пять ACTIVE и один PAUSED (радар); новый discovery даст
-семь всего и шесть ACTIVE. Радар не возобновляется при релизе превью.
-До выпуска этой версии production ещё сохраняет baseline через выключенный
-радар, поэтому новые турниры рискуют остаться без начального снимка.
+после релиза 2 октября существуют семь timers: шесть ACTIVE и один PAUSED (радар).
+Discovery `a1suf0l0l534jn9cfk80` включён; production `d4ectvltcablmvlapuqa`.
+Для всех последующих release-команд обязательно задавать
+`YC_EXPECTED_TRIGGER_COUNT=7` (базовое значение скрипта — 6).
+Радар не возобновлялся; начальный VRS сохраняется в анонсе.
 Дизайн, профили и ограничения:
 [`tournament-preview.md`](tournament-preview.md).
 
@@ -252,6 +255,7 @@ candidate-режим deploy-скрипта:
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
+YC_EXPECTED_TRIGGER_COUNT=7 \
 YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
 scripts/deploy_yandex_function.sh candidate
 ```
@@ -272,7 +276,7 @@ Smoke ограничен локальными тайм-аутами: по умо
 
 Базовая конфигурация содержит шесть timer trigger; радар PAUSED по сверке
 2 октября. Не возобновляйте его без отдельного решения. Preview discovery
-добавляется седьмым после согласованного релиза. Расписание задаётся в UTC; Москва
+добавлен седьмым в релизе 2 октября. Расписание задаётся в UTC; Москва
 круглый год использует UTC+3.
 
 Получение новых результатов — каждые 15 минут:
@@ -360,7 +364,7 @@ Instagram Reel расписания — каждый день в 06:15 UTC (09:1
 }
 ```
 
-Все шесть заданий используют атомарную дедупликацию. Обычный `results` сохраняет
+Все задания используют атомарную дедупликацию. Обычный `results` сохраняет
 нормализованные матчи в durable outbox, а `retry_only` обрабатывает эту очередь
 без повторного запроса источников. Расписание и итог получают отдельный ключ на
 календарный день и канал. Пустой выпуск не отправляется и не помечается
@@ -373,15 +377,23 @@ Release manifest хранит ID предыдущей и новой production-�
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
+YC_EXPECTED_TRIGGER_COUNT=7 \
 YC_ROLLBACK_APPROVED=1 \
 scripts/deploy_yandex_function.sh rollback dist/releases/<candidate_version_id>.json
 ```
 
 Команда отказывается работать, если текущий production не совпадает с candidate
 или предыдущей версией из manifest. Второй случай позволяет повторить проверку
-после прерванного rollback. После переноса тега она повторно проверяет тег, все шесть timer
+после прерванного rollback. После переноса тега она повторно проверяет тег, все семь timer
 trigger, production dry-run и startup-ошибки предыдущей версии. Реальная
 Telegram-публикация не выполняется.
+При откате на версию до PR #131 приостановите preview discovery
+`a1suf0l0l534jn9cfk80`: предыдущий код не поддерживает этот job. PAUSED timer
+продолжает входить в ожидаемый счётчик 7; baseline, claims и root не удаляются.
+Manifest релиза превью хранит отдельное доказательство EPL dry-run, а основной
+smoke использует непубликующий `analytics/import_metrics`, совместимый с обеими
+версиями. Его успешный dry-run подтверждён на production и rollback без
+переключения тега; откат здоровой production-версии не выполнялся.
 При откате на старый код, созданный до исправления dry-run алертов, сбой
 источника всё ещё может вызвать административный алерт этой старой версии.
 
@@ -423,7 +435,7 @@ yc serverless trigger update timer <trigger_name> \
 ### Read-only проверка
 
 ```bash
-YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
+YC_FUNCTION_ID=<function_id> YC_EXPECTED_TRIGGER_COUNT=7 scripts/deploy_yandex_function.sh check
 ```
 
 Команда проверяет каталог, production-тег, обязательные environment variables,
@@ -437,6 +449,7 @@ YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
+YC_EXPECTED_TRIGGER_COUNT=7 \
 YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket> \
 scripts/deploy_yandex_function.sh candidate
 ```
@@ -446,7 +459,7 @@ scripts/deploy_yandex_function.sh candidate
 1. Проверка чистоты Git working tree и однократная сборка ZIP.
 2. Проверка размера и SHA-256 до обращения к Cloud Functions.
 3. Проверка приватности package bucket и lifecycle.
-4. Read-only проверка production-конфигурации и всех шести таймеров, затем
+4. Read-only проверка production-конфигурации и всех семи таймеров, затем
    загрузка архива и создание версии с тегом `candidate`.
 5. Вызов candidate с `dry_run=true` и анализ startup-ошибок в логах.
 6. Сохранение manifest с Git SHA, SHA-256 архива, package object и ID обеих
@@ -458,6 +471,7 @@ scripts/deploy_yandex_function.sh candidate
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
+YC_EXPECTED_TRIGGER_COUNT=7 \
 YC_PROMOTE_APPROVED=1 \
 scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
 ```
@@ -472,10 +486,11 @@ Post-deploy smoke можно повторить отдельно:
 
 ```bash
 YC_FUNCTION_ID=<function_id> \
+YC_EXPECTED_TRIGGER_COUNT=7 \
 scripts/deploy_yandex_function.sh smoke dist/releases/<candidate_version_id>.json
 ```
 
-Успех: production-тег и все шесть timer trigger проверены, `statusCode=200`, тело
+Успех: production-тег и все семь timer trigger проверены, `statusCode=200`, тело
 содержит `dry_run=true`, в логах новой версии нет startup/import/runtime ошибок.
 Отправки и запись production-состояния не выполняются.
 
@@ -489,7 +504,7 @@ YC_ROLLBACK_TAG=rollback
 YC_DRY_RUN_PAYLOAD={"limit":1,"dry_run":true}
 YC_FUNCTION_PACKAGE_BUCKET=<private_package_bucket>
 YC_DIRECT_UPLOAD_MAX_BYTES=3500000
-YC_EXPECTED_TRIGGER_COUNT=6
+YC_EXPECTED_TRIGGER_COUNT=7
 YC_PACKAGE_LIFECYCLE_MAX_DAYS=30
 YC_RELEASE_DIR=dist/releases
 ```

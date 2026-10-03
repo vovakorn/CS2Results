@@ -8,7 +8,7 @@
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## Локальная работа 1–2 октября — превью турнира
+## Подготовка и выпуск 1–2 октября — превью турнира
 
 - В отдельной ветке `codex/tournament-preview` реализован Telegram-формат
   «Перед стартом», dry-run, чтение источников, PNG и отдельный discovery-job.
@@ -43,18 +43,16 @@ production и сверки фактического состояния. Теку
   его tail; результат до анонса остаётся в outbox. Для EPL проверены serie 11004
   и стадии 22017/22018. После изменений прошли 282 связанных теста и полный
   набор: 631 тест за 175,07 с. Локальный архив и ссылки документации проверены.
-- Готовая реализация сохранена в GitHub, ветка `codex/tournament-preview`.
-  Флаг выключен. CI, PR, merge, deploy, таймер и публикации ещё не выполнены;
-  2 октября пользователь разрешил общий release-цикл и первый выпуск EPL
-  во всех трёх сетях; подготовка релиза начата. Таймер радара останется PAUSED.
+- 2 октября пользователь разрешил общий release-цикл и первый выпуск EPL
+  во всех трёх сетях. PR #131 слит и выпущен; таймер радара сохранён PAUSED.
 - Preflight VRS обнаружил разные составы Johnny Speeds под одним названием в
   текущем официальном snapshot 7 сентября. Парсер сохраняет все составы со
   стабильными ID, не меняет уникальные прежние ID и блокирует неоднозначное
-  сопоставление итогового участника. Исправление включается в тот же PR #131.
+  сопоставление итогового участника. Исправление включено в PR #131.
   Все 401 строки реального snapshot разобраны, включая объявленные Valve
   частичные составы. 29 связанных проверок и полный набор 637 тестов
-  за 174,56 с прошли; CI пересчитывается для обновлённого PR.
-- Дизайн и контракт: `docs/tournament-preview.md`. Production-версия не менялась.
+  за 174,56 с прошли; CI Python 3.11/3.12 завершился успешно для этого исправления.
+- Дизайн и контракт: `docs/tournament-preview.md`. Факты релиза — в разделе ниже.
 
 ## История подготовки типографической итерации — 1–2 октября 2026
 
@@ -153,22 +151,53 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 2 октября 2026 в 09:52 МСК, версия
-  `d4efd7ffat05nrjpenu7` из Git `3013a2e` (PR #130).
-  Прежняя `d4eahib61k8opigb4cmt` закреплена для rollback.
+- Последний production-деплой: 2 октября 2026 в 16:30 МСК, версия
+  `d4ectvltcablmvlapuqa` из Git `e3271c3` (PR #131).
+  Прежняя `d4efd7ffat05nrjpenu7` закреплена для rollback.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
-- В production включены флаги `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
+- В production включён `ENABLE_TOURNAMENT_PREVIEWS=1`, сохранены `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
   `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
-- Шесть timer trigger вызывают тег `production`, а не `$latest`.
-  Повторная сверка 2 октября: пять ACTIVE; `cs2results-radar-discovery-12msk`
-  PAUSED. Авторадар не выпускается и не создаёт новые VRS baseline.
+- Семь timer trigger вызывают тег `production`, а не `$latest`.
+  Шесть ACTIVE; `cs2results-radar-discovery-12msk` PAUSED. Анонсы:
+  `cs2results-preview-discovery-18msk`, ID `a1suf0l0l534jn9cfk80`,
+  `0 15 ? * * *` (18:00 МСК), три повтора через 30 с.
+  Для всех следующих release-команд: `YC_EXPECTED_TRIGGER_COUNT=7`.
 - SHA-256 release-архива:
-  `1c5d569d03ad50b7e958f08999db7c065c2d1ef0a1b1561167fa594de0e0d087`.
+  `9ae20c6268166a1e97281d5e03c7f314a8f852e7a62c6a4cf08e24b3549646fc`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
+
+## Релиз 2 октября 2026 — анонсы, начальный VRS и корень Threads
+
+- PR #131, Git `e3271c3`; production `d4ectvltcablmvlapuqa`.
+  Полный локальный набор: 637 passed; CI Python 3.11/3.12, зависимости,
+  безопасность и сборка прошли. Один release-архив: 16 484 231 байт,
+  Linux Xray включён, исходники и SHA-256 сверены. Неодобренных профилей в zip нет.
+- Candidate и production smoke: `200`, `dry_run=true`, startup-ошибок нет.
+  Отдельный cloud EPL dry-run подтвердил 16 команд, два слайда и подписи
+  Telegram/Instagram/Threads 828/782/473 UTF-16 единицы.
+- Прежние environment (кроме одного нового флага), семь Lockbox references,
+  runtime, ресурсы, service account и concurrency проверены по отпечаткам.
+  Discovery добавлен седьмым; прежние таймеры не менялись, радар PAUSED.
+- Первый выпуск подтверждён: [Telegram](https://t.me/cs2_results/237),
+  [Instagram](https://www.instagram.com/p/Dd_migNiK3O/),
+  [Threads](https://www.threads.com/@cs2results/post/Dd_mnCACDhi).
+  Job: `200`, 3 sent, 0 delivery failures. Meta permalink прочитаны через API.
+- Object Storage подтвердил неизменный `before/initial.json` EPL на 401 команду:
+  `standings_global_2026_09_07.md:90b04a816d58fd6415b128817b3f2b5dfbb8ac1e`.
+  Threads root/tail — `18093589079643473`, reservation и blocked отсутствуют.
+  Повтор job: 0 новых постов, 3 duplicate; bytes baseline/root не изменились.
+- Read-only сверка 3 октября подтвердила ту же production-версию, семь timers,
+  PAUSED радар, неизменный начальный VRS и корень EPL без reservation/blocked.
+  Tail пока совпадает с root; последующие публикации ещё не подтверждены.
+- Первая реальная reply-цепочка во время турнира ещё требует наблюдения;
+  старые независимые посты не мигрировали. Основная рабочая папка не редактировалась.
+- В manifest сохранено отдельное доказательство EPL dry-run. Основной smoke
+  переведён на совместимый `analytics/import_metrics`; он прошёл на production
+  и предыдущем rollback-теге без переключения версии или публикаций.
 
 ## Релиз 2 октября 2026 — согласованные новые шаблоны
 

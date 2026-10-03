@@ -36,7 +36,7 @@
 - не помечает матч обработанным после публикации;
 - не знает о конкретных Telegram-каналах, кроме CLI debug-режима с `--channel`.
 
-## TournamentPreview (локальная версия)
+## TournamentPreview
 
 `TournamentPreview` содержит паспорт Liquipedia (`name`, `start`, `end`,
 `prize_pool_usd`, `locations`, `participant_count`), необязательное обогащение

@@ -1,8 +1,10 @@
 # Превью турнира «Перед стартом»
 
-Локальная первая версия от 1–2 октября 2026 года. Реализованы Telegram, PNG-альбом,
-dry-run и отдельный поиск по проверенным профилям. Добавлена независимая доставка
-того же альбома в Instagram и Threads. Релиз и первый выпуск ещё не выполнены.
+В production с 2 октября 2026 года (PR #131, версия `d4ectvltcablmvlapuqa`).
+Telegram, Instagram и Threads независимо публикуют один PNG-альбом.
+Первый EPL-выпуск подтверждён во всех трёх сетях; discovery работает в 18:00 МСК.
+Радар остаётся PAUSED. Начальный VRS и root анонса проверены в Object Storage;
+повтор job не создал постов и не изменил ни снимок, ни root.
 
 ## Содержание и дизайн
 
@@ -115,6 +117,7 @@ Valve также публикует частичные составы. Пуст�
 `ENABLE_TOURNAMENT_PREVIEWS=0` по умолчанию. Отключённый production-job не делает
 запросов. Путь профилей можно задать `TOURNAMENT_PREVIEW_PROFILES_PATH`;
 стандартный JSON включён в function zip.
+В действующем production флаг равен `1`.
 
 Локальное чтение и рендер без публикаций:
 
@@ -134,7 +137,8 @@ python scripts/preview_tournament.py --profile esl-pro-league-season-24-2026 --o
 ```
 
 `preview_discovery` проверяет одобренные профили, начинающиеся через 1–2 московских
-календарных дня. Отдельный таймер включается только в согласованном release-цикле.
+календарных дня. Таймер включён в согласованном релизе 2 октября: 18:00 МСК,
+`cs2results-preview-discovery-18msk`, ID `a1suf0l0l534jn9cfk80`, тег `production`.
 И ручной выпуск публикуется только в этом окне; dry-run позволяет изучить
 исторический пример и сообщает `eligible=false`. В день начала и после него
 новое превью не отправляется.
@@ -178,7 +182,7 @@ Dry-run возвращает все подготовленные подписи 
 
 Для согласованного включения release-скрипт принимает
 `YC_ENABLE_TOURNAMENT_PREVIEWS=1`; остальные настройки production сохраняются.
-Плановый discovery — ежедневно в 18:00 МСК, timer вызывает `production`.
+Discovery — ежедневно в 18:00 МСК, timer вызывает `production`.
 Наличие таймера само по себе не означает выпуск: нужны одобренный свежий профиль
 и совпавшие обязательные факты. Повторы timer после определённого сбоя безопасны;
 после начала турнира новые выпуски не создаются.
@@ -205,7 +209,12 @@ Dry-run возвращает все подготовленные подписи 
 Источники: [ESL](https://pro.eslgaming.com/csgo/proleague/),
 [анонс EFG](https://eslfaceitgroup.com/press/esl-pro-league-returns-to-the-big-stage-as-competition-kicks-off-in-katowice/),
 [Liquipedia](https://liquipedia.net/counterstrike/ESL/Pro_League/Season_24).
-Профиль подготовлен локально; это не подтверждение отправки или релиза.
+Первый выпуск подтверждён: [Telegram](https://t.me/cs2_results/237),
+[Instagram](https://www.instagram.com/p/Dd_migNiK3O/),
+[Threads](https://www.threads.com/@cs2results/post/Dd_mnCACDhi).
+Job вернул 3 sent / 0 failures. Начальный VRS содержит 401 строку официального
+рейтинга 7 сентября; root Threads `18093589079643473` подтверждён.
+Повтор вернул 0 sent / 3 duplicate; содержимое baseline/root не изменилось.
 
 ## Локальная проверка
 

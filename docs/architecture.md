@@ -43,17 +43,18 @@ flowchart LR
 | `cs2bot/social_oauth.py` | Отдельный OAuth handler для соцсетей и запись токенов в Lockbox | Участвовать в основном Telegram handler |
 | `cs2bot/instagram_publish.py`, `cs2bot/threads_publish.py` | Загрузка публичных карточек и вызовы Meta через Xray | Выбирать контент или разделять Telegram state |
 
-Локальный preview-поток независим от выбора источника матчей:
+Preview-поток независим от выбора источника матчей:
 `tournament_preview_job.py` → `tournament_preview_source.py` → проверенный
 `TournamentPreview` → `tournament_preview_cards.py` → начальный VRS → независимые Telegram,
-Instagram и Threads claims/publishers. `main.py` только маршрутизирует `tournament_preview`
-и `preview_discovery`. Профили связывают Liquipedia page и PandaScore serie
+Instagram и Threads claims/publishers. `main.py` маршрутизирует `tournament_preview`
+и `preview_discovery`, предоставляет сохранение VRS и существующие delivery-helper.
+Профили связывают Liquipedia page и PandaScore serie
 явно; `tournament_identity.py` связывает page, serie и проверенные stage ID
 единым ключом розыгрыша для VRS и Threads. Начальный VRS сохраняется один раз
 условным create до доставки анонса; при ошибке анонс ждёт повтора.
 Внешние API не получают publishing-прав. Дизайн и ограничения:
-[`tournament-preview.md`](tournament-preview.md). Флаг выключен, облачные
-таймеры ещё не созданы. Meta использует существующие public media buckets,
+[`tournament-preview.md`](tournament-preview.md). В production включено 2 октября:
+discovery ежедневно в 18:00 МСК, прежний радар PAUSED. Meta использует public media buckets,
 Lockbox и Xray; job передаёт context издателям, не читая токены самостоятельно.
 
 ## Основной поток результатов

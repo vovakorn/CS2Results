@@ -9,7 +9,7 @@
 - `docs/architecture.md` — компоненты, потоки данных и границы отказов.
 - `docs/data-contract.md` — модели, fallback и дедупликация.
 - `docs/publication-matrix.md` — матрица публикационных форматов по социальным сетям.
-- `docs/tournament-preview.md` — локальное превью «Перед стартом», источники,
+- `docs/tournament-preview.md` — превью «Перед стартом», источники,
   дизайн, проверенные профили и безопасный dry-run.
 - `PROJECT_STATUS.md` — подробный production-снимок и открытые проверки.
 - `BACKLOG.md` — подтверждённая очередь будущих работ.
