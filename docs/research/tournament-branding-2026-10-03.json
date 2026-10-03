@@ -1,0 +1,1425 @@
+{
+  "design_approval": {
+    "status": "approved",
+    "date": "2026-10-03",
+    "scope": "Визуальное направление всех 16 образцов; молния возвращена в CAC. Утверждение дизайна не подтверждает факты будущих турниров.",
+    "publication_approval": false
+  },
+  "checked_date": "2026-10-03",
+  "scope": "Крупные CS2-события 2026–2028 + полный текущий ответ PandaScore series.",
+  "prototype_only": true,
+  "organizer_count": 9,
+  "themes": [
+    {
+      "key": "epl",
+      "organizer": "ESL",
+      "title": "ESL PRO LEAGUE",
+      "accent": "#12F206",
+      "secondary": "#D9FFCC",
+      "background": "#091411",
+      "motif": "lines",
+      "logo": "esl-pro-league.png",
+      "status": "Подтверждено",
+      "evidence": "Логотип и уже выпущенная карточка",
+      "note": "Зелёный акцент, мягкое свечение и вертикальные линии. Базовая тема серии, сверять оформление каждого сезона.",
+      "sources": [
+        "epl"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "iem-beijing",
+      "organizer": "ESL",
+      "title": "IEM BEIJING",
+      "accent": "#FFFF2E",
+      "secondary": "#3048E8",
+      "background": "#0C1024",
+      "motif": "diagonal",
+      "logo": "iem.png",
+      "status": "Подтверждено",
+      "evidence": "Цвет официальной страницы",
+      "note": "Жёлтый взят с действующей страницы Beijing. Синий используется вторым акцентом. Применять именно к Beijing 2026.",
+      "sources": [
+        "iem"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "iem-base",
+      "organizer": "ESL",
+      "title": "IEM · БАЗОВАЯ ТЕМА",
+      "accent": "#68B9FF",
+      "secondary": "#D7E6F5",
+      "background": "#091628",
+      "motif": "lines",
+      "logo": "iem.png",
+      "status": "Предложение",
+      "evidence": "Адаптация фирменного мира Intel / IEM",
+      "note": "Резерв для будущих IEM. При появлении оформления конкретного города оно имеет приоритет. Это не утверждённая палитра сезона 2027.",
+      "sources": [
+        "esl",
+        "esl27"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "blast-rivals",
+      "organizer": "BLAST",
+      "title": "BLAST RIVALS",
+      "accent": "#00FFF2",
+      "secondary": "#2735E5",
+      "background": "#0C132B",
+      "motif": "diagonal",
+      "logo": "blast-rivals.png",
+      "status": "Подтверждено",
+      "evidence": "Цвет официальной страницы",
+      "note": "Наш бирюзовый совпадает с DATE / LOCATION на странице Hong Kong. Синий фон и собственный логотип Rivals.",
+      "sources": [
+        "rivals",
+        "blast"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "blast-open",
+      "organizer": "BLAST",
+      "title": "BLAST OPEN",
+      "accent": "#00FFF2",
+      "secondary": "#2735E5",
+      "background": "#0C132B",
+      "motif": "grid",
+      "logo": "blast-open.png",
+      "status": "Адаптация",
+      "evidence": "Общая палитра BLAST + официальный логотип Open",
+      "note": "Та же семья цвета, более открытая сетка и крупное название города. Оттенки события перепроверить перед выпуском.",
+      "sources": [
+        "blast",
+        "blast27"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "blast-bounty",
+      "organizer": "BLAST",
+      "title": "BLAST BOUNTY",
+      "accent": "#00FFF2",
+      "secondary": "#2735E5",
+      "background": "#0C132B",
+      "motif": "target",
+      "logo": "blast-bounty.png",
+      "status": "Адаптация",
+      "evidence": "Общая палитра BLAST + официальный логотип Bounty",
+      "note": "Общий бренд BLAST, прицельная геометрия и более плотная композиция. Не назначать случайный жёлтый ради отличия.",
+      "sources": [
+        "blast",
+        "blastbook"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "pgl",
+      "organizer": "PGL",
+      "title": "PGL MASTERS",
+      "accent": "#ED3D55",
+      "secondary": "#FF9B91",
+      "background": "#1A0E15",
+      "motif": "diagonal",
+      "logo": "pgl.png",
+      "status": "Адаптация",
+      "evidence": "Официальный логотип PGL и текущий макет",
+      "note": "Красный акцент, строгие диагонали. Подходит обычным PGL-событиям до появления отдельной темы.",
+      "sources": [
+        "pgl"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "pgl-major",
+      "organizer": "PGL",
+      "title": "PGL SINGAPORE MAJOR",
+      "accent": "#F17655",
+      "secondary": "#E1DCC9",
+      "background": "#24110B",
+      "motif": "metal",
+      "logo": "pgl-singapore.png",
+      "status": "Адаптация",
+      "evidence": "Красно-медный key visual и специальный логотип",
+      "note": "Тёплая медь, графит и молочный второй цвет. У Major свой логотип; обычный знак PGL не заменяет его.",
+      "sources": [
+        "singapore"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "thunderpick",
+      "organizer": "Thunderpick",
+      "title": "THUNDERPICK WORLD CHAMPIONSHIP",
+      "accent": "#7DC7FF",
+      "secondary": "#DDEBFA",
+      "background": "#091721",
+      "motif": "electric-pulse",
+      "logo": null,
+      "status": "Адаптация",
+      "evidence": "Голубая молния и акценты официального сайта",
+      "note": "Голубой электрический акцент, плавные импульсы и световые штрихи. Это наша адаптация: графика Thunderpick отличается от расколотых плоскостей FISSURE и угловой молнии CAC.",
+      "sources": [
+        "twc"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "fissure",
+      "organizer": "FISSURE",
+      "title": "FISSURE PLAYGROUND",
+      "accent": "#D8D6BF",
+      "secondary": "#D2E96B",
+      "background": "#181B15",
+      "motif": "broken-planes",
+      "logo": null,
+      "status": "Адаптация",
+      "evidence": "Песочная основа сайта и геометрия разломов",
+      "note": "Песочный / лаймовый акцент, крупные расколотые плоскости с тёмными зазорами. Линейный зигзаг убран. Playground может получить свою графику; её сверить для нового выпуска.",
+      "sources": [
+        "fissure",
+        "fissure28"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "starseries",
+      "organizer": "StarLadder",
+      "title": "STARLADDER STARSERIES",
+      "accent": "#EE434B",
+      "secondary": "#F0E8E1",
+      "background": "#191015",
+      "motif": "star",
+      "logo": null,
+      "status": "Предложение",
+      "evidence": "Красная звезда бренда StarLadder",
+      "note": "Звезда и спортивные диагонали. Оформление StarSeries 21/22 ещё не подтверждено — это тема организатора.",
+      "sources": [
+        "star",
+        "star27",
+        "star28"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "fire",
+      "organizer": "FiReSPORTS",
+      "title": "FiReMAJOR BUENOS AIRES",
+      "accent": "#F18853",
+      "secondary": "#E6D8C6",
+      "background": "#18100C",
+      "motif": "ember",
+      "logo": "fire.png",
+      "status": "Предложение",
+      "evidence": "Тёплые оранжевые линии официального сайта",
+      "note": "Угольный фон и янтарные линии, мотив огня без клише флага Аргентины. Нужна сверка отдельного key visual Major 2027.",
+      "sources": [
+        "fire"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "cac",
+      "organizer": "Perfect World",
+      "title": "CS ASIA CHAMPIONSHIPS",
+      "accent": "#F37B37",
+      "secondary": "#8B54FA",
+      "background": "#1C1431",
+      "motif": "zigzag",
+      "logo": null,
+      "status": "Адаптация",
+      "evidence": "Оранжево-фиолетовый key visual CAC 2026",
+      "note": "Контраст оранжевого и фиолетового, крупная угловая молния. Это адаптация CAC 2026; она не распространяется автоматически на все турниры Perfect World или CAC 2027.",
+      "sources": [
+        "cac"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "pw-major",
+      "organizer": "Perfect World",
+      "title": "SHANGHAI MAJOR 2027",
+      "accent": "#D5DAE7",
+      "secondary": "#788393",
+      "background": "#0E1420",
+      "motif": "grid",
+      "logo": null,
+      "status": "Ожидаем стиль",
+      "evidence": "Событие анонсировано; оформление 2027 не подтверждено",
+      "note": "Нейтральный резерв. Не переносить автоматически графику CAC или Shanghai 2024 на Major 2027.",
+      "sources": [
+        "pwmajor"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "ewc",
+      "organizer": "Esports Foundation",
+      "title": "ESPORTS WORLD CUP",
+      "accent": "#DFC68A",
+      "secondary": "#F4EBDD",
+      "background": "#19160F",
+      "motif": "medal",
+      "logo": null,
+      "status": "Предложение",
+      "evidence": "Предлагаемая адаптация образа чемпионского кубка",
+      "note": "Золото и тёплый молочный цвет. Сайт отвечает 403; бренд-материалы будущего выпуска нужно проверить перед утверждением.",
+      "sources": [
+        "ewc",
+        "ewcbook"
+      ],
+      "design_approved": true
+    },
+    {
+      "key": "enc",
+      "organizer": "Esports Foundation",
+      "title": "ESPORTS NATIONS CUP",
+      "accent": "#D5DAE7",
+      "secondary": "#788393",
+      "background": "#0E1420",
+      "motif": "grid",
+      "logo": null,
+      "status": "Ожидаем стиль",
+      "evidence": "Календарная запись; первичный анонс CS2 не сверён",
+      "note": "Отдельный резерв: сборные и страны могут потребовать другой визуальный язык, чем EWC. Сначала подтвердить событие и бренд.",
+      "sources": [
+        "calendar"
+      ],
+      "design_approved": true
+    }
+  ],
+  "events": [
+    {
+      "name": "ESL Pro League Season 24",
+      "organizer": "ESL",
+      "year": 2026,
+      "period": "3–11 октября",
+      "theme": "epl",
+      "sources": [
+        "epl",
+        "api"
+      ],
+      "note": "Анонс опубликован; есть running-серия PandaScore 11004.",
+      "status": "Выпущено",
+      "api": true
+    },
+    {
+      "name": "Thunderpick World Championship 2026",
+      "organizer": "Thunderpick",
+      "year": 2026,
+      "period": "14–18 октября · матчевые дни",
+      "theme": "thunderpick",
+      "sources": [
+        "twc"
+      ],
+      "note": "12–19 октября на сайте включает приезд, media day и отъезд.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "PGL Masters Bucharest 2026",
+      "organizer": "PGL",
+      "year": 2026,
+      "period": "октябрь",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В календаре организатора 22–31, в иных источниках 24–31. Старт матчей требует сверки.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "IEM Beijing 2026",
+      "organizer": "ESL",
+      "year": 2026,
+      "period": "2–8 ноября",
+      "theme": "iem-beijing",
+      "sources": [
+        "iem"
+      ],
+      "note": "Группы 2 ноября, плей-офф 6–8 ноября. Палитра события подтверждена CSS.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "BLAST Rivals Hong Kong 2026",
+      "organizer": "BLAST",
+      "year": 2026,
+      "period": "11–15 ноября",
+      "theme": "blast-rivals",
+      "sources": [
+        "rivals"
+      ],
+      "note": "В агрегаторах встречается общий диапазон 9–15. Официальная страница события даёт 11–15.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "PGL Singapore Major 2026",
+      "organizer": "PGL",
+      "year": 2026,
+      "period": "ноябрь–декабрь",
+      "theme": "pgl-major",
+      "sources": [
+        "singapore",
+        "pgl"
+      ],
+      "note": "Страница события: 25 ноября–13 декабря; общий календарь: 22 ноября–13 декабря. Матчевые дни уточнить.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "BLAST Bounty Season 1",
+      "organizer": "BLAST",
+      "year": 2027,
+      "period": "январь",
+      "theme": "blast-bounty",
+      "sources": [
+        "blastbook",
+        "blast27"
+      ],
+      "note": "Handbook: Phase One 13–19, Phase Two 21–24 января. Агрегатор показывает 11–24.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "PGL Bucharest",
+      "organizer": "PGL",
+      "year": 2027,
+      "period": "январь",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "IEM Kraków",
+      "organizer": "ESL",
+      "year": 2027,
+      "period": "январь–февраль",
+      "theme": "iem-base",
+      "sources": [
+        "esl27"
+      ],
+      "note": "Официально 27 января–7 февраля; стиль города нужно сверить.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "PGL Cluj-Napoca",
+      "organizer": "PGL",
+      "year": 2027,
+      "period": "февраль",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "ESL Pro League Season 25",
+      "organizer": "ESL",
+      "year": 2027,
+      "period": "март",
+      "theme": "epl",
+      "sources": [
+        "esl27"
+      ],
+      "note": "Официальный анонс 4–14 марта; календарь HLTV 6–14. Перед постом сверить матчевый старт.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "BLAST Open Singapore",
+      "organizer": "BLAST",
+      "year": 2027,
+      "period": "март",
+      "theme": "blast-open",
+      "sources": [
+        "blastbook",
+        "blast27"
+      ],
+      "note": "Handbook: 19–24 и 26–28 марта; общий ранний анонс 15–28. Даты турнира нуждаются в актуализации.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "PGL Łódź",
+      "organizer": "PGL",
+      "year": 2027,
+      "period": "март",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "IEM USA",
+      "organizer": "ESL",
+      "year": 2027,
+      "period": "апрель",
+      "theme": "iem-base",
+      "sources": [
+        "esl",
+        "calendar"
+      ],
+      "note": "Город и самостоятельная графика ещё требуют проверки.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "FISSURE Event April",
+      "organizer": "FISSURE",
+      "year": 2027,
+      "period": "апрель",
+      "theme": "fissure",
+      "sources": [
+        "calendar"
+      ],
+      "note": "Название и дата найдены в календаре; первичный анонс отдельно не сверён.",
+      "status": "Требует первичного источника",
+      "api": false
+    },
+    {
+      "name": "PGL China / Event #4",
+      "organizer": "PGL",
+      "year": 2027,
+      "period": "апрель",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В официальном календаре PGL CS2 CHINA; конкретное имя события уточнить.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "IEM Brazil",
+      "organizer": "ESL",
+      "year": 2027,
+      "period": "май",
+      "theme": "iem-base",
+      "sources": [
+        "esl",
+        "calendar"
+      ],
+      "note": "",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "BLAST Open Ulaanbaatar",
+      "organizer": "BLAST",
+      "year": 2027,
+      "period": "май",
+      "theme": "blast-open",
+      "sources": [
+        "blastbook",
+        "calendar"
+      ],
+      "note": "Handbook подтверждает Open 2 в мае; город найден в календаре, перед постом сверить страницу события.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "FiReMAJOR Buenos Aires",
+      "organizer": "FiReSPORTS",
+      "year": 2027,
+      "period": "май–июнь",
+      "theme": "fire",
+      "sources": [
+        "fire",
+        "calendar"
+      ],
+      "note": "Официальный сайт подтверждает Buenos Aires 2027; детали будущего оформления проверить.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "Esports World Cup",
+      "organizer": "Esports Foundation",
+      "year": 2027,
+      "period": "июль–август",
+      "theme": "ewc",
+      "sources": [
+        "ewc"
+      ],
+      "note": "Общие рамки в официальной ленте 16 июля–1 августа включают квалификационную часть; матчевые дни уточнить.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "IEM Cologne",
+      "organizer": "ESL",
+      "year": 2027,
+      "period": "август",
+      "theme": "iem-base",
+      "sources": [
+        "esl"
+      ],
+      "note": "Есть отдельная официальная страница 2027; при подключении сверить её key visual, а не брать Beijing.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "CS Asia Championships",
+      "organizer": "Perfect World",
+      "year": 2027,
+      "period": "август",
+      "theme": "cac",
+      "sources": [
+        "calendar",
+        "cac"
+      ],
+      "note": "Календарный анонс; графика 2027 ещё не подтверждена.",
+      "status": "Требует первичного источника",
+      "api": false
+    },
+    {
+      "name": "FISSURE Event August",
+      "organizer": "FISSURE",
+      "year": 2027,
+      "period": "август",
+      "theme": "fissure",
+      "sources": [
+        "calendar"
+      ],
+      "note": "Календарный анонс; регламент и key visual проверить.",
+      "status": "Требует первичного источника",
+      "api": false
+    },
+    {
+      "name": "BLAST Bounty Season 2 / Event 4",
+      "organizer": "BLAST",
+      "year": 2027,
+      "period": "август–сентябрь",
+      "theme": "blast-bounty",
+      "sources": [
+        "blast27",
+        "calendar"
+      ],
+      "note": "Слот официально анонсирован; название серии пока взято из календаря.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "PGL Event #5",
+      "organizer": "PGL",
+      "year": 2027,
+      "period": "сентябрь",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "ESL Pro League Season 26",
+      "organizer": "ESL",
+      "year": 2027,
+      "period": "сентябрь–октябрь",
+      "theme": "epl",
+      "sources": [
+        "esl27"
+      ],
+      "note": "",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "BLAST Open Rio de Janeiro / Event 5",
+      "organizer": "BLAST",
+      "year": 2027,
+      "period": "октябрь",
+      "theme": "blast-open",
+      "sources": [
+        "blast27"
+      ],
+      "note": "Город Rio указан в официальном анонсе.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "PGL Event #6",
+      "organizer": "PGL",
+      "year": 2027,
+      "period": "октябрь",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "Thunderpick World Championship",
+      "organizer": "Thunderpick",
+      "year": 2027,
+      "period": "октябрь",
+      "theme": "thunderpick",
+      "sources": [
+        "twc27",
+        "calendar"
+      ],
+      "note": "Официальная ссылка есть, но её страница не загрузилась; дата из календаря требует первичной проверки.",
+      "status": "Требует первичного источника",
+      "api": false
+    },
+    {
+      "name": "StarSeries Season 21",
+      "organizer": "StarLadder",
+      "year": 2027,
+      "period": "октябрь",
+      "theme": "starseries",
+      "sources": [
+        "star27"
+      ],
+      "note": "Официальный анонс: 20–25 октября включая media day; матчи 21–24. Графика сезона ещё не подтверждена.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "FISSURE Event October",
+      "organizer": "FISSURE",
+      "year": 2027,
+      "period": "октябрь",
+      "theme": "fissure",
+      "sources": [
+        "calendar"
+      ],
+      "note": "Календарный анонс; первичный источник не сверён.",
+      "status": "Требует первичного источника",
+      "api": false
+    },
+    {
+      "name": "ESL Event #7",
+      "organizer": "ESL",
+      "year": 2027,
+      "period": "октябрь–ноябрь",
+      "theme": null,
+      "sources": [
+        "calendar",
+        "esl27"
+      ],
+      "note": "Название серии ещё неизвестно; не назначать IEM-логотип без подтверждения.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "BLAST Rivals Season 2 / Event 6",
+      "organizer": "BLAST",
+      "year": 2027,
+      "period": "ноябрь",
+      "theme": "blast-rivals",
+      "sources": [
+        "blast27",
+        "calendar"
+      ],
+      "note": "Слот официально анонсирован; будущее место и ключевую графику уточнить.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "Esports Nations Cup",
+      "organizer": "Esports Foundation",
+      "year": 2027,
+      "period": "ноябрь · предварительно",
+      "theme": "enc",
+      "sources": [
+        "calendar"
+      ],
+      "note": "Первичный анонс CS2 и даты не подтверждены. Не включать в очередь публикаций.",
+      "status": "Требует первичного источника",
+      "api": false
+    },
+    {
+      "name": "Perfect World Shanghai Major",
+      "organizer": "Perfect World",
+      "year": 2027,
+      "period": "ноябрь–декабрь",
+      "theme": "pw-major",
+      "sources": [
+        "pwmajor"
+      ],
+      "note": "Организатор и город подтверждены 15 сентября. Отдельную графику Major 2027 ещё ожидаем.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "ESL Event #1",
+      "organizer": "ESL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "esl28"
+      ],
+      "note": "Серия и город неизвестны; после их объявления выбрать EPL или тему конкретного IEM.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "ESL Event #2",
+      "organizer": "ESL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "esl28"
+      ],
+      "note": "Серия и город неизвестны; после их объявления выбрать EPL или тему конкретного IEM.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "ESL Event #3",
+      "organizer": "ESL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "esl28"
+      ],
+      "note": "Серия и город неизвестны; после их объявления выбрать EPL или тему конкретного IEM.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "ESL Event #4",
+      "organizer": "ESL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "esl28"
+      ],
+      "note": "Серия и город неизвестны; после их объявления выбрать EPL или тему конкретного IEM.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "ESL Event #5",
+      "organizer": "ESL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "esl28"
+      ],
+      "note": "Серия и город неизвестны; после их объявления выбрать EPL или тему конкретного IEM.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "ESL Event #6",
+      "organizer": "ESL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "esl28"
+      ],
+      "note": "Серия и город неизвестны; после их объявления выбрать EPL или тему конкретного IEM.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "BLAST Event #1",
+      "organizer": "BLAST",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "blast28"
+      ],
+      "note": "Шесть событий анонсированы. Серии и финальные даты проверять по обновлениям; не назначать логотип Open неизвестной серии.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "BLAST Event #2",
+      "organizer": "BLAST",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "blast28"
+      ],
+      "note": "Шесть событий анонсированы. Серии и финальные даты проверять по обновлениям; не назначать логотип Open неизвестной серии.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "BLAST Event #3",
+      "organizer": "BLAST",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "blast28"
+      ],
+      "note": "Шесть событий анонсированы. Серии и финальные даты проверять по обновлениям; не назначать логотип Open неизвестной серии.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "BLAST Event #4",
+      "organizer": "BLAST",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "blast28"
+      ],
+      "note": "Шесть событий анонсированы. Серии и финальные даты проверять по обновлениям; не назначать логотип Open неизвестной серии.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "BLAST Event #5",
+      "organizer": "BLAST",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "blast28"
+      ],
+      "note": "Шесть событий анонсированы. Серии и финальные даты проверять по обновлениям; не назначать логотип Open неизвестной серии.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "BLAST Event #6",
+      "organizer": "BLAST",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": null,
+      "sources": [
+        "blast28"
+      ],
+      "note": "Шесть событий анонсированы. Серии и финальные даты проверять по обновлениям; не назначать логотип Open неизвестной серии.",
+      "status": "Название серии ожидаем",
+      "api": false
+    },
+    {
+      "name": "PGL CS2 Event #1",
+      "organizer": "PGL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В актуальном официальном календаре шесть CS2-слотов; не копировать восемь из старого агрегатора.",
+      "status": "Название события ожидаем",
+      "api": false
+    },
+    {
+      "name": "PGL CS2 Event #2",
+      "organizer": "PGL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В актуальном официальном календаре шесть CS2-слотов; не копировать восемь из старого агрегатора.",
+      "status": "Название события ожидаем",
+      "api": false
+    },
+    {
+      "name": "PGL CS2 Event #3",
+      "organizer": "PGL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В актуальном официальном календаре шесть CS2-слотов; не копировать восемь из старого агрегатора.",
+      "status": "Название события ожидаем",
+      "api": false
+    },
+    {
+      "name": "PGL CS2 Event #4",
+      "organizer": "PGL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В актуальном официальном календаре шесть CS2-слотов; не копировать восемь из старого агрегатора.",
+      "status": "Название события ожидаем",
+      "api": false
+    },
+    {
+      "name": "PGL CS2 Event #5",
+      "organizer": "PGL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В актуальном официальном календаре шесть CS2-слотов; не копировать восемь из старого агрегатора.",
+      "status": "Название события ожидаем",
+      "api": false
+    },
+    {
+      "name": "PGL CS2 Event #6",
+      "organizer": "PGL",
+      "year": 2028,
+      "period": "календарный слот",
+      "theme": "pgl",
+      "sources": [
+        "pgl"
+      ],
+      "note": "В актуальном официальном календаре шесть CS2-слотов; не копировать восемь из старого агрегатора.",
+      "status": "Название события ожидаем",
+      "api": false
+    },
+    {
+      "name": "FISSURE Playground · February",
+      "organizer": "FISSURE",
+      "year": 2028,
+      "period": "21–28 февраля · календарные рамки",
+      "theme": "fissure",
+      "sources": [
+        "fissure28"
+      ],
+      "note": "Перенос опубликован 2 октября 2026; не использовать прежние 9–21 февраля.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "FISSURE Playground · October",
+      "organizer": "FISSURE",
+      "year": 2028,
+      "period": "16–22 октября · календарные рамки",
+      "theme": "fissure",
+      "sources": [
+        "fissure28"
+      ],
+      "note": "Перенос опубликован 2 октября 2026; не использовать прежние 3–15 октября.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "StarSeries Season 22",
+      "organizer": "StarLadder",
+      "year": 2028,
+      "period": "май",
+      "theme": "starseries",
+      "sources": [
+        "star28"
+      ],
+      "note": "Официальный roadmap 16–21 мая. Дни матчей и стиль ещё уточнить.",
+      "status": "Анонс / календарь",
+      "api": false
+    },
+    {
+      "name": "Esports World Cup",
+      "organizer": "Esports Foundation",
+      "year": 2028,
+      "period": "июль · предварительно",
+      "theme": "ewc",
+      "sources": [
+        "calendar"
+      ],
+      "note": "Запись агрегатора; первичный анонс CS2 2028 не сверён.",
+      "status": "Требует первичного источника",
+      "api": false
+    },
+    {
+      "name": "Major #1 · organizer TBA",
+      "organizer": "Неизвестен",
+      "year": 2028,
+      "period": "весна–лето · предварительно",
+      "theme": null,
+      "sources": [
+        "calendar"
+      ],
+      "note": "При неизвестном организаторе нельзя автоматически назначать ESL, BLAST или PGL.",
+      "status": "Организатор ожидаем",
+      "api": false
+    },
+    {
+      "name": "Major #2 · organizer TBA",
+      "organizer": "Неизвестен",
+      "year": 2028,
+      "period": "ноябрь–декабрь · предварительно",
+      "theme": null,
+      "sources": [
+        "calendar"
+      ],
+      "note": "Сначала подтверждённый организатор и официальная графика; пока резерв канала.",
+      "status": "Организатор ожидаем",
+      "api": false
+    }
+  ],
+  "api_items": [
+    {
+      "id": 11028,
+      "name": "",
+      "full_name": "Season 9 2026",
+      "slug": "cs-go-roman-imperium-cup-9-2026",
+      "begin_at": "2026-10-07T08:00:00Z",
+      "end_at": "2026-10-10T20:00:00Z",
+      "year": 2026,
+      "season": "9",
+      "league": {
+        "id": 5471,
+        "name": "Roman Imperium Cup",
+        "slug": "cs-go-roman-imperium-cup",
+        "url": null,
+        "image_url": null
+      },
+      "api_state": "будущий"
+    },
+    {
+      "id": 11025,
+      "name": "Private Club #2: Closed Qualifier",
+      "full_name": "Private Club #2: Closed Qualifier 2026",
+      "slug": "cs-go-1win-private-club-private-club-2-closed-qualifier-2026",
+      "begin_at": "2026-10-07T09:00:00Z",
+      "end_at": "2026-10-10T17:00:00Z",
+      "year": 2026,
+      "season": null,
+      "league": {
+        "id": 5559,
+        "name": "1win",
+        "slug": "cs-go-1win-private-club",
+        "url": null,
+        "image_url": null
+      },
+      "api_state": "будущий"
+    },
+    {
+      "id": 10918,
+      "name": "",
+      "full_name": "Season 6 2026",
+      "slug": "cs-go-dach-cs-masters-6-2026",
+      "begin_at": "2026-08-31T16:00:00Z",
+      "end_at": "2026-12-12T22:00:00Z",
+      "year": 2026,
+      "season": "6",
+      "league": {
+        "id": 5237,
+        "name": "DACH CS Masters",
+        "slug": "cs-go-dach-cs-masters",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5237/407px-dach_cs_masters_full_bottom_darkmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 10976,
+      "name": "",
+      "full_name": "Season 33 2026",
+      "slug": "cs-go-dust2-dk-33-2026",
+      "begin_at": "2026-09-14T16:00:00Z",
+      "end_at": "2026-11-21T23:00:00Z",
+      "year": 2026,
+      "season": "33",
+      "league": {
+        "id": 4473,
+        "name": "Dust2.dk Ligaen",
+        "slug": "cs-go-dust2-dk",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/4473/800px-power_ligaen_2021_allmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 10994,
+      "name": "Closed Qualifier: Series #10",
+      "full_name": "Closed Qualifier: Series #10 2026",
+      "slug": "cs-go-cct-europe-closed-qualifier-series-10-2026",
+      "begin_at": "2026-09-22T08:00:00Z",
+      "end_at": "2026-10-10T20:00:00Z",
+      "year": 2026,
+      "season": null,
+      "league": {
+        "id": 5232,
+        "name": "CCT Europe",
+        "slug": "cs-go-cct-europe",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5232/799px-cct_2024_europe_allmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 11002,
+      "name": "Series 6",
+      "full_name": "Series 6 2026",
+      "slug": "cs-go-champion-of-champions-tour-series-6-2026",
+      "begin_at": "2026-09-22T13:00:00Z",
+      "end_at": "2026-10-05T00:00:00Z",
+      "year": 2026,
+      "season": null,
+      "league": {
+        "id": 4842,
+        "name": "CCT South America",
+        "slug": "cs-go-champion-of-champions-tour",
+        "url": "https://cctour.gg/",
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/4842/600px-cct_south_america_icon_allmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 11018,
+      "name": "",
+      "full_name": "Season 56 2026",
+      "slug": "cs-go-united21-56-2026",
+      "begin_at": "2026-09-26T08:00:00Z",
+      "end_at": "2026-10-13T22:00:00Z",
+      "year": 2026,
+      "season": "56",
+      "league": {
+        "id": 5078,
+        "name": "United21",
+        "slug": "cs-go-united21",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5078/800px-united21_allmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 11019,
+      "name": "Challengers Series",
+      "full_name": "Challengers Series season 7 2026",
+      "slug": "cs-go-cct-europe-challengers-series-7-2026",
+      "begin_at": "2026-09-26T11:00:00Z",
+      "end_at": "2026-10-04T17:00:00Z",
+      "year": 2026,
+      "season": "7",
+      "league": {
+        "id": 5232,
+        "name": "CCT Europe",
+        "slug": "cs-go-cct-europe",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5232/799px-cct_2024_europe_allmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 10996,
+      "name": "Series #10",
+      "full_name": "Series #10 2026",
+      "slug": "cs-go-cct-europe-series-10-2026",
+      "begin_at": "2026-09-28T08:00:00Z",
+      "end_at": "2026-10-10T19:00:00Z",
+      "year": 2026,
+      "season": null,
+      "league": {
+        "id": 5232,
+        "name": "CCT Europe",
+        "slug": "cs-go-cct-europe",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5232/799px-cct_2024_europe_allmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 11024,
+      "name": "",
+      "full_name": "Season 1 2026",
+      "slug": "cs-go-fox-legacy-cup-1-2026",
+      "begin_at": "2026-10-01T08:00:00Z",
+      "end_at": "2026-10-04T20:00:00Z",
+      "year": 2026,
+      "season": "1",
+      "league": {
+        "id": 5566,
+        "name": "FOX Legacy Cup",
+        "slug": "cs-go-fox-legacy-cup",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5566/600px-fox_legacy_cup_1_allmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 10960,
+      "name": "Episode 4",
+      "full_name": "Episode 4 2026",
+      "slug": "cs-go-stake-ranked-episode-4-2026",
+      "begin_at": "2026-10-01T10:00:00Z",
+      "end_at": "2026-10-04T20:30:00Z",
+      "year": 2026,
+      "season": null,
+      "league": {
+        "id": 5505,
+        "name": "Stake Ranked",
+        "slug": "cs-go-stake-ranked",
+        "url": null,
+        "image_url": null
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 11026,
+      "name": "",
+      "full_name": "Autumn 2026",
+      "slug": "cs-go-journey-autumn-2026",
+      "begin_at": "2026-10-02T12:00:00Z",
+      "end_at": "2026-10-03T21:00:00Z",
+      "year": 2026,
+      "season": "Autumn",
+      "league": {
+        "id": 5511,
+        "name": "ROG Journey",
+        "slug": "cs-go-journey",
+        "url": null,
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5511/800px-journey_summer_2026_lightmode-png"
+      },
+      "api_state": "текущий"
+    },
+    {
+      "id": 11004,
+      "name": "",
+      "full_name": "Season 24 2026",
+      "slug": "cs-go-esl-pro-league-24-2026",
+      "begin_at": "2026-10-03T08:00:00Z",
+      "end_at": "2026-10-11T21:00:00Z",
+      "year": 2026,
+      "season": "24",
+      "league": {
+        "id": 4568,
+        "name": "ESL Pro League",
+        "slug": "cs-go-esl-pro-league",
+        "url": "https://pro.eslgaming.com/csgo/proleague/",
+        "image_url": null
+      },
+      "api_state": "текущий"
+    }
+  ],
+  "sources": {
+    "esl": {
+      "title": "ESL Pro Tour",
+      "url": "https://pro.eslgaming.com/tour/cs/"
+    },
+    "epl": {
+      "title": "ESL Pro League",
+      "url": "https://pro.eslgaming.com/csgo/proleague/"
+    },
+    "iem": {
+      "title": "IEM Beijing 2026",
+      "url": "https://pro.eslgaming.com/tour/cs/beijing/"
+    },
+    "esl27": {
+      "title": "ESL: обновление сезона 2027",
+      "url": "https://pro.eslgaming.com/tour/2026/03/2027-updates-iem-krakow-2027-additional-information/"
+    },
+    "esl28": {
+      "title": "ESL: календарь 2028",
+      "url": "https://pro.eslgaming.com/tour/pt/2025/10/2028-counter-strike-calendar/"
+    },
+    "blast": {
+      "title": "BLAST Premier: три серии",
+      "url": "https://blastpremier.com/"
+    },
+    "rivals": {
+      "title": "BLAST Rivals Hong Kong",
+      "url": "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026"
+    },
+    "blast27": {
+      "title": "BLAST: сезон 2027",
+      "url": "https://blast.tv/cs/news/premier-2027-new-formats"
+    },
+    "blastbook": {
+      "title": "BLAST Handbook 2027",
+      "url": "https://assets.blast.tv/rulebook/BLAST_Premier_Handbook_2027.pdf"
+    },
+    "blast28": {
+      "title": "BLAST: календарь 2028",
+      "url": "https://blast.tv/cs/news/blast-2028-dates-announced"
+    },
+    "pgl": {
+      "title": "PGL: актуальный календарь",
+      "url": "https://www.pglesports.com/events/"
+    },
+    "singapore": {
+      "title": "PGL Singapore Major 2026",
+      "url": "https://www.pglesports.com/cs2/pgl-major-singapore-2026/"
+    },
+    "twc": {
+      "title": "Thunderpick: Finals 2026",
+      "url": "https://world-championship.thunderpick.io/2026-finals/"
+    },
+    "twc27": {
+      "title": "Thunderpick: анонс 2027",
+      "url": "https://world-championship.thunderpick.io/thunderpick-world-championship-2027-announcement/"
+    },
+    "fissure": {
+      "title": "FISSURE: оформление организатора",
+      "url": "https://fissure.pro/en"
+    },
+    "fissure28": {
+      "title": "FISSURE: обновление дат 2028 от 2 октября",
+      "url": "https://fissure.pro/news/fissure-playground-cs2-2028-update"
+    },
+    "star": {
+      "title": "StarLadder",
+      "url": "https://www.starladder.com/en/"
+    },
+    "star27": {
+      "title": "StarSeries 21: официальный анонс",
+      "url": "https://www.starladder.com/en/news/starseries-21-officially-announced-for-2027"
+    },
+    "star28": {
+      "title": "StarSeries: roadmap 2028",
+      "url": "https://www.starladder.com/en/news/starladder-s-starseries-2028-announced-full-roadmap"
+    },
+    "fire": {
+      "title": "FiReSPORTS: официальный сайт",
+      "url": "https://firesports.gg/en#major"
+    },
+    "cac": {
+      "title": "CAC: оформление 2026",
+      "url": "https://cac.pwesports.cn/"
+    },
+    "pwmajor": {
+      "title": "Perfect World: анонс Shanghai Major 2027",
+      "url": "https://www.csgo.com.cn/article/details/20260915/225917.html"
+    },
+    "ewc": {
+      "title": "EWC: анонс CS2 2026/2027 в официальной ленте",
+      "url": "https://esportsworldcup.com/en/competitions/cod-warzone"
+    },
+    "ewcbook": {
+      "title": "EWC: официальный Global Rulebook 2026",
+      "url": "https://d3h9qea4qy4169.cloudfront.net/EWC_2026_Global_Rulebook_1_1_55b3cc60e1.pdf"
+    },
+    "calendar": {
+      "title": "HLTV: календарь для поиска анонсов",
+      "url": "https://www.hltv.org/calendar"
+    },
+    "api": {
+      "title": "PandaScore: CS2 серии",
+      "url": "https://api.pandascore.co/csgo/series/upcoming"
+    }
+  },
+  "rules": [
+    "Событие → серия → организатор → базовая тема канала.",
+    "Цвет и логотип берём из проверенной официальной графики, а не по случайному доминирующему пикселю.",
+    "Для каждого цвета храним источник, дату проверки и статус: подтверждено, адаптация или предложение.",
+    "Проверка оформления и одобрение публикационных фактов — разные этапы.",
+    "Пока не известна серия / организатор, используем нейтральный резерв."
+  ]
+}

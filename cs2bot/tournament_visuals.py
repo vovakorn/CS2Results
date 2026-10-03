@@ -15,7 +15,7 @@ def branding_for_match(match, profiles_path=None):
 
 
 def accent_color(branding):
-    value = branding.accent.lstrip("#")
+    value = (branding.accent or "#16C7FF").lstrip("#")
     return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
 
 

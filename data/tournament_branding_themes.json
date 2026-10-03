@@ -1,0 +1,314 @@
+{
+  "themes": [
+    {
+      "key": "epl",
+      "accent": "#12F206",
+      "secondary": "#D9FFCC",
+      "background": "#091411",
+      "motif": "lines",
+      "logo_asset": "esl-pro-league.png",
+      "logo_source_url": "https://pro.eslgaming.com/csgo/proleague/wp-content/uploads/2026/03/ESL-Pro-League-Logo-Green.png",
+      "source_urls": [
+        "https://pro.eslgaming.com/csgo/proleague/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "confirmed",
+      "design_approved": true
+    },
+    {
+      "key": "iem-beijing",
+      "accent": "#FFFF2E",
+      "secondary": "#3048E8",
+      "background": "#0C1024",
+      "motif": "diagonal",
+      "logo_asset": "iem.png",
+      "logo_source_url": "https://pro.eslgaming.com/tour/wp-content/uploads/2021/12/IEM-Logo-on-Black_Horizontal_RGB.png",
+      "source_urls": [
+        "https://pro.eslgaming.com/tour/cs/beijing/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "confirmed",
+      "design_approved": true
+    },
+    {
+      "key": "iem-base",
+      "accent": "#68B9FF",
+      "secondary": "#D7E6F5",
+      "background": "#091628",
+      "motif": "lines",
+      "logo_asset": "iem.png",
+      "logo_source_url": "https://pro.eslgaming.com/tour/wp-content/uploads/2021/12/IEM-Logo-on-Black_Horizontal_RGB.png",
+      "source_urls": [
+        "https://pro.eslgaming.com/tour/cs/",
+        "https://pro.eslgaming.com/tour/2026/03/2027-updates-iem-krakow-2027-additional-information/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "proposed",
+      "design_approved": true
+    },
+    {
+      "key": "blast-rivals",
+      "accent": "#00FFF2",
+      "secondary": "#2735E5",
+      "background": "#0C132B",
+      "motif": "diagonal",
+      "logo_asset": "blast-rivals.png",
+      "logo_source_url": "https://cdn.prod.website-files.com/69f99f5d46e5f137d0578e1d/6a01e15e919a171b6a308730_69f9e16a1b74c7fd459b6af1_RV-FW-26_Logo_Rivals_White.png",
+      "source_urls": [
+        "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026",
+        "https://blastpremier.com/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "confirmed",
+      "design_approved": true
+    },
+    {
+      "key": "blast-open",
+      "accent": "#00FFF2",
+      "secondary": "#2735E5",
+      "background": "#0C132B",
+      "motif": "grid",
+      "logo_asset": "blast-open.png",
+      "logo_source_url": "https://cdn.prod.website-files.com/69f99f5d46e5f137d0578e13/69f9e16a79388a30a8ea4ee8_OP-RD-26_Logo_Open_White-p-2600.png",
+      "source_urls": [
+        "https://blastpremier.com/",
+        "https://blast.tv/cs/news/premier-2027-new-formats"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    },
+    {
+      "key": "blast-bounty",
+      "accent": "#00FFF2",
+      "secondary": "#2735E5",
+      "background": "#0C132B",
+      "motif": "target",
+      "logo_asset": "blast-bounty.png",
+      "logo_source_url": "https://cdn.prod.website-files.com/69f99f5d46e5f137d0578e13/6a045f662cd2c1cd99e4f514_blast-bounty.png",
+      "source_urls": [
+        "https://blastpremier.com/",
+        "https://assets.blast.tv/rulebook/BLAST_Premier_Handbook_2027.pdf"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    },
+    {
+      "key": "pgl",
+      "accent": "#ED3D55",
+      "secondary": "#FF9B91",
+      "background": "#1A0E15",
+      "motif": "diagonal",
+      "logo_asset": "pgl.png",
+      "logo_source_url": "https://news.pglesports.com/news-list-assets/pgl_white.webp",
+      "source_urls": [
+        "https://www.pglesports.com/events/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    },
+    {
+      "key": "pgl-major",
+      "accent": "#F17655",
+      "secondary": "#E1DCC9",
+      "background": "#24110B",
+      "motif": "metal",
+      "logo_asset": "pgl-singapore.png",
+      "logo_source_url": "https://www.pglesports.com/images/CS2_events/PglMajorSingapore/topBannerImages/logoPglMajorSingapore.webp",
+      "source_urls": [
+        "https://www.pglesports.com/cs2/pgl-major-singapore-2026/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    },
+    {
+      "key": "thunderpick",
+      "accent": "#7DC7FF",
+      "secondary": "#DDEBFA",
+      "background": "#091721",
+      "motif": "electric-pulse",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://world-championship.thunderpick.io/2026-finals/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    },
+    {
+      "key": "fissure",
+      "accent": "#D8D6BF",
+      "secondary": "#D2E96B",
+      "background": "#181B15",
+      "motif": "broken-planes",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://fissure.pro/en",
+        "https://fissure.pro/news/fissure-playground-cs2-2028-update"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    },
+    {
+      "key": "starseries",
+      "accent": "#EE434B",
+      "secondary": "#F0E8E1",
+      "background": "#191015",
+      "motif": "star",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://www.starladder.com/en/",
+        "https://www.starladder.com/en/news/starseries-21-officially-announced-for-2027",
+        "https://www.starladder.com/en/news/starladder-s-starseries-2028-announced-full-roadmap"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "proposed",
+      "design_approved": true
+    },
+    {
+      "key": "fire",
+      "accent": "#F18853",
+      "secondary": "#E6D8C6",
+      "background": "#18100C",
+      "motif": "ember",
+      "logo_asset": "fire.png",
+      "logo_source_url": "https://firesports.gg/logo/logo-white.png",
+      "source_urls": [
+        "https://firesports.gg/en#major"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "proposed",
+      "design_approved": true
+    },
+    {
+      "key": "cac",
+      "accent": "#F37B37",
+      "secondary": "#8B54FA",
+      "background": "#1C1431",
+      "motif": "zigzag",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://cac.pwesports.cn/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    },
+    {
+      "key": "pw-major",
+      "accent": "#D5DAE7",
+      "secondary": "#788393",
+      "background": "#0E1420",
+      "motif": "grid",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://www.csgo.com.cn/article/details/20260915/225917.html"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "awaiting",
+      "design_approved": true
+    },
+    {
+      "key": "ewc",
+      "accent": "#DFC68A",
+      "secondary": "#F4EBDD",
+      "background": "#19160F",
+      "motif": "medal",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://esportsworldcup.com/en/competitions/cod-warzone",
+        "https://d3h9qea4qy4169.cloudfront.net/EWC_2026_Global_Rulebook_1_1_55b3cc60e1.pdf"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "proposed",
+      "design_approved": true
+    },
+    {
+      "key": "enc",
+      "accent": "#D5DAE7",
+      "secondary": "#788393",
+      "background": "#0E1420",
+      "motif": "grid",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://www.hltv.org/calendar"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "awaiting",
+      "design_approved": true
+    },
+    {
+      "key": "neutral",
+      "accent": "#D5DAE7",
+      "secondary": "#788393",
+      "background": "#0E1420",
+      "motif": "grid",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://github.com/vovakorn/CS2Results"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "proposed",
+      "design_approved": true
+    },
+    {
+      "key": "blast-base",
+      "accent": "#00FFF2",
+      "secondary": "#2735E5",
+      "background": "#0C132B",
+      "motif": "diagonal",
+      "logo_asset": null,
+      "logo_source_url": null,
+      "source_urls": [
+        "https://blastpremier.com/"
+      ],
+      "verified_on": "2026-10-03",
+      "evidence_status": "adapted",
+      "design_approved": true
+    }
+  ],
+  "events": {
+    "esl-pro-league-season-24-2026": "epl",
+    "iem-beijing-2026": "iem-beijing",
+    "blast-rivals-hong-kong-2026": "blast-rivals",
+    "pgl-masters-bucharest-2026": "pgl",
+    "pgl-singapore-major-2026": "pgl-major"
+  },
+  "series": {
+    "esl-pro-league": "epl",
+    "iem": "iem-base",
+    "blast-rivals": "blast-rivals",
+    "blast-open": "blast-open",
+    "blast-bounty": "blast-bounty",
+    "pgl": "pgl",
+    "thunderpick-world-championship": "thunderpick",
+    "fissure-playground": "fissure",
+    "starseries": "starseries",
+    "cac": "cac",
+    "esports-world-cup": "ewc",
+    "esports-nations-cup": "enc"
+  },
+  "organizers": {
+    "esl": "neutral",
+    "blast": "blast-base",
+    "pgl": "pgl",
+    "thunderpick": "thunderpick",
+    "fissure": "fissure",
+    "starladder": "starseries",
+    "firesports": "fire",
+    "perfect-world": "neutral",
+    "esports-foundation": "neutral"
+  }
+}
