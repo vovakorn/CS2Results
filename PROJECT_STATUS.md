@@ -1,7 +1,7 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 2 октября 2026 года; production-версия, настройки и таймеры
-сверены после релиза 2 октября.
+Обновлено: 3 октября 2026 года; production-версия, настройки и таймеры
+сверены после релиза оформления серии.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -15,7 +15,13 @@ production и сверки фактического состояния. Теку
   отдельное четвёртое место без бронзы. Ветка перенесена на актуальный `main`.
 - Preflight: production `d4ectvltcablmvlapuqa`, семь таймеров вызывают `production`;
   радар остаётся PAUSED. Настройки и каналы сохраняются, тестовые посты не нужны.
-- Полные тесты, CI и candidate/production smoke выполняются перед продвижением.
+- PR #132 слит, Git `146c79c`; production `d4em256tt14e9ssktmob`,
+  продвижение 3 октября в 16:49 МСК. Rollback: `d4ectvltcablmvlapuqa`.
+- 656 локальных тестов прошли за 185,59 с; CI Python 3.11/3.12 прошёл.
+  Зависимости, компиляция и архив проверены. Candidate и production smoke:
+  HTTP 200, dry-run подтверждён, startup-ошибок нет. Настройки каналов сохранены.
+  Согласованные 3/4/5 карт, длинные названия, fallback логотипов и полные
+  альбомы проверены визуально. Тестовые и исторические посты не публиковались.
 
 ## Подготовка и выпуск 1–2 октября — превью турнира
 
@@ -181,9 +187,9 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 2 октября 2026 в 16:30 МСК, версия
-  `d4ectvltcablmvlapuqa` из Git `e3271c3` (PR #131).
-  Прежняя `d4efd7ffat05nrjpenu7` закреплена для rollback.
+- Последний production-деплой: 3 октября 2026 в 16:49 МСК, версия
+  `d4em256tt14e9ssktmob` из Git `146c79c` (PR #132).
+  Прежняя `d4ectvltcablmvlapuqa` закреплена для rollback.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
@@ -195,7 +201,7 @@ production и сверки фактического состояния. Теку
   `0 15 ? * * *` (18:00 МСК), три повтора через 30 с.
   Для всех следующих release-команд: `YC_EXPECTED_TRIGGER_COUNT=7`.
 - SHA-256 release-архива:
-  `9ae20c6268166a1e97281d5e03c7f314a8f852e7a62c6a4cf08e24b3549646fc`.
+  `6bbe371a715093246748c079afd79366ca46655c08a762f8f909ac6b73ceca1b`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
