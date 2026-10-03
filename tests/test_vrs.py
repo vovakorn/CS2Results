@@ -110,27 +110,28 @@ def test_vrs_card_renders_snapshot_dates_and_change_signs(monkeypatch):
         TournamentPlacement(placement="4", team_name="Vitality"),
     ], before, after)
     drawn = []
-    arrows = []
+    transitions = []
     original = ImageDraw.ImageDraw.text
-    original_arrow = media_cards._draw_vrs_rank_arrow
+    original_transition = media_cards._draw_rank_transition
 
     def capture_text(draw, xy, text, *args, **kwargs):
         drawn.append((text, kwargs.get("font")))
         return original(draw, xy, text, *args, **kwargs)
 
-    def capture_arrow(draw, center_x, center_y, *, up, color):
-        arrows.append((up, color))
-        return original_arrow(draw, center_x, center_y, up=up, color=color)
+    def capture_transition(draw, x, y, before, after, color):
+        transitions.append((before, after, color))
+        return original_transition(draw, x, y, before, after, color)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-    monkeypatch.setattr(media_cards, "_draw_vrs_rank_arrow", capture_arrow)
+    monkeypatch.setattr(media_cards, "_draw_rank_transition", capture_transition)
     card = media_cards.render_tournament_vrs_cards("Test Tournament", impacts)[0]
     assert Image.open(io.BytesIO(card)).size == (1080, 1080)
     rendered_text = {text for text, _ in drawn}
     assert "VRS ПОСЛЕ ТУРНИРА" in rendered_text
     assert "ДО 01.09.2026 · ПОСЛЕ 08.09.2026" in rendered_text
-    assert {"+42", "-18", "0", "3", "2"} <= rendered_text
-    assert arrows == [(True, media_cards.VRS_UP), (False, media_cards.VRS_DOWN)]
+    assert {"+42", "-18", "0", "+3", "-2"} <= rendered_text
+    assert transitions == [(10, 7, media_cards.VRS_UP), (3, 5, media_cards.VRS_DOWN),
+                           (4, 4, media_cards.MUTED), (6, 6, media_cards.MUTED)]
     for text, font in drawn:
         for sign in ("+", "-"):
             if sign in text:

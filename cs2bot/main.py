@@ -34,7 +34,7 @@ from .instagram_publish import (
     publish_rendered_cards,
     upload_public_reel,
 )
-from .reel_delivery import advance_pending_reel, advance_today_reel, load_pending_reel, save_pending_reel
+from .reel_delivery import advance_pending_reel, advance_today_reel, load_pending_reel, next_reel_audio_style, save_pending_reel
 from .schedule_reels import ScheduleReelError, probe_reel_runtime, reel_caption, render_schedule_reel, storyboard
 from .threads_publish import (
     ThreadsDeliveryUncertainError,
@@ -1031,7 +1031,8 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
     confirmed = False
     try:
         text = format_tournament_vrs(pending.match.tournament_name, impacts)
-        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source) if TELEGRAM_MEDIA_CARDS else []
+        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source,
+            branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH)) if TELEGRAM_MEDIA_CARDS else []
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         if cards:
             try:
@@ -1954,7 +1955,8 @@ def _deliver_social_tournament_vrs(
         claim = asyncio.run(claim_content_delivery(content_uid))
         if claim is None:
             return "duplicate"
-        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source)
+        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source,
+            branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH))
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         if platform == "threads":
             _publish_threads_chain(
@@ -2309,10 +2311,11 @@ def _handle_schedule_reel_job(dry_run: bool, context: Any, render_probe: bool = 
     try:
         state = load_pending_reel(day_key)
         if state is None:
-            video = render_schedule_reel(selected, local_now, DISPLAY_TIMEZONE)
+            audio_style = next_reel_audio_style(day_key)
+            video = render_schedule_reel(selected, local_now, DISPLAY_TIMEZONE, audio_style=audio_style)
             public_url = upload_public_reel(f"schedule_reel_{day_key}", video)
             container_id = create_reel_container(public_url, reel_caption(local_now, count), context)
-            state = save_pending_reel(day_key, container_id, count)
+            state = save_pending_reel(day_key, container_id, count, audio_style=audio_style)
         result = advance_pending_reel(state, context)
     except (InstagramPublishError, ScheduleReelError, StorageUnavailableError) as exc:
         log_event(logger, logging.ERROR, "schedule_reel_failed", error_type=type(exc).__name__)

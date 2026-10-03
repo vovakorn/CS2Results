@@ -62,6 +62,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path, default=Path("build/reel-previews"))
     parser.add_argument("--counts", type=int, nargs="+", default=[1, 4, 10, 20])
+    parser.add_argument("--audio-style", choices=("esports", "minimal"), default="esports")
     args = parser.parse_args()
     now = datetime.now(ZoneInfo("Europe/Moscow"))
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -75,7 +76,8 @@ def main() -> None:
             still_path = args.output_dir / f"schedule-reel-{count}-scene.png"
             still.save(still_path)
             video_path = args.output_dir / f"schedule-reel-{count}.mp4"
-            video_path.write_bytes(render_schedule_reel(fixtures, now, preview_watermark=True))
+            video_path.write_bytes(render_schedule_reel(fixtures, now, preview_watermark=True,
+                                                       audio_style=args.audio_style))
             print(f"{count}: {video_path.resolve()} ({video_path.stat().st_size} bytes)")
     finally:
         media_cards.fetch_team_logo = original_logo_loader

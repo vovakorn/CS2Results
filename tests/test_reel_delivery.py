@@ -95,6 +95,87 @@ def test_state_first_writer_wins():
     assert reel_delivery.save_pending_reel("2026-09-25", "99999", 4, client=Client(), bucket="state") == STATE
 
 
+class HistoryClient:
+    def __init__(self, states, pages=None):
+        self.states = {state.day_key: state for state in states}
+        self.pages = pages or [{"Contents": [{"Key": f"reels/{day}.json"} for day in self.states]}]
+        self.calls = []
+
+    def list_objects_v2(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.pages[len(self.calls) - 1]
+
+    def get_object(self, **kwargs):
+        state = self.states[kwargs["Key"][6:-5]]
+        return {"Body": io.BytesIO(json.dumps(state.__dict__).encode())}
+
+
+@pytest.mark.parametrize("previous,expected", [(None, "esports"), ("esports", "minimal"), ("minimal", "esports")])
+def test_audio_alternates_persisted_editions_not_calendar_days(previous, expected):
+    state = reel_delivery.PendingReel("2026-09-25", "12345", 4, STATE.created_at, previous)
+    assert reel_delivery.next_reel_audio_style("2026-10-03", client=HistoryClient([state]), bucket="state") == expected
+
+
+def test_audio_first_edition_and_pagination_ignore_current_future_and_non_states():
+    assert reel_delivery.next_reel_audio_style("2026-10-03", client=HistoryClient([]), bucket="state") == "esports"
+    old = reel_delivery.PendingReel("2026-09-24", "12345", 4, STATE.created_at, "minimal")
+    latest = reel_delivery.PendingReel("2026-09-25", "12345", 4, STATE.created_at, "esports")
+    pages = [
+        {"Contents": [{"Key": "reels/2026-09-24.json"}], "IsTruncated": True, "NextContinuationToken": "next"},
+        {"Contents": [{"Key": key} for key in ["reels/2026-09-25.json", "reels/2026-10-03.json",
+          "reels/2026-10-04.json", "reels/invalid.json", "reels/20260930.json", "reels/2026-10-01.mp4"]]},
+    ]
+    client = HistoryClient([old, latest], pages)
+    assert reel_delivery.next_reel_audio_style("2026-10-03", client=client, bucket="state") == "minimal"
+    assert client.calls[1]["ContinuationToken"] == "next"
+
+
+def test_audio_history_does_not_silently_reset_on_storage_failure():
+    class Client:
+        def list_objects_v2(self, **kwargs):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+    with pytest.raises(reel_delivery.storage.StorageUnavailableError):
+        reel_delivery.next_reel_audio_style("2026-10-03", client=Client(), bucket="state")
+    with pytest.raises(reel_delivery.storage.StorageUnavailableError):
+        reel_delivery.next_reel_audio_style("2026-10-03", client=HistoryClient([], [{"IsTruncated": True}]), bucket="state")
+
+
+def test_selected_audio_is_saved_and_first_container_keeps_its_audio():
+    saved = []
+    class Client:
+        def put_object(self, **kwargs):
+            saved.append(json.loads(kwargs["Body"]))
+    state = reel_delivery.save_pending_reel("2026-10-03", "99999", 4,
+        audio_style="minimal", client=Client(), bucket="state")
+    assert state.audio_style == saved[0]["audio_style"] == "minimal"
+    class ConflictClient:
+        def put_object(self, **kwargs):
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+        def get_object(self, **kwargs):
+            return {"Body": io.BytesIO(json.dumps(state.__dict__).encode())}
+    assert reel_delivery.save_pending_reel("2026-10-03", "77777", 4,
+        audio_style="esports", client=ConflictClient(), bucket="state") == state
+
+
+@pytest.mark.parametrize("audio_style", [None, "esports", "minimal", "original", "melodic"])
+def test_legacy_state_read_and_only_two_new_sounds(audio_style):
+    payload = dict(STATE.__dict__)
+    if audio_style is None:
+        payload.pop("audio_style")
+    else:
+        payload["audio_style"] = audio_style
+    class Client:
+        def get_object(self, **kwargs):
+            return {"Body": io.BytesIO(json.dumps(payload).encode())}
+    if audio_style in (None, "esports", "minimal"):
+        assert reel_delivery.load_pending_reel(STATE.day_key, client=Client(), bucket="state").audio_style == audio_style
+    else:
+        with pytest.raises(reel_delivery.storage.StorageUnavailableError):
+            reel_delivery.load_pending_reel(STATE.day_key, client=Client(), bucket="state")
+        with pytest.raises(ValueError):
+            reel_delivery.save_pending_reel(STATE.day_key, "12345", 4, audio_style=audio_style, client=Client(), bucket="state")
+
+
 def test_worker_only_loads_current_day(monkeypatch):
     looked_up = []
     monkeypatch.setattr(reel_delivery, "load_pending_reel", lambda day: looked_up.append(day) or None)

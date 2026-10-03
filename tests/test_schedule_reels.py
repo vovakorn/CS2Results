@@ -1,4 +1,7 @@
 from datetime import datetime, timedelta
+import math
+import struct
+import wave
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -83,3 +86,110 @@ def test_encoder_failure_is_safe(monkeypatch):
     monkeypatch.setattr(schedule_reels.subprocess, "run", fail)
     with pytest.raises(schedule_reels.ScheduleReelError, match="encoding failed"):
         schedule_reels.render_schedule_reel(fixtures(1), NOW)
+
+
+@pytest.mark.parametrize("kind", ["intro", "matches", "outro"])
+def test_larger_channel_logo_stays_centered_on_lines_in_every_scene(monkeypatch, kind):
+    calls = []
+    original = schedule_reels._draw_channel_brand
+    def capture(image, draw, **kwargs):
+        calls.append(kwargs)
+        return original(image, draw, **kwargs)
+    monkeypatch.setattr(schedule_reels, "_draw_channel_brand", capture)
+    scene = next(scene for scene in schedule_reels.storyboard(fixtures(4)) if scene.kind == kind)
+    assert schedule_reels.render_scene(scene, NOW, 4).size == (1080, 1920)
+    assert len(calls) == 1
+    assert calls[0]["center_y"] == 214
+    assert calls[0]["logo_diameter"] == 144
+    # Include the 5px outer rim and retain space before the channel title.
+    assert 214 + 144 / 2 + 5 < calls[0]["label_center_y"] - 15
+
+
+def test_esports_beat_is_deterministic_loopable_and_has_headroom(tmp_path):
+    paths = [tmp_path / f"beat-{index}.wav" for index in range(2)]
+    for path in paths:
+        schedule_reels._write_original_loop(path)
+    assert paths[0].read_bytes() == paths[1].read_bytes()
+    with wave.open(str(paths[0]), "rb") as stream:
+        assert stream.getframerate() == 48000
+        assert stream.getnchannels() == 1
+        assert stream.getsampwidth() == 2
+        assert stream.getnframes() / 48000 == pytest.approx(16 * 60 / 150)
+        pcm = stream.readframes(stream.getnframes())
+    values = [item[0] / 32767 for item in struct.iter_unpack("<h", pcm)]
+    assert .35 < max(abs(value) for value in values) < .82
+    assert .06 < math.sqrt(sum(value * value for value in values) / len(values)) < .3
+    assert abs(values[-1] - values[0]) < .01
+    assert abs(sum(values) / len(values)) < .01
+
+
+def test_minimal_beat_is_distinct_deterministic_and_loopable(tmp_path):
+    paths = [tmp_path / f"minimal-{index}.wav" for index in range(2)]
+    for path in paths:
+        schedule_reels._write_minimal_loop(path)
+    assert paths[0].read_bytes() == paths[1].read_bytes()
+    energetic = tmp_path / "esports.wav"
+    schedule_reels._write_original_loop(energetic)
+    assert paths[0].read_bytes() != energetic.read_bytes()
+    with wave.open(str(paths[0]), "rb") as stream:
+        assert stream.getframerate() == 48000 and stream.getnchannels() == 1
+        assert stream.getnframes() / 48000 == pytest.approx(16 * 60 / 120)
+        pcm = stream.readframes(stream.getnframes())
+    values = [item[0] / 32767 for item in struct.iter_unpack("<h", pcm)]
+    assert .35 < max(abs(value) for value in values) < .82
+    assert .06 < math.sqrt(sum(value * value for value in values) / len(values)) < .3
+    assert abs(values[-1] - values[0]) < .01
+    assert abs(sum(values) / len(values)) < .01
+
+
+@pytest.mark.parametrize("style", ["unknown", "melodic", "original"])
+def test_unknown_audio_style_is_rejected_before_encoding(monkeypatch, style):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("Invalid audio style must not start rendering")
+    monkeypatch.setattr(schedule_reels, "storyboard", unexpected)
+    with pytest.raises(schedule_reels.ScheduleReelError, match="audio style"):
+        schedule_reels.render_schedule_reel(fixtures(1), NOW, audio_style=style)
+
+
+@pytest.mark.parametrize("style", [None, "esports", "minimal"])
+def test_audio_selection_preserves_default_and_changes_only_audio(monkeypatch, style):
+    calls = []
+    original_esports = schedule_reels._write_original_loop
+    original_minimal = schedule_reels._write_minimal_loop
+    def energetic(path):
+        calls.append("esports")
+        return original_esports(path)
+    def minimal(path):
+        calls.append("minimal")
+        return original_minimal(path)
+    monkeypatch.setattr(schedule_reels, "_write_original_loop", energetic)
+    monkeypatch.setattr(schedule_reels, "_write_minimal_loop", minimal)
+    kwargs = {} if style is None else {"audio_style": style}
+    assert b"ftyp" in schedule_reels.render_schedule_reel(fixtures(1), NOW, **kwargs)[:32]
+    assert calls == [style or "esports"]
+
+
+def test_encoder_fades_beat_in_and_out_without_changing_duration(monkeypatch):
+    commands = []
+    original = schedule_reels.subprocess.run
+    def capture(command, *args, **kwargs):
+        commands.append(command)
+        return original(command, *args, **kwargs)
+    monkeypatch.setattr(schedule_reels.subprocess, "run", capture)
+    schedule_reels.render_schedule_reel(fixtures(1), NOW, preview_watermark=True)
+    assert len(commands) == 1
+    command = commands[0]
+    assert command[command.index("-t") + 1] == "8.0"
+    assert command[command.index("-af") + 1] == "afade=t=in:st=0:d=0.25,afade=t=out:st=7.75:d=0.25"
+def test_runtime_probe_exercises_bundled_tournament_brand_without_publication(monkeypatch):
+    from cs2bot import schedule_reels as renderer
+    calls = []
+    def render(matches, now, **kwargs):
+        calls.append((matches, kwargs))
+        assert renderer._resolve_reel_visuals(matches).shared is not None
+        return b"fake-mp4"
+    monkeypatch.setattr(renderer, "render_schedule_reel", render)
+    result = renderer.probe_reel_runtime(datetime(2026, 10, 3, 9, tzinfo=ZoneInfo("Europe/Moscow")))
+    assert result["tournament_theme"] is True
+    assert len(calls[0][0]) == 20
+    assert calls[0][1] == {"preview_watermark": True}

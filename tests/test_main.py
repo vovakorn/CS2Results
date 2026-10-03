@@ -291,7 +291,11 @@ def test_threads_vrs_publication_replies_to_the_tournament_tail(monkeypatch):
     )
     published = []
     monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(DeliveryClaim("vrs", "claim", "id")))
-    monkeypatch.setattr(main, "render_tournament_vrs_cards", lambda *args: [b"vrs-card"])
+    rendered_brands = []
+    brand = object()
+    monkeypatch.setattr(main, "branding_for_match", lambda *args: brand)
+    monkeypatch.setattr(main, "render_tournament_vrs_cards",
+                        lambda *args, **kwargs: (rendered_brands.append(kwargs["branding"]), [b"vrs-card"])[1])
     monkeypatch.setattr(main, "publish_threads_rendered_cards", lambda *args: (published.append(args), "vrs-post")[1])
     monkeypatch.setattr(
         main, "reserve_threads_chain_append",
@@ -300,7 +304,39 @@ def test_threads_vrs_publication_replies_to_the_tournament_tail(monkeypatch):
     monkeypatch.setattr(main, "mark_content_processed", lambda *args: _async(None))
 
     assert main._deliver_threads_tournament_vrs(pending, None) == "sent"
+    assert rendered_brands == [brand]
     assert published[0][4] == "standings-post"
+
+
+@pytest.mark.parametrize("platform", ["telegram", "instagram", "threads"])
+def test_vrs_renderer_receives_event_brand_in_each_channel(monkeypatch, platform):
+    impact = main.TournamentVRSImpact(placement="1", team_name="NAVI", team_id="a",
+        before_points=100, after_points=120, before_rank=3, after_rank=2,
+        points_delta=20, rank_delta=1, source="Valve VRS", before_version="before", after_version="after")
+    other = impact.model_copy(update={"placement":"2", "team_name":"MOUZ", "team_id":"b"})
+    pending = PendingDelivery(key="outbox/vrs-test", channel_id=platform, channel_name=platform,
+        match=_match().model_copy(update={"vrs_baseline_id":"test-event"}),
+        created_at="2026-10-03T09:00:00Z", content_type="tournament_vrs_standings",
+        vrs_impacts=(impact, other))
+    brand = object()
+    rendered = []
+    monkeypatch.setattr(main, "branding_for_match", lambda *args: brand)
+    monkeypatch.setattr(main, "render_tournament_vrs_cards",
+        lambda *args, **kwargs: (rendered.append(kwargs["branding"]), [b"png"])[1])
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async(DeliveryClaim("vrs","claim","id")))
+    monkeypatch.setattr(main, "mark_content_processed", lambda *args: _async(None))
+    monkeypatch.setattr(main, "send_photo_to_telegram", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "publish_rendered_cards", lambda *args: None)
+    monkeypatch.setattr(main, "_publish_threads_chain", lambda *args, **kwargs: None)
+    if platform == "telegram":
+        outcome = main._deliver_tournament_vrs(pending, {"chat_id":"@test"}, "test")
+    elif platform == "instagram":
+        outcome = main._deliver_instagram_tournament_vrs(pending, None)
+    else:
+        outcome = main._deliver_threads_tournament_vrs(pending, None)
+    assert outcome == "sent"
+    assert rendered == [brand]
 
 
 def test_instagram_content_delivery_has_separate_content_uid(monkeypatch):
@@ -2924,7 +2960,7 @@ def test_preview_is_root_and_schedule_result_liquipedia_standings_vrs_follow_it(
     impact = main.TournamentVRSImpact(placement="1", team_name="NAVI", team_id="navi", before_points=100,
         after_points=140, before_rank=2, after_rank=1, points_delta=40, rank_delta=1,
         source="Valve VRS", before_version="before", after_version="after")
-    monkeypatch.setattr(main, "render_tournament_vrs_cards", lambda *args: [b"vrs"])
+    monkeypatch.setattr(main, "render_tournament_vrs_cards", lambda *args, **kwargs: [b"vrs"])
     impacts = (impact, impact.model_copy(update={"placement": "2", "team_name": "FaZe", "team_id": "faze"}))
     assert main._deliver_threads_tournament_vrs(
         PendingDelivery(key="outbox/vrs", channel_id="threads", channel_name="threads", match=final,

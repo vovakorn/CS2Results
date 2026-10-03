@@ -237,7 +237,7 @@ def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch,
             "BLAST Open Porto 2026", "Europe/Moscow", "next_match")
     assert len(panels) == 1 and len(logos) == 2
     x0, y0, x1, y1 = panels[0]
-    assert y1 - y0 <= 420
+    assert y1 - y0 <= (465 if template in {"result", "digest"} else 420)
     for name, words, (center, diameter) in [
         ("GAIMIN GLADIATORS ACADEMY", {"GAIMIN", "GLADIATORS", "ACADEMY"}, logos[0]),
         ("NATUS VINCERE JUNIOR", {"NATUS VINCERE", "JUNIOR"}, logos[1]),

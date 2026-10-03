@@ -19,6 +19,22 @@ def accent_color(branding):
     return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
 
 
+def branding_for_matches(matches, profiles_path=None):
+    """Brand only a complete page belonging to one exactly registered event."""
+    from .match_sources.config import TOURNAMENT_PREVIEW_PROFILES_PATH
+    from .tournament_identity import event_for_match
+    try:
+        profiles = [event_for_match(match, profiles_path or TOURNAMENT_PREVIEW_PROFILES_PATH)
+                    for match in matches]
+    except (OSError, ValueError):
+        return None
+    if not profiles or any(profile is None for profile in profiles):
+        return None
+    if len({profile.key for profile in profiles}) != 1:
+        return None
+    return profiles[0].branding
+
+
 def event_logo(branding, asset_dir):
     if not branding.logo_asset:
         return None
@@ -31,14 +47,14 @@ def event_logo(branding, asset_dir):
         return None
 
 
-def add_event_watermark(image, logo):
+def add_event_watermark(image, logo, *, position=(690, 110), size=(365, 440), opacity=.065):
     """Add the same subdued logo backdrop without modifying the foreground logo."""
     if logo is None:
         return
     watermark = logo.copy()
-    watermark.thumbnail((365, 440), Image.Resampling.LANCZOS)
-    watermark.putalpha(watermark.getchannel("A").point(lambda value: round(value * .065)))
-    image.alpha_composite(watermark, (690, 110))
+    watermark.thumbnail(size, Image.Resampling.LANCZOS)
+    watermark.putalpha(watermark.getchannel("A").point(lambda value: round(value * opacity)))
+    image.alpha_composite(watermark, position)
 
 
 def add_event_glow(image, accent):

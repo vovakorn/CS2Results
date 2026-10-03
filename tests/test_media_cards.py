@@ -1134,7 +1134,7 @@ def test_ten_match_schedule_keeps_logos_inside_rows(monkeypatch):
         boxes.append(box)
         return original(c, d, match, box, tz, **kwargs)
     monkeypatch.setattr(media_cards, "_draw_compact_schedule_match", capture)
-    monkeypatch.setattr(media_cards, "_draw_logo", lambda c,d,center,diameter,*args: logos.append((center,diameter)))
+    monkeypatch.setattr(media_cards, "_draw_logo", lambda c,d,center,diameter,*args,**kwargs: logos.append((center,diameter)))
     media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(10)], media_cards.datetime.now(), "Europe/Moscow")
     for i, (x0,y0,x1,y1) in enumerate(boxes):
         for (x,y),diameter in logos[i*2:i*2+2]:
