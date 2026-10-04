@@ -8,6 +8,19 @@ Production и восемь таймеров сверены; надёжность
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
+## Telegram-админка — частично подключена, 4 октября 2026
+
+- PR #138 смержен; main production `d4er6tdhfbvnd9skcpo5`, rollback
+  `d4esmikop5grj6bfhlfm`. Candidate и post-promote dry-run smoke прошли;
+  control-флаг не включён, поэтому текущие публикации не изменили поведения.
+- Созданы private Cloud Function `cs2results-telegram-admin` с handler
+  `cs2bot.admin_handler.handler` и API Gateway `cs2results-telegram-admin`.
+  Gateway вызывает только тег `production` через отдельный service account с
+  `functions.functionInvoker`; тестовый пустой запрос получил `403`.
+- Telegram webhook не зарегистрирован. Для включения нужны Telegram user ID
+  владельца и новый webhook secret в Lockbox; `TELEGRAM_ADMIN_CHAT_ID` не
+  используется как право доступа. До этого admin-function отключена.
+
 ## Восстановительный выпуск — 4 октября 2026
 
 - Ветка восстановления перенесена на актуальный main `0ff637c`: 20 новых
