@@ -1,6 +1,8 @@
 # Превью турнира «Перед стартом»
 
 В production с 2 октября 2026 года (PR #131, версия `d4ectvltcablmvlapuqa`).
+Согласованный реестр турнирных тем выпущен 4 октября (PR #134, текущая версия
+`d4egkm2nv8ai69o10144`); реальный EPL dry-run прошёл в candidate и production.
 Telegram, Instagram и Threads независимо публикуют один PNG-альбом.
 Первый EPL-выпуск подтверждён во всех трёх сетях; discovery работает в 18:00 МСК.
 Радар остаётся PAUSED. Начальный VRS и root анонса проверены в Object Storage;

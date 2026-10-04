@@ -171,7 +171,12 @@ VRS-альбом не создаётся.
 с тремя повторами через 30 секунд. После его создания ожидаемое число timer
 trigger — 7: `YC_EXPECTED_TRIGGER_COUNT=7`. Счётчик включает PAUSED timers:
 после релиза 2 октября существуют семь timers: шесть ACTIVE и один PAUSED (радар).
-Discovery `a1suf0l0l534jn9cfk80` включён; production `d4ectvltcablmvlapuqa`.
+Discovery `a1suf0l0l534jn9cfk80` включён. Последняя проверка 4 октября 2026:
+production `d4egkm2nv8ai69o10144` из Git `f11fa1a` (PR #134), rollback
+`d4e87d60bhtme5g971ds`; оба smoke и реальный EPL dry-run прошли без отправок.
+Все семь timers вызывают `production`: шесть ACTIVE, радар PAUSED. Привязки
+Lockbox, env, ресурсы и timeout сохранены; runtime-реестр тем и локальные
+PNG сверены с release-архивом. Подробности — в `PROJECT_STATUS.md`.
 Для всех последующих release-команд обязательно задавать
 `YC_EXPECTED_TRIGGER_COUNT=7` (базовое значение скрипта — 6).
 Радар не возобновлялся; начальный VRS сохраняется в анонсе.
