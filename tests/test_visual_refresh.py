@@ -155,9 +155,10 @@ def test_vrs_all_pages_use_brand_and_draw_both_absolute_ranks(monkeypatch):
         assert image.getpixel((80, 90))[1] > image.getpixel((80, 90))[2] * 2
 
 
-def test_reel_intro_uses_earliest_pair_without_duplicating_storyboard_data():
+def test_reel_intro_uses_full_day_without_duplicating_storyboard_data():
     scenes = r.storyboard([event_match(1), event_match()])
-    assert scenes[0].featured_match.match_id == "0"
+    assert scenes[0].matches == ()
+    assert [match.match_id for match in scenes[0].context_matches] == ["0", "1"]
     assert [match.match_id for scene in scenes for match in scene.matches] == ["0", "1"]
     assert r.render_scene(scenes[0], NOW, 2).size == (1080, 1920)
 
