@@ -175,6 +175,10 @@ VRS-альбом не создаётся.
 при командах `candidate` и `promote`; скрипт перенесёт только этот флаг, без
 секретов и без изменения остальных production-настроек.
 
+После записи initial admin policy owner-control включается только через
+`YC_PUBLICATION_CONTROL_ENABLED=1` в candidate и promote. Скрипт валидирует
+boolean и переносит прочие настройки и Lockbox references без чтения секретов.
+
 Превью «Перед стартом» включается через `YC_ENABLE_TOURNAMENT_PREVIEWS=1` при
 создании candidate. Новый таймер `preview_discovery` создаётся отдельно после
 успешного promote: ежедневно в 18:00 МСК (`0 15 ? * * *`), только тег `production`,

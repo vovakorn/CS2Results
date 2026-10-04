@@ -530,6 +530,23 @@ def test_invalid_tournament_preview_flag_is_rejected(fake_cloud):
     assert "YC_ENABLE_TOURNAMENT_PREVIEWS must be a boolean" in result.stderr
 
 
+def test_candidate_can_enable_publication_control_preserving_other_configuration(fake_cloud):
+    fake_cloud["YC_PUBLICATION_CONTROL_ENABLED"] = "true"
+    _create_candidate(fake_cloud)
+    create_call = next(call for call in _calls(fake_cloud)
+                       if call[:4] == ["serverless", "function", "version", "create"])
+    value = create_call[create_call.index("--environment") + 1]
+    environment = dict(item.split("=", 1) for item in next(csv.reader([value])))
+    assert environment == {**BASE_VERSION["environment"], "PUBLICATION_CONTROL_ENABLED": "1"}
+
+
+def test_invalid_publication_control_flag_is_rejected(fake_cloud):
+    fake_cloud["YC_PUBLICATION_CONTROL_ENABLED"] = "maybe"
+    result = _run("check", fake_cloud)
+    assert result.returncode != 0
+    assert "YC_PUBLICATION_CONTROL_ENABLED must be a boolean" in result.stderr
+
+
 def test_candidate_can_add_pinned_telegram_proxy_secret(fake_cloud: dict[str, str]) -> None:
     fake_cloud.update(
         {
