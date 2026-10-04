@@ -44,7 +44,7 @@ def renewal(monkeypatch):
         def json(self): return copy.deepcopy(self.payload)
         def raise_for_status(self): pass
     def get(url, **kwargs):
-        assert "lockbox-payload" in url
+        assert url == "https://payload.lockbox.api.cloud.yandex.net/lockbox/v1/secrets/secret-id/payload"
         assert "proxies" not in kwargs
         state["reads"] += 1
         payload = copy.deepcopy(state["secret"])

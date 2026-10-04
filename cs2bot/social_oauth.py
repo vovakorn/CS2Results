@@ -36,7 +36,7 @@ THREADS_GRAPH_URL = "https://graph.threads.net"
 # Tournament chains publish replies, which require their own OAuth permission.
 THREADS_OAUTH_SCOPES = "threads_basic,threads_content_publish,threads_manage_replies"
 LOCKBOX_API_URL = "https://lockbox.api.cloud.yandex.net"
-LOCKBOX_PAYLOAD_URL = "https://lockbox-payload.api.cloud.yandex.net/lockbox/v1/secrets"
+LOCKBOX_PAYLOAD_URL = "https://payload.lockbox.api.cloud.yandex.net/lockbox/v1/secrets"
 THREADS_REFRESH_WINDOW = timedelta(days=14)
 IAM_METADATA_URL = (
     "http://169.254.169.254/computeMetadata/v1/instance/"
