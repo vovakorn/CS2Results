@@ -128,11 +128,13 @@ CS2 без информационного шума. Ближайшая прод�
   дедуплицируется стабильным ключом tournament ID и канала; ручной выпуск остаётся
   дневным. Автоматический таймер сейчас PAUSED.
 - Секреты хранятся в Yandex Lockbox. Функция не должна быть публичной.
-- Код Telegram-админки выпущен в main production 4 октября: policy по паре
-  формат/назначение, поколения очереди и журнал подтверждённых выпусков. Отдельные
-  private function и Gateway созданы, но выключены: webhook не зарегистрирован,
-  пока не задан Telegram user ID владельца и новый webhook secret. См.
-  `docs/telegram-admin.md`.
+- Telegram-админка подключена в production 4 октября: policy по паре
+  формат/назначение, поколения очереди и журнал подтверждённых выпусков. Начальный
+  policy-документ имеет ревизию 1 и сохраняет прежнее разрешение всех пар; основной
+  publisher `d4e7f2tjqrkjl9p3la5v` работает с `PUBLICATION_CONTROL_ENABLED=1`.
+  Private admin-function `d4eoh7cd4dnhhdcpiuur` и Gateway используют только тег
+  `production`; webhook зарегистрирован. Первый `/admin` владельца остаётся живой
+  проверкой доставки Telegram. См. `docs/telegram-admin.md`.
 - Перед этим релизом реальный Object Storage probe подтвердил атомарность
   conditional PUT: один успех из десяти параллельных create-claim и отказ
   устаревшего ETag при перехвате claim.

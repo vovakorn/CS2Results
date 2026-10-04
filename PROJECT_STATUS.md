@@ -8,18 +8,27 @@ Production и восемь таймеров сверены; надёжность
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## Telegram-админка — частично подключена, 4 октября 2026
+## Telegram-админка — подключена, 4 октября 2026
 
-- PR #138 смержен; main production `d4er6tdhfbvnd9skcpo5`, rollback
-  `d4esmikop5grj6bfhlfm`. Candidate и post-promote dry-run smoke прошли;
-  control-флаг не включён, поэтому текущие публикации не изменили поведения.
-- Созданы private Cloud Function `cs2results-telegram-admin` с handler
-  `cs2bot.admin_handler.handler` и API Gateway `cs2results-telegram-admin`.
-  Gateway вызывает только тег `production` через отдельный service account с
-  `functions.functionInvoker`; тестовый пустой запрос получил `403`.
-- Telegram webhook не зарегистрирован. Для включения нужны Telegram user ID
-  владельца и новый webhook secret в Lockbox; `TELEGRAM_ADMIN_CHAT_ID` не
-  используется как право доступа. До этого admin-function отключена.
+- PR #138–140 смержены. Основной publisher: candidate и production
+  `d4e7f2tjqrkjl9p3la5v` из Git `90631d2`; rollback
+  `d4er6tdhfbvnd9skcpo5`. Candidate и post-promote dry-run smoke прошли.
+  `PUBLICATION_CONTROL_ENABLED=1`; создан initial policy revision 1 без записей,
+  поэтому он сохраняет прежнее разрешение всех пар, но больше не допускает
+  fail-open при отсутствии документа.
+- Private Cloud Function `cs2results-telegram-admin` работает на production
+  `d4eoh7cd4dnhhdcpiuur`; отключённая версия `d4eh77fdof316iic4kbb` сохранена
+  под rollback. Owner ID и webhook secret находятся только в отдельном Lockbox
+  secret; `TELEGRAM_ADMIN_CHAT_ID` не используется как право доступа.
+- Gateway `cs2results-telegram-admin` вызывает только тег `production` через
+  отдельный service account с `functions.functionInvoker`. Пустой запрос и
+  запрос от чужого user ID получили `403`; Gateway ответил за 1,10 с и не
+  отправлял сообщений. Webhook Telegram зарегистрирован для `/telegram/admin`
+  с secret token и updates `message`, `callback_query`.
+- При последней сверке Telegram сохранил старую ошибку доставки `Connection
+  timed out`; после разогрева Gateway прямой защищённый запрос отвечает быстро.
+  Нужна живая проверка: владелец открывает личный чат с ботом и отправляет
+  `/admin`. Она не запускает публикацию.
 
 ## Восстановительный выпуск — 4 октября 2026
 

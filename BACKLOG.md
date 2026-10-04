@@ -9,10 +9,14 @@
 
 ## Now
 
-- [ ] Завершить активацию Telegram-админки: получить Telegram user ID владельца,
-  создать Lockbox secret, записать initial policy, включить admin/control flags и
-  зарегистрировать webhook. Private function и Gateway уже созданы; endpoint пока
-  отвергает все запросы, publisher продолжает прежний режим.
+- [x] Подключить Telegram-админку: owner ID и webhook secret сохранены в Lockbox,
+  initial policy revision 1 записан, admin/control flags включены и webhook
+  зарегистрирован. Publisher `d4e7f2tjqrkjl9p3la5v` и admin-function
+  `d4eoh7cd4dnhhdcpiuur` используют `production`; rollback сохранён.
+- [ ] После первого `/admin` владельца проверить Telegram `getWebhookInfo`:
+  последняя сохранённая Telegram ошибка — `Connection timed out`, хотя
+  защищённый Gateway-запрос уже возвращает `403` за 1,10 с. Не отправлять
+  тестовые посты или сообщения автоматически.
 
 - [ ] После отдельного решения разобрать 9 старых итогов StarLadder в outbox:
   3 матча × 3 сети, без подтверждения финала. Копии сохранены 4 октября;

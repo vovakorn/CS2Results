@@ -5,11 +5,11 @@
 
 ## Доступ и включение
 
-До отдельного production-подключения оба флага остаются `0`:
+В production оба флага включены:
 
 ```text
-TELEGRAM_ADMIN_ENABLED=0
-PUBLICATION_CONTROL_ENABLED=0
+TELEGRAM_ADMIN_ENABLED=1
+PUBLICATION_CONTROL_ENABLED=1
 ```
 
 Для подключения нужны `TELEGRAM_ADMIN_USER_ID` одного владельца и
@@ -43,16 +43,22 @@ PUBLICATION_CONTROL_ENABLED=0
 
 ## Фактическое состояние подключения
 
-4 октября 2026 создана private функция `cs2results-telegram-admin` и Gateway
+4 октября 2026 подключены private функция `cs2results-telegram-admin` и Gateway
 `cs2results-telegram-admin`. Gateway использует отдельный service account только
 с ролью `functions.functionInvoker` и обращается к тегу `production`; publisher
-не стал публичным. Функция намеренно выключена, а тестовый POST без secret получил
-`403`. Webhook Telegram пока не зарегистрирован.
+не стал публичным. Admin production — `d4eoh7cd4dnhhdcpiuur`, основной publisher
+— `d4e7f2tjqrkjl9p3la5v`; для обоих сохранены rollback-версии.
 
-Для активации нужен Telegram user ID владельца. После его получения создать новый
-Lockbox secret с этим ID и webhook secret, записать initial policy, выпустить
-включённую версию admin-function и publisher с `PUBLICATION_CONTROL_ENABLED=1`,
-сверить текущий webhook и зарегистрировать новый.
+Owner ID и webhook secret находятся в отдельном Lockbox secret. Initial policy
+`admin/publication-policy-v1.json` записан с revision 1 и пустыми entries: это
+сохраняет прежнее разрешение всех пар, но при включённом control-флаге отсутствие
+или ошибка policy всё равно блокирует новые внешние отправки. Webhook зарегистрирован
+для Gateway `/telegram/admin` с secret token и только для `message` и
+`callback_query`.
+
+Пустой запрос и корректно подписанный запрос от чужого user ID получили `403`;
+последний ответ Gateway занял 1,10 с. Первый `/admin` владельца в личном чате —
+живая проверка Telegram-доставки; он не публикует контент.
 
 ## Порядок подключения
 
