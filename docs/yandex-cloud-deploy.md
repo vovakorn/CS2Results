@@ -172,11 +172,13 @@ VRS-альбом не создаётся.
 trigger — 7: `YC_EXPECTED_TRIGGER_COUNT=7`. Счётчик включает PAUSED timers:
 после релиза 2 октября существуют семь timers: шесть ACTIVE и один PAUSED (радар).
 Discovery `a1suf0l0l534jn9cfk80` включён. Последняя проверка 4 октября 2026:
-production `d4egkm2nv8ai69o10144` из Git `f11fa1a` (PR #134), rollback
-`d4e87d60bhtme5g971ds`; оба smoke и реальный EPL dry-run прошли без отправок.
-Все семь timers вызывают `production`: шесть ACTIVE, радар PAUSED. Привязки
-Lockbox, env, ресурсы и timeout сохранены; runtime-реестр тем и локальные
-PNG сверены с release-архивом. Подробности — в `PROJECT_STATUS.md`.
+production `d4ecbutjpl11hkf1qiu7` из Git `373fe3c` (PR #136), rollback
+`d4ebicjjg2tpneivruvs`; оба smoke и branded Reel render-probe прошли без отправок.
+Все семь main timers вызывают `production`: шесть ACTIVE, радар PAUSED.
+Отдельный OAuth timer ACTIVE также вызывает `production`; всего в папке восемь.
+Привязки Lockbox, env, ресурсы и timeout сохранены. Probe: 20 матчей / 29 с,
+60 305 ms, 2 804 603 байта, max RSS Python 115 236 KiB; startup-ошибок нет.
+OAuth-функция и её timer этим релизом не менялись. Подробности — в `PROJECT_STATUS.md`.
 Для всех последующих release-команд обязательно задавать
 `YC_EXPECTED_TRIGGER_COUNT=7` (базовое значение скрипта — 6).
 Радар не возобновлялся; начальный VRS сохраняется в анонсе.

@@ -1,7 +1,7 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 4 октября 2026 года; выпущены меры надёжности Threads.
-Production и восемь таймеров сверены после релиза; турнирные темы сохранены.
+Обновлено: 4 октября 2026 года; выпущен новый первый экран Reel.
+Production и восемь таймеров сверены; надёжность Threads и турнирные темы сохранены.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
@@ -131,7 +131,11 @@ production и сверки фактического состояния. Теку
   `threads_publish` не вызывался; диагностический root-контейнер не опубликован.
   Доставка пока не восстановлена. [Процесс восстановления](docs/threads-publishing.md).
 
-## Локальный первый экран Reel — 4 октября 2026
+## Релиз первого экрана Reel — 4 октября 2026
+
+- PR #136 слит, Git `373fe3cb7b65c7c0912fbf0b6f87877b50c0da85`.
+  Production `d4ecbutjpl11hkf1qiu7`, продвижение в 15:49:57 МСК;
+  прежняя `d4ebicjjg2tpneivruvs` закреплена для rollback.
 
 - Пользователь выбрал «Твоя команда играет сегодня?». До шести уникальных
   команд показаны равноправными плитками, остальные указаны точным счётчиком;
@@ -147,8 +151,23 @@ production и сверки фактического состояния. Теку
 - Пользователь утвердил релиз 4 октября. Ветка `codex/reel-team-intro-oct04`
   перенесена с `c25f082` на актуальный `origin/main` `a7e584d`, сохраняя релиз
   надёжности Threads. Полный набор: 800 тестов за 210,00 с; компиляция и
-  итоговый diff прошли. CI и cloud render-probe обязательны перед promotion.
-  На этом этапе production не переключался, внешних постов нет.
+  итоговый diff прошли. CI Python 3.11/3.12, security audit, зависимости,
+  компиляция и сборка успешны.
+- Единственный архив: 17 148 025 байт, SHA-256
+  `5a143dd476078046ae1e2a60ce80b8ef5c507e05d82013e592d03eb85bb45316`.
+  Reel, publisher/OAuth и реестр профилей сверены с checkout; Linux Xray включён.
+- Candidate и production smoke: `200`, `dry_run=true`, startup-ошибок нет.
+  Дополнительный cloud render-probe кандидата собрал 20 синтетических матчей:
+  29 с, 60 305 ms, 2 804 603 байта, max RSS Python 115 236 KiB.
+  После probe и promote в ограниченном ERROR/FATAL журнале ноль записей;
+  медиа не загружалось.
+- Конфигурация кандидата совпала с прежним production по SHA-256: runtime,
+  handler, ресурсы/timeout, service account/concurrency, environment,
+  secret references и logging. Сохранены 29 env vars, 7 Lockbox references,
+  256 MiB / 120 s. Восемь таймеров на `production`: 7 main (6 ACTIVE,
+  radar PAUSED), 1 ACTIVE OAuth. OAuth-функция и таймер этим релизом не менялись.
+- Старые контейнеры, claims, markers и очереди сохранены; тестовых/исторических
+  постов нет. Штатные новые Reel и сжатие Instagram остаются живой проверкой.
 
 ## Релиз согласованных турнирных тем — 4 октября 2026
 
@@ -447,9 +466,9 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 4 октября 2026 в 14:28 МСК, версия
-  `d4ebicjjg2tpneivruvs` из Git `b2deeb50f901` (PR #135 + endpoint fix).
-  Прежняя `d4egkm2nv8ai69o10144` закреплена для rollback.
+- Последний production-деплой: 4 октября 2026 в 15:49:57 МСК, версия
+  `d4ecbutjpl11hkf1qiu7` из Git `373fe3c` (PR #136).
+  Прежняя `d4ebicjjg2tpneivruvs` закреплена для rollback.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
@@ -462,7 +481,7 @@ production и сверки фактического состояния. Теку
   OAuth renewal: `cs2results-threads-token-refresh-06msk`, ежедневно 06:00 МСК.
   Для main release-команд: `YC_EXPECTED_TRIGGER_COUNT=7`.
 - SHA-256 release-архива:
-  `0f36b363df9fe80f85074fb24556d1e349c5088b48a0010588b6ca23c76c8ed4`.
+  `5a143dd476078046ae1e2a60ce80b8ef5c507e05d82013e592d03eb85bb45316`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.
