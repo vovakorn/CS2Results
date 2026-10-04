@@ -181,6 +181,8 @@ def test_encoder_fades_beat_in_and_out_without_changing_duration(monkeypatch):
     command = commands[0]
     assert command[command.index("-t") + 1] == "8.0"
     assert command[command.index("-af") + 1] == "afade=t=in:st=0:d=0.25,afade=t=out:st=7.75:d=0.25"
+    assert "fade=t=in" not in command[command.index("-vf") + 1]
+    assert "fade=t=out:st=7.78" in command[command.index("-vf") + 1]
 def test_runtime_probe_exercises_bundled_tournament_brand_without_publication(monkeypatch):
     from cs2bot import schedule_reels as renderer
     calls = []

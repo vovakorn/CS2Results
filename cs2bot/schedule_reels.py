@@ -40,7 +40,6 @@ from .media_cards import (
     _draw_logo,
     _draw_text_block,
     _uses_cyrillic,
-    _draw_fixture_hero,
     _schedule_time,
 )
 
@@ -54,6 +53,7 @@ MINIMAL_BEAT_BPM = 120
 REEL_AUDIO_FADE_SECONDS = 0.25
 MAX_REEL_MATCHES = 20
 MATCHES_PER_SCENE = 4
+MAX_INTRO_TEAMS = 6
 INTRO_SECONDS = 1.5
 OUTRO_SECONDS = 2.5
 SHORT_SCENE_SECONDS = 4.0
@@ -75,7 +75,6 @@ class ReelScene:
     duration: float
     page: int = 0
     pages: int = 0
-    featured_match: UpcomingMatchNormalized | None = None
     context_matches: tuple[UpcomingMatchNormalized, ...] = ()
 
 
@@ -94,6 +93,94 @@ class ReelTournamentVisual:
 class ReelVisualContext:
     shared: ReelTournamentVisual | None
     by_match: dict[str, ReelTournamentVisual]
+
+
+@dataclass(frozen=True)
+class ReelIntroTeam:
+    name: str
+    logo_url: str | None
+    fallback_url: str | None
+
+
+def _intro_teams(matches: Sequence[UpcomingMatchNormalized]) -> tuple[ReelIntroTeam, ...]:
+    """Unique names, earliest fixture order; tied starts never select a hero pair."""
+    try:
+        ordered = sorted(matches, key=lambda match: (
+            datetime.fromisoformat(match.scheduled_at.replace("Z", "+00:00")), match.match_id))
+    except (ValueError, TypeError) as exc:
+        raise ScheduleReelError("Schedule Reel contains an invalid match time") from exc
+    teams: dict[str, ReelIntroTeam] = {}
+    for match in ordered:
+        for name, url, fallback in (
+            (match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url),
+            (match.team2_name, match.team2_logo_url, match.team2_logo_fallback_url),
+        ):
+            name = " ".join(name.split())
+            key = name.casefold()
+            previous = teams.get(key)
+            teams[key] = ReelIntroTeam(previous.name if previous else name,
+                (previous.logo_url or url) if previous else url,
+                (previous.fallback_url or fallback) if previous else fallback)
+    return tuple(teams.values())
+
+
+def _intro_team_boxes(count: int) -> tuple[tuple[int, int, int, int], ...]:
+    """Balanced one/two-row grids; a short final row remains centered."""
+    if not 1 <= count <= MAX_INTRO_TEAMS:
+        return ()
+    columns = 2 if count in (2, 4) else 3
+    rows = math.ceil(count / columns)
+    width, height, gap = (420 if columns == 2 else 276), (350 if rows == 1 else 292), 28
+    top = 970 if rows == 1 else 824
+    boxes = []
+    for row in range(rows):
+        row_count = min(columns, count - row * columns)
+        left = (REEL_SIZE[0] - (row_count * width + (row_count - 1) * gap)) // 2
+        for column in range(row_count):
+            x, y = left + column * (width + gap), top + row * (height + gap)
+            boxes.append((x, y, x + width, y + height))
+    return tuple(boxes)
+
+
+def _draw_day_intro(image, draw, fixtures, count, tz, accent, logo_deadline):
+    _draw_text_block(draw, 540, 640, "ТВОЯ КОМАНДА", 884, 72,
+                     min_size=64, display=True, max_lines=1)
+    _draw_text_block(draw, 540, 718, "ИГРАЕТ СЕГОДНЯ?", 884, 72,
+                     min_size=64, display=True, max_lines=1, fill=accent)
+    teams = _intro_teams(fixtures)
+    shown = teams[:MAX_INTRO_TEAMS]
+    for team, (x0, y0, x1, y1) in zip(shown, _intro_team_boxes(len(shown))):
+        draw.rounded_rectangle((x0, y0, x1, y1), radius=24,
+                               fill=(*PANEL, 242), outline=(*accent, 105), width=2)
+        center = (x0 + x1) // 2
+        diameter = 184 if y1 - y0 > 300 else 144
+        remaining = logo_deadline - time.monotonic() if logo_deadline is not None else None
+        url, fallback = team.logo_url, team.fallback_url
+        if remaining is not None and remaining < .1:
+            url = fallback = None
+        # Two URL attempts must fit inside the remaining shared logo budget.
+        attempts = max(1, len(set(filter(None, (url, fallback)))))
+        timeout = min(.75, remaining / attempts) if remaining is not None and remaining >= .1 else .75
+        _draw_logo(image, draw, (center, y0 + diameter // 2 + 26), diameter,
+                   team.name, url, accent, fallback, download_timeout=timeout, subtle=True)
+        draw = ImageDraw.Draw(image, "RGBA")
+        _draw_text_block(draw, center, y1 - 62, team.name.upper(), x1 - x0 - 24,
+                         42, min_size=36, display=_uses_cyrillic(team.name), max_lines=2)
+    hidden = len(teams) - len(shown)
+    if hidden:
+        noun = "КОМАНД" if 11 <= hidden % 100 <= 14 else (
+            "КОМАНДА" if hidden % 10 == 1 else "КОМАНДЫ" if hidden % 10 in (2, 3, 4) else "КОМАНД")
+        _draw_text_block(draw, 540, 1480, f"ЕЩЁ {hidden} {noun}", 884, 32,
+                         display=True, max_lines=1, fill=MUTED)
+    meta = f"{count} {_match_noun(count).upper()}"
+    if fixtures:
+        earliest = min(fixtures, key=lambda match: datetime.fromisoformat(match.scheduled_at.replace("Z", "+00:00")))
+        zone = "МСК" if tz.key == "Europe/Moscow" else tz.key
+        meta += f" · СТАРТ В {_schedule_time(earliest, tz)} {zone}"
+    _draw_text_block(draw, 540, 1554, meta, 884, 40,
+                     min_size=32, display=True, max_lines=2, fill=accent)
+    _draw_text_block(draw, 540, 1626, "РАСПИСАНИЕ — ДАЛЬШЕ", 884, 28,
+                     display=True, max_lines=1, fill=MUTED)
 
 
 def _resolve_reel_visuals(matches, logo_deadline=None):
@@ -156,7 +243,7 @@ def storyboard(matches: Sequence[UpcomingMatchNormalized]) -> tuple[ReelScene, .
         for offset in range(0, len(ordered), MATCHES_PER_SCENE)
     )
     return (
-        ReelScene("intro", (), INTRO_SECONDS, featured_match=ordered[0], context_matches=ordered),
+        ReelScene("intro", (), INTRO_SECONDS, context_matches=ordered),
         *middle,
         ReelScene("outro", (), OUTRO_SECONDS, context_matches=ordered),
     )
@@ -314,7 +401,7 @@ def render_scene(
     except Exception as exc:
         raise ScheduleReelError("Schedule Reel timezone is invalid") from exc
     if visuals is None:
-        fixtures = scene.context_matches or scene.matches or ((scene.featured_match,) if scene.featured_match else ())
+        fixtures = scene.context_matches or scene.matches
         visuals = _resolve_reel_visuals(fixtures, logo_deadline)
     shared = visuals.shared
     accent = shared.accent if shared else CYAN
@@ -322,26 +409,7 @@ def render_scene(
     draw = ImageDraw.Draw(image, "RGBA")
     if scene.kind == "intro":
         _heading(draw, local_now, count, shared)
-        nearest = visuals.by_match.get(scene.featured_match.match_id) if scene.featured_match else None
-        nearest_accent = nearest.accent if nearest and nearest.branding else accent
-        _center(draw, 650, "БЛИЖАЙШИЙ МАТЧ", _font(DISPLAY_FONT, 46), nearest_accent)
-        if scene.featured_match is not None:
-            _draw_fixture_hero(image, draw, scene.featured_match, (80, 760, 1000, 1250),
-                               time_label=_schedule_time(scene.featured_match, tz),
-                               logo_deadline=logo_deadline, subtle=True)
-            if nearest and nearest.branding:
-                draw.rounded_rectangle((80, 760, 1000, 1250), radius=24,
-                                       outline=(*nearest_accent, 130), width=2)
-            if nearest and not shared:
-                if nearest.logo is not None:
-                    mark = ImageOps.contain(nearest.logo, (66, 58))
-                    image.alpha_composite(mark, (124, 1160))
-                _draw_text_block(draw, 212 if nearest.logo else 118, 1190,
-                                 nearest.name.upper(), 740 if nearest.logo else 844,
-                                 30, min_size=26, alignment="left", max_lines=2, fill=MUTED)
-        else:
-            _center(draw, 960, "МАТЧИ CS2 СЕГОДНЯ", _font(DISPLAY_FONT, 64), WHITE)
-        _center(draw, 1350, "ВРЕМЯ МСК", _font(DISPLAY_FONT, 35), MUTED)
+        _draw_day_intro(image, draw, scene.context_matches or scene.matches, count, tz, accent, logo_deadline)
     elif scene.kind == "matches":
         _heading(draw, local_now, count, shared)
         card_height, gap = 250, 24
@@ -386,7 +454,7 @@ def animated_scene_frames(scene, local_now, count, timezone_name, *, elapsed_bef
                           total_seconds, preview_watermark=False, logo_deadline=None, visuals=None):
     """Reuse one raster per scene; fade cards in without repeated logo downloads."""
     if visuals is None:
-        fixtures = scene.context_matches or scene.matches or ((scene.featured_match,) if scene.featured_match else ())
+        fixtures = scene.context_matches or scene.matches
         visuals = _resolve_reel_visuals(fixtures, logo_deadline)
     full = render_scene(scene, local_now, count, timezone_name,
                         preview_watermark=preview_watermark, logo_deadline=logo_deadline, visuals=visuals)
@@ -605,7 +673,7 @@ def render_schedule_reel(
             _ffmpeg_executable(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
             "-f", "concat", "-safe", "0", "-i", str(concat_path),
             "-stream_loop", "-1", "-i", str(audio_path),
-            "-vf", f"fps={REEL_FPS},fade=t=in:st=0:d=0.22,fade=t=out:st={total_seconds - 0.22:.2f}:d=0.22,format=yuv420p",
+            "-vf", f"fps={REEL_FPS},fade=t=out:st={total_seconds - 0.22:.2f}:d=0.22,format=yuv420p",
             "-map", "0:v:0", "-map", "1:a:0", "-t", str(total_seconds),
             "-af", (f"afade=t=in:st=0:d={REEL_AUDIO_FADE_SECONDS},"
                     f"afade=t=out:st={total_seconds - REEL_AUDIO_FADE_SECONDS:.2f}:"
