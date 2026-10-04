@@ -41,7 +41,20 @@ PUBLICATION_CONTROL_ENABLED=0
 История до включения версии может быть неполной. Альбом считается одной публикацией,
 тестовые выпуски не входят в основные счётчики.
 
-## Будущее подключение
+## Фактическое состояние подключения
+
+4 октября 2026 создана private функция `cs2results-telegram-admin` и Gateway
+`cs2results-telegram-admin`. Gateway использует отдельный service account только
+с ролью `functions.functionInvoker` и обращается к тегу `production`; publisher
+не стал публичным. Функция намеренно выключена, а тестовый POST без secret получил
+`403`. Webhook Telegram пока не зарегистрирован.
+
+Для активации нужен Telegram user ID владельца. После его получения создать новый
+Lockbox secret с этим ID и webhook secret, записать initial policy, выпустить
+включённую версию admin-function и publisher с `PUBLICATION_CONTROL_ENABLED=1`,
+сверить текущий webhook и зарегистрировать новый.
+
+## Порядок подключения
 
 1. Собрать `scripts/build_admin_function_zip.sh` и создать private функцию.
 2. Дать service account Gateway право invocation только этой функции.
