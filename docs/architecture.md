@@ -40,7 +40,7 @@ flowchart LR
 | `cs2bot/media_cards.py` | Детерминированный рендер PNG и безопасная загрузка логотипов | Выполнять Telegram-доставку |
 | `cs2bot/match_sources/sources/vrs_source.py` | Получение и нормализация versioned VRS snapshots | Смешивать источники или публиковать неполные данные |
 | `cs2bot/analytics.py` | Запись событий постов, подписчиков и кампаний | Блокировать основную публикацию при своей ошибке |
-| `cs2bot/social_oauth.py` | Отдельный OAuth handler для соцсетей и запись токенов в Lockbox | Участвовать в основном Telegram handler |
+| `cs2bot/social_oauth.py` | Отдельный OAuth handler, запись токенов в Lockbox и приватное продление Threads-токена | Участвовать в основном Telegram handler |
 | `cs2bot/instagram_publish.py`, `cs2bot/threads_publish.py` | Загрузка публичных карточек и вызовы Meta через Xray | Выбирать контент или разделять Telegram state |
 
 Preview-поток независим от выбора источника матчей:
@@ -191,8 +191,16 @@ Object Storage содержит дополнительные типы состо
 - Несекретные правила отбора находятся в `tier1_filter.json`.
 - Runtime-конфигурация читается из переменных окружения.
 - Токены и ключи передаются через Yandex Lockbox и не хранятся в репозитории.
-- Отдельная OAuth-функция направляет запросы к Meta через `SOCIAL_PROXY_URL`,
-  подключённый из Lockbox; запросы к Yandex Lockbox через этот прокси не идут.
+- Отдельная OAuth-функция использует Xray либо `SOCIAL_PROXY_URL` для Meta;
+  запросы к Yandex Lockbox остаются прямыми. Приватный ежедневный job
+  `threads_token_refresh` продлевает токен за 14 дней до expiry после проверки
+  аккаунта и grants. Он требует чтения текущего payload, сохраняет прочие поля
+  через `baseVersionId`. Instance concurrency=1 сохраняет текущий proxy lifecycle;
+  ежедневный refresh timer приостанавливается на время ручной переавторизации
+  или правок секрета, поскольку Lockbox addVersion не поддерживает CAS.
+  Publisher проверяет `FINISHED` с общим бюджетом 30 секунд перед публикацией;
+  определённая ошибка readiness оставляет результат в outbox для повтора.
+  Эти два изменения подготовлены локально 4 октября, production-релиз ожидается.
 - `cs2bot/config.py` отвечает за Telegram и каналы;
   `cs2bot/match_sources/config.py` — за источники, фильтры, freshness и storage.
 - Production-триггеры должны ссылаться на тег `production`.

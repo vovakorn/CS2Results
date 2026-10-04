@@ -33,7 +33,11 @@ THREADS_AUTHORIZE_URL = os.getenv(
     "https://threads.net/oauth/authorize",
 )
 THREADS_GRAPH_URL = "https://graph.threads.net"
+# Tournament chains publish replies, which require their own OAuth permission.
+THREADS_OAUTH_SCOPES = "threads_basic,threads_content_publish,threads_manage_replies"
 LOCKBOX_API_URL = "https://lockbox.api.cloud.yandex.net"
+LOCKBOX_PAYLOAD_URL = "https://lockbox-payload.api.cloud.yandex.net/lockbox/v1/secrets"
+THREADS_REFRESH_WINDOW = timedelta(days=14)
 IAM_METADATA_URL = (
     "http://169.254.169.254/computeMetadata/v1/instance/"
     "service-accounts/default/token"
@@ -350,12 +354,35 @@ def _threads_tokens(code: str, config: dict[str, str]) -> dict[str, Any]:
             "access_token": short_token,
         },
     )
+    access_token = long_payload.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        raise OAuthFlowError("long-lived access token is missing")
+    token_info = _threads_token_info(access_token)
     return {
-        "access_token": long_payload.get("access_token"),
+        "access_token": access_token,
         "expires_in": long_payload.get("expires_in"),
-        "permissions": "threads_basic,threads_content_publish",
+        "permissions": ",".join(sorted(set(token_info["scopes"]))),
         "user_id": short_payload.get("user_id"),
     }
+
+
+def _threads_token_info(access_token: str) -> dict[str, Any]:
+    debug_payload = _request_json(
+        "GET",
+        f"{THREADS_GRAPH_URL}/debug_token",
+        operation="Threads token permission check",
+        params={"input_token": access_token, "access_token": access_token},
+    )
+    token_info = debug_payload.get("data")
+    if not isinstance(token_info, dict) or token_info.get("is_valid") is not True:
+        raise OAuthFlowError("Threads token permission check did not confirm a valid token")
+    scopes = token_info.get("scopes")
+    if not isinstance(scopes, list) or not all(isinstance(scope, str) for scope in scopes):
+        raise OAuthFlowError("Threads token permission check did not return granted scopes")
+    missing = set(THREADS_OAUTH_SCOPES.split(",")) - set(scopes)
+    if missing:
+        raise OAuthFlowError("Threads authorization is missing required permissions: " + ",".join(sorted(missing)))
+    return token_info
 
 
 def _profile(platform: str, access_token: str) -> dict[str, Any]:
@@ -473,6 +500,108 @@ def _store_credentials(
         raise OAuthFlowError(f"Lockbox returned HTTP {response.status_code}")
 
 
+def _threads_secret(config: dict[str, str], context: Any) -> dict[str, Any]:
+    try:
+        response = requests.get(
+            f"{LOCKBOX_PAYLOAD_URL}/{config['lockbox_secret_id']}/payload",
+            headers={"Authorization": f"Bearer {_iam_token(context)}"},
+            timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError):
+        raise OAuthFlowError("Threads Lockbox payload is unavailable") from None
+    if not isinstance(payload, dict) or not payload.get("versionId") or not isinstance(payload.get("entries"), list):
+        raise OAuthFlowError("Threads Lockbox payload is invalid")
+    return payload
+
+
+def _refresh_threads_token(context: Any, *, dry_run: bool = False) -> str:
+    """Renew before expiry; the publisher already reads the current secret version."""
+    config = _platform_config("threads")
+    secret = _threads_secret(config, context)
+    values = {item.get("key"): item.get("textValue") for item in secret["entries"] if isinstance(item, dict)}
+    token, user_id = values.get("ACCESS_TOKEN"), values.get("USER_ID")
+    if not isinstance(token, str) or not token or not isinstance(user_id, str) or not user_id:
+        raise OAuthFlowError("Threads saved credentials are incomplete")
+    if not config["expected_user_id"] or user_id != config["expected_user_id"]:
+        raise OAuthFlowError("Threads saved account id is not allowed")
+    try:
+        expires_at = datetime.fromisoformat(values["TOKEN_EXPIRES_AT"].replace("Z", "+00:00"))
+        if expires_at.tzinfo is None:
+            raise ValueError
+    except (KeyError, TypeError, AttributeError, ValueError):
+        raise OAuthFlowError("Threads saved expiry is invalid") from None
+    now = datetime.now(timezone.utc)
+    if expires_at <= now:
+        raise OAuthFlowError("Threads token expired; owner authorization is required")
+    if expires_at - now > THREADS_REFRESH_WINDOW:
+        return "not_due"
+    global _ACTIVE_META_PROXY
+    try:
+        with xray_http_proxy() as proxy:
+            _ACTIVE_META_PROXY = proxy
+            current = _threads_token_info(token)
+            if str(current.get("user_id")) != user_id or str(current.get("app_id")) != config["app_id"]:
+                raise OAuthFlowError("Threads current token identity does not match")
+            issued_at, actual_expiry = current.get("issued_at"), current.get("expires_at")
+            if type(issued_at) is not int or type(actual_expiry) is not int or actual_expiry <= now.timestamp():
+                raise OAuthFlowError("Threads current token lifetime is invalid")
+            if issued_at <= 0 or now.timestamp() - issued_at < 24 * 3600:
+                return "too_young"
+            if dry_run:
+                return "refresh_due"
+            refreshed = _request_json(
+                "GET", f"{THREADS_GRAPH_URL}/refresh_access_token",
+                operation="Threads token refresh",
+                params={"grant_type": "th_refresh_token", "access_token": token},
+            )
+            new_token, lifetime = refreshed.get("access_token"), refreshed.get("expires_in")
+            if not isinstance(new_token, str) or not new_token or type(lifetime) is not int or lifetime <= 0:
+                raise OAuthFlowError("Threads refresh returned invalid credentials")
+            # Bound reported expiry by both the refresh response and actual token debugger.
+            checked = _threads_token_info(new_token)
+            if str(checked.get("user_id")) != user_id or str(checked.get("app_id")) != config["app_id"]:
+                raise OAuthFlowError("Threads refreshed token identity does not match")
+            checked_expiry = checked.get("expires_at")
+            if type(checked_expiry) is not int:
+                raise OAuthFlowError("Threads refreshed expiry is invalid")
+            new_expiry = min(time.time() + lifetime, checked_expiry)
+            if new_expiry <= max(time.time(), expires_at.timestamp()) + THREADS_REFRESH_WINDOW.total_seconds():
+                raise OAuthFlowError("Threads refresh did not sufficiently extend expiry")
+            profile = _profile("threads", new_token)
+            username = profile.get("username")
+            if str(profile.get("id")) != user_id or not isinstance(username, str) or username.lstrip("@").casefold() != config["expected_username"]:
+                raise OAuthFlowError("Threads refreshed account is not allowed")
+    except XrayProxyError:
+        raise OAuthConfigurationError("Threads refresh proxy is unavailable") from None
+    finally:
+        _ACTIVE_META_PROXY = None
+    # Detect a secret update during the Meta round trip. Lockbox has no CAS:
+    # pause the single renewal timer during manual authorization/secret changes.
+    if _threads_secret(config, context)["versionId"] != secret["versionId"]:
+        raise OAuthFlowError("Threads credentials changed during refresh; retry later")
+    updates = [
+        {"key": "ACCESS_TOKEN", "textValue": new_token},
+        {"key": "TOKEN_EXPIRES_AT", "textValue": datetime.fromtimestamp(new_expiry, timezone.utc).isoformat().replace("+00:00", "Z")},
+        {"key": "GRANTED_SCOPES", "textValue": ",".join(sorted(set(checked["scopes"])))},
+    ]
+    try:
+        response = requests.post(
+            f"{LOCKBOX_API_URL}/lockbox/v1/secrets/{config['lockbox_secret_id']}:addVersion",
+            headers={"Authorization": f"Bearer {_iam_token(context)}"},
+            json={"description": "Threads automatic token renewal", "baseVersionId": secret["versionId"], "payloadEntries": updates},
+            timeout=HTTP_TIMEOUT_SECONDS, allow_redirects=False,
+        )
+        response.raise_for_status()
+        operation = response.json()
+    except (requests.RequestException, ValueError):
+        raise OAuthFlowError("Threads refreshed credentials could not be confirmed in Lockbox") from None
+    if not isinstance(operation, dict) or operation.get("done") is not True or operation.get("error") or not isinstance(operation.get("response"), dict):
+        raise OAuthFlowError("Threads Lockbox renewal was not confirmed; check current version before retry")
+    return "refreshed"
+
+
 def _remove_credentials(platform: str, config: dict[str, str], context: Any) -> None:
     response = requests.post(
         (
@@ -548,7 +677,7 @@ def _start(platform: str) -> dict[str, Any]:
         scope = "instagram_business_basic,instagram_business_content_publish"
     else:
         authorize_url = THREADS_AUTHORIZE_URL
-        scope = "threads_basic,threads_content_publish"
+        scope = THREADS_OAUTH_SCOPES
     params = {
         "client_id": config["app_id"],
         "redirect_uri": _callback_url(platform),
@@ -648,6 +777,34 @@ def _data_deletion(event: dict[str, Any], platform: str, context: Any) -> dict[s
 def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
     """Handle API Gateway OAuth routes without exposing credentials."""
     event = event if isinstance(event, dict) else {}
+    timer_event = "messages" in event
+    if timer_event:
+        try:
+            messages = event["messages"]
+            if not isinstance(messages, list) or len(messages) != 1:
+                raise ValueError
+            message = messages[0]
+            if message["event_metadata"]["event_type"] != "yandex.cloud.events.serverless.triggers.TimerMessage":
+                raise ValueError
+            event = json.loads(message["details"]["payload"])
+            if not isinstance(event, dict) or event.get("internal_job") != "threads_token_refresh":
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise OAuthFlowError("Invalid Threads renewal timer payload") from None
+    if event.get("internal_job") == "threads_token_refresh" and not (event.get("httpMethod") or event.get("path") or event.get("requestContext")):
+        try:
+            if type(event.get("dry_run", False)) is not bool:
+                raise OAuthFlowError("Threads renewal dry_run must be boolean")
+            outcome = _refresh_threads_token(context, dry_run=event.get("dry_run") is True)
+        except Exception as exc:
+            # Raw transport exceptions can include credential-bearing URLs.
+            reason = str(exc) if isinstance(exc, (OAuthFlowError, OAuthConfigurationError)) else type(exc).__name__
+            logger.warning("event=threads_token_refresh_failed reason=%s", reason)
+            if timer_event:
+                raise OAuthFlowError("Threads token renewal failed; see safe diagnostic log") from None
+            return {"statusCode": 503, "body": json.dumps({"ok": False, "error": "refresh_failed"})}
+        logger.info("event=threads_token_refresh outcome=%s", outcome)
+        return {"statusCode": 200, "body": json.dumps({"ok": True, "outcome": outcome})}
     if event.get("internal_job") == "threads_credentials_check":
         try:
             _check_threads_app_credentials()

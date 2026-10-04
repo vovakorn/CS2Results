@@ -277,6 +277,74 @@ Smoke ограничен локальными тайм-аутами: по умо
 Для проверки источников задайте отдельный `YC_DRY_RUN_PAYLOAD`; он всё равно
 должен быть JSON-объектом с `dry_run: true` и без timer envelope `messages`.
 
+<a id="threads-token-renewal"></a>
+
+## Продление Threads-токена
+
+Подготовлено локально 4 октября 2026, в production ещё не включено.
+После отдельного разрешения на release выполнить:
+
+1. Выпустить основную функцию с ожиданием `FINISHED` по обычному
+   candidate → promote процессу. Существующие семь main timers сохраняются;
+   `YC_EXPECTED_TRIGGER_COUNT=7` считает только timers этой основной функции.
+2. Собрать отдельную OAuth-функцию с Xray:
+   `XRAY_ENABLED=1 scripts/build_social_oauth_zip.sh`.
+   Сохранить runtime, service account, gateway routes, bindings и ожидаемые
+   app/account. Оставить concurrency=1, поднять execution timeout с 45 до
+   **180 секунд**: refresh включает несколько последовательных проверок Meta
+   и Lockbox. В её service account нужны `lockbox.payloadViewer` и право
+   добавления версии (`lockbox.editor`) на существующий Threads-секрет.
+   Не выдавать новые права на Instagram-секрет ради этого job.
+3. Проверить candidate health, публичный OAuth redirect и приватный вызов
+   `{"internal_job":"threads_token_refresh","dry_run":true}`.
+   Допустимые исходы: `not_due`, `too_young`, `refresh_due`. Dry-run не
+   продлевает токен и не добавляет версии. При свежем токене он проверяет
+   доступ к Lockbox и сохранённый срок, но не вызывает Meta.
+   Подтвердить, что версия секрета осталась прежней.
+4. Перевести отдельную OAuth-функцию на `production`, проверить health и
+   такой же private dry-run. Создать **один** ежедневный timer на OAuth
+   function ID и тег `production`, с выделенным/существующим invoker service
+   account и без нового API Gateway route. Время 03:00 UTC / 06:00 МСК:
+
+   ```text
+   0 3 ? * * *
+   ```
+
+   ```json
+   {"internal_job":"threads_token_refresh"}
+   ```
+
+   Настроить три повтора через 30 секунд. Ошибка job выбрасывает безопасное
+   исключение, а не возвращает успешный результат timer invocation. Следующий
+   ежедневный вызов тоже повторяет попытку, пока токен ещё действителен.
+   Получится восемь timers в папке, но **семь** на основной функции и **один**
+   на OAuth; main release gate и PAUSED radar не меняются.
+5. Сверить target/tag/payload и IAM; подтвердить штатную доставку ближайшего
+   результата. Первый фактический refresh проверяется по безопасному outcome
+   и новой expiry в текущей версии секрета, без вывода токена. До входа в
+   14-дневное окно ожидается `not_due`; не подделывать expiry и не запускать
+   принудительное продление для smoke. Затем актуализировать версии и проверки
+   в `PROJECT_STATUS.md` и `PROJECT_CONTEXT.md`.
+
+Перед ручной переавторизацией/правкой секрета приостановить OAuth refresh timer,
+дождаться окончания текущего invocation и возобновить после завершения изменений.
+`concurrency=1` ограничивает один экземпляр, а не все экземпляры облачной функции;
+не считать его распределённой блокировкой. Не запускать refresh вручную
+одновременно с таймером. Job
+проверяет versionId перед записью и использует `baseVersionId` для наследования
+прочих полей, но Lockbox addVersion не предоставляет compare-and-swap.
+Отозванный/истёкший токен требует повторной авторизации владельца.
+Если запись в Lockbox не подтверждена, сначала прочитать текущую версию:
+новый действующий токен мог уже сохраниться; свежая expiry остановит повтор.
+
+Rollback: приостановить только новый OAuth timer, вернуть прежние теги функций;
+не откатывать токен автоматически. Проверить действующий payload и сроки,
+сохранить независимые claims/outbox и все существующие main timers.
+
+Подробности поведения: [Threads publishing](threads-publishing.md#automatic-token-renewal).
+Схема timer payload: [Yandex Cloud](https://yandex.cloud/en/docs/functions/concepts/trigger/timer).
+Граница concurrency: [Yandex Cloud](https://yandex.cloud/en/docs/functions/operations/function/concurrency).
+
 ## 7. Timer triggers
 
 Базовая конфигурация содержит шесть timer trigger; радар PAUSED по сверке
