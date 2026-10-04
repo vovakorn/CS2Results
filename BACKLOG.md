@@ -13,10 +13,9 @@
   initial policy revision 1 записан, admin/control flags включены и webhook
   зарегистрирован. Publisher `d4e7f2tjqrkjl9p3la5v` и admin-function
   `d4eoh7cd4dnhhdcpiuur` используют `production`; rollback сохранён.
-- [ ] После первого `/admin` владельца проверить Telegram `getWebhookInfo`:
-  последняя сохранённая Telegram ошибка — `Connection timed out`, хотя
-  защищённый Gateway-запрос уже возвращает `403` за 1,10 с. Не отправлять
-  тестовые посты или сообщения автоматически.
+- [x] Проверить первый `/admin` владельца: ожидающий update обработан за 3,75 с,
+  меню доставлено, webhook снова не имеет pending updates и не сообщает ошибок.
+  Admin production получил Telegram destination `global` / `@cs2_results`.
 
 - [ ] После отдельного решения разобрать 9 старых итогов StarLadder в outbox:
   3 матча × 3 сети, без подтверждения финала. Копии сохранены 4 октября;

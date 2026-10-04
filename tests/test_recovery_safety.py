@@ -41,5 +41,5 @@ def test_legacy_unconfirmed_outbox_is_retained_without_publication(platform, kin
         status = getattr(main, f"_deliver_{suffix}")(pending, {"chat_id": "test"}, "test")
     else:
         status = getattr(main, f"_deliver_{platform}_{suffix}")(pending, None)
-    assert status == "failed"
+    assert status == "held"
     assert deleted == []
