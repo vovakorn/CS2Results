@@ -30,6 +30,16 @@ OBJECT_STORAGE_ENDPOINT=https://storage.yandexcloud.net
 
 Не делайте функцию публичной. Право invocation должно быть только у timer trigger и назначенного service account. Ограничьте доступ к настройкам версии функции, поскольку они содержат секретные переменные окружения.
 
+## Private Telegram admin-function
+
+Админка подключается отдельным release-циклом после основной функции. Соберите
+`scripts/build_admin_function_zip.sh`, создайте отдельную private Cloud Function с
+`cs2bot.admin_handler.handler` и назначьте API Gateway service account право
+invocation только на неё. Gateway должен ссылаться на tag `production`, не
+`$latest`. Перед регистрацией webhook установите Lockbox references для
+`TELEGRAM_ADMIN_USER_ID` и `TELEGRAM_ADMIN_WEBHOOK_SECRET`, проверьте текущий
+webhook и настройте secret token. Не используйте admin-function как trigger jobs.
+
 ## 3. Telegram
 
 Создайте бота через BotFather и добавьте его в канал.

@@ -40,6 +40,8 @@ flowchart LR
 | `cs2bot/media_cards.py` | Детерминированный рендер PNG и безопасная загрузка логотипов | Выполнять Telegram-доставку |
 | `cs2bot/match_sources/sources/vrs_source.py` | Получение и нормализация versioned VRS snapshots | Смешивать источники или публиковать неполные данные |
 | `cs2bot/analytics.py` | Запись событий постов, подписчиков и кампаний | Блокировать основную публикацию при своей ошибке |
+| `cs2bot/publication_admin.py` | Owner policy, поколения очереди и журнал подтверждённых выпусков | Отправлять контент или переоткрывать claim |
+| `cs2bot/admin_handler.py` | Private webhook, `/admin` и inline-меню | Вызывать scheduler jobs или раскрывать секреты |
 | `cs2bot/social_oauth.py` | Отдельный OAuth handler, запись токенов в Lockbox и приватное продление Threads-токена | Участвовать в основном Telegram handler |
 | `cs2bot/instagram_publish.py`, `cs2bot/threads_publish.py` | Загрузка публичных карточек и вызовы Meta через Xray | Выбирать контент или разделять Telegram state |
 
