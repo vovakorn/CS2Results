@@ -26,7 +26,8 @@ def test_unconfirmed_final_cannot_render_or_enqueue_standings_or_vrs(monkeypatch
 
 
 @pytest.mark.parametrize("platform", ["telegram", "instagram", "threads"])
-def test_legacy_unconfirmed_vrs_outbox_cannot_publish(platform, monkeypatch):
+@pytest.mark.parametrize("kind", ["tournament_standings", "tournament_vrs_standings"])
+def test_legacy_unconfirmed_outbox_is_retained_without_publication(platform, kind, monkeypatch):
     deleted = []
     async def delete(item):
         deleted.append(item.key)
@@ -34,10 +35,11 @@ def test_legacy_unconfirmed_vrs_outbox_cannot_publish(platform, monkeypatch):
     monkeypatch.setattr(main, "can_render_tournament_vrs", lambda *args: True)
     monkeypatch.setattr(main, "claim_content_delivery", lambda *a: pytest.fail("unconfirmed VRS must not claim delivery"))
     pending = PendingDelivery(key="outbox/test", channel_id=platform, channel_name=platform,
-                              match=unconfirmed_final(), created_at="2026-10-03T00:00:00Z")
+                              match=unconfirmed_final(), created_at="2026-10-03T00:00:00Z", content_type=kind)
+    suffix = "tournament_standings" if kind == "tournament_standings" else "tournament_vrs"
     if platform == "telegram":
-        status = main._deliver_tournament_vrs(pending, {"chat_id": "test"}, "test")
+        status = getattr(main, f"_deliver_{suffix}")(pending, {"chat_id": "test"}, "test")
     else:
-        status = getattr(main, f"_deliver_{platform}_tournament_vrs")(pending, None)
-    assert status == "duplicate"
-    assert deleted == [pending.key]
+        status = getattr(main, f"_deliver_{platform}_{suffix}")(pending, None)
+    assert status == "failed"
+    assert deleted == []

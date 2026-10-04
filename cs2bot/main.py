@@ -1020,9 +1020,21 @@ def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_nam
         return False
 
 
+def _hold_unconfirmed_final_outbox(pending: PendingDelivery) -> bool:
+    """Retain legacy entries for review instead of publishing or deleting them."""
+    if pending.match.source != "liquipedia" or pending.match.final_identity_confirmed:
+        return False
+    log_event(logger, logging.WARNING, "tournament_final_outbox_held",
+              match_uid=pending.match.match_uid, channel=pending.channel_id,
+              content_type=pending.content_type, reason="unconfirmed_final")
+    return True
+
+
 def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], channel_name: str) -> str:
+    if _hold_unconfirmed_final_outbox(pending):
+        return "failed"
     impacts = pending.vrs_impacts
-    if (pending.match.source == "liquipedia" and not pending.match.final_identity_confirmed) or not can_render_tournament_vrs(impacts):
+    if not can_render_tournament_vrs(impacts):
         asyncio.run(delete_result_delivery(pending))
         log_event(logger, logging.WARNING, "vrs_outbox_discarded", match_uid=pending.match.match_uid, reason="incomplete_data")
         return "duplicate"
@@ -1078,6 +1090,8 @@ def _deliver_tournament_standings(
     channel_name: str,
 ) -> str:
     """Publish a queued standings album only after the final score has been confirmed."""
+    if _hold_unconfirmed_final_outbox(pending):
+        return "failed"
     match = pending.match
     channel_id = pending.channel_id
     if not _can_publish_tournament_standings(match):
@@ -1847,6 +1861,8 @@ def _deliver_social_tournament_standings(
     uncertain_error: type[Exception],
 ) -> str:
     """Publish a complete final table to one Meta platform after its final score."""
+    if _hold_unconfirmed_final_outbox(pending):
+        return "failed"
     match = pending.match
     if not _can_publish_tournament_standings(match):
         asyncio.run(delete_result_delivery(pending))
@@ -1944,8 +1960,10 @@ def _deliver_social_tournament_vrs(
     publisher: Any,
     uncertain_error: type[Exception],
 ) -> str:
+    if _hold_unconfirmed_final_outbox(pending):
+        return "failed"
     impacts = pending.vrs_impacts
-    if (pending.match.source == "liquipedia" and not pending.match.final_identity_confirmed) or not can_render_tournament_vrs(impacts):
+    if not can_render_tournament_vrs(impacts):
         asyncio.run(delete_result_delivery(pending))
         return "duplicate"
     content_uid = f"tournament-vrs-v1:{platform}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
