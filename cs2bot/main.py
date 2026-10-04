@@ -1070,7 +1070,7 @@ def _hold_unconfirmed_final_outbox(pending: PendingDelivery) -> bool:
 
 def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], channel_name: str) -> str:
     if _hold_unconfirmed_final_outbox(pending):
-        return "failed"
+        return "held"
     if not _delivery_is_current(pending.channel_id, "tournament_vrs_standings", pending.generation):
         return "held"
     impacts = pending.vrs_impacts
@@ -1131,7 +1131,7 @@ def _deliver_tournament_standings(
 ) -> str:
     """Publish a queued standings album only after the final score has been confirmed."""
     if _hold_unconfirmed_final_outbox(pending):
-        return "failed"
+        return "held"
     if not _delivery_is_current(pending.channel_id, "tournament_standings", pending.generation):
         return "held"
     match = pending.match
@@ -1909,7 +1909,7 @@ def _deliver_social_tournament_standings(
 ) -> str:
     """Publish a complete final table to one Meta platform after its final score."""
     if _hold_unconfirmed_final_outbox(pending):
-        return "failed"
+        return "held"
     if not _delivery_is_current(platform, "tournament_standings", pending.generation):
         return "held"
     match = pending.match
@@ -2010,7 +2010,7 @@ def _deliver_social_tournament_vrs(
     uncertain_error: type[Exception],
 ) -> str:
     if _hold_unconfirmed_final_outbox(pending):
-        return "failed"
+        return "held"
     if not _delivery_is_current(platform, "tournament_vrs_standings", pending.generation):
         return "held"
     impacts = pending.vrs_impacts
@@ -3363,6 +3363,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     skipped_filtered = 0
     sent_messages = 0
     failed_messages = 0
+    held_messages = 0
     channels = list(_iter_channels())
     channels_by_id: dict[str, dict[str, Any]] = {}
     for channel in channels:
@@ -3625,6 +3626,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 sent_messages += 1
             elif outcome in {"duplicate", "reconciled"}:
                 skipped_duplicates += 1
+            elif outcome == "held":
+                held_messages += 1
             else:
                 failed_messages += 1
             continue
@@ -3641,6 +3644,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 sent_messages += 1
             elif outcome in {"duplicate", "reconciled"}:
                 skipped_duplicates += 1
+            elif outcome == "held":
+                held_messages += 1
             else:
                 failed_messages += 1
             continue
@@ -4006,6 +4011,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "duplicates_skipped": skipped_duplicates,
         "filtered_skipped": skipped_filtered,
         "delivery_failures": failed_messages,
+        "delivery_held": held_messages,
         "retry_only": retry_only,
         "reel_worker_states": reel_worker_states,
         "channels": channel_stats,
@@ -4025,6 +4031,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "duplicates_skipped": skipped_duplicates,
         "filtered_skipped": skipped_filtered,
         "delivery_failures": failed_messages,
+        "delivery_held": held_messages,
         "retry_only": retry_only,
         "metrics": metrics,
         "dry_run": dry_run,

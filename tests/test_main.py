@@ -215,6 +215,21 @@ def test_tournament_standings_are_delivered_as_a_separate_confirmed_album(monkey
     assert deleted == [pending.key]
 
 
+def test_unconfirmed_legacy_final_is_held_not_reported_as_delivery_failure():
+    pending = PendingDelivery(
+        key="outbox/results/global_legacy-tournament_standings.json",
+        channel_id="global",
+        channel_name="Global",
+        match=_match().model_copy(update={"source": "liquipedia", "is_final": True, "final_identity_confirmed": False}),
+        created_at="2026-09-06T10:00:00Z",
+        content_type="tournament_standings",
+    )
+
+    assert main._deliver_tournament_standings(pending, {"chat_id": "@global"}, "Global") == "held"
+    assert main._deliver_instagram_tournament_standings(pending, None) == "held"
+    assert main._deliver_threads_tournament_standings(pending, None) == "held"
+
+
 @pytest.mark.parametrize(
     ("platform", "delivery", "publisher_name"),
     [
