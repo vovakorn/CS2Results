@@ -200,7 +200,7 @@ Object Storage содержит дополнительные типы состо
   или правок секрета, поскольку Lockbox addVersion не поддерживает CAS.
   Publisher проверяет `FINISHED` с общим бюджетом 30 секунд перед публикацией;
   определённая ошибка readiness оставляет результат в outbox для повтора.
-  Эти два изменения подготовлены локально 4 октября, production-релиз ожидается.
+  Эти два изменения выпущены 4 октября, ежедневный OAuth timer включён.
 - `cs2bot/config.py` отвечает за Telegram и каналы;
   `cs2bot/match_sources/config.py` — за источники, фильтры, freshness и storage.
 - Production-триггеры должны ссылаться на тег `production`.

@@ -1,52 +1,57 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 4 октября 2026 года; готовится утверждённый релиз надёжности Threads.
-Production сверено 4 октября; выпущенные турнирные темы сохранены.
+Обновлено: 4 октября 2026 года; выпущены меры надёжности Threads.
+Production и восемь таймеров сверены после релиза; турнирные темы сохранены.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## Локальная надёжность Threads — 4 октября 2026
+## Релиз надёжности Threads — 4 октября 2026
 
-- Утверждённый PR #135 слит. Основной candidate `d4ev7eenrvn5babbqb0b`
-  прошёл dry-run. OAuth candidate выявил ошибку адреса Lockbox payload API;
-  адрес исправлен по официальному контракту, запрос в тесте проверяет точный URL.
-  Ошибка обнаружена до переключения production, токен не перезаписывался.
-  Продвижение остановлено до повторной проверки исправленной OAuth-версии.
+- PR #135 слит; исправленный release commit `b2deeb50f901f0e6ad450bc4edfbac3aa65fee15`.
+  Main production `d4ebicjjg2tpneivruvs`, продвижение в 14:28 МСК;
+  rollback `d4egkm2nv8ai69o10144`. OAuth production `d4e4cnk940fa21sjk50s`,
+  rollback `d4ebgeh02m2jcvp4sl5m`.
+- Publisher ждёт дочерние и итоговый `FINISHED`: общий бюджет 30 секунд,
+  интервал 2 секунды. Определённая ошибка оставляет result outbox для повтора;
+  неопределённая доставка по-прежнему блокирует repost и цепочку.
+- Продление за 14 дней до expiry включено в существующей OAuth-функции.
+  Проверяются account/app/grants, срок и профиль; прочие поля Lockbox наследуются.
+  Новый timer `a1svvvsvvvgka93gs9nr` / `cs2results-threads-token-refresh-06msk` — ACTIVE,
+  03:00 UTC / 06:00 МСК, OAuth `production`, три повтора через 30 секунд.
+  API Gateway routes и IAM-роли не менялись: viewer/editor/invoker уже существовали.
+- Независимая сверка конфигураций: main — 29 env vars, 7 Lockbox references,
+  256 MiB / 120 секунд, отпечаток совпал с прежней версией. У OAuth изменён
+  только timeout 45 → 180 секунд; 6 env vars, 4 secret references и прочие
+  параметры сохранены. В папке 8 timers на `production`: 7 main (6 ACTIVE,
+  radar PAUSED) и 1 ACTIVE OAuth. Main gate: `YC_EXPECTED_TRIGGER_COUNT=7`.
+- Проверки: 784 теста локально; CI Python 3.11/3.12, security audit, зависимости,
+  компиляция и сборка прошли. Первая OAuth candidate-проверка обнаружила неверный
+  адрес Payload API; ошибка исправлена до production, добавлена точная проверка
+  URL. После исправления прошли 53 OAuth-теста, полный CI и оба новых candidates.
+- Candidate и production smoke успешны. OAuth health, app credentials,
+  фактические Threads scopes и публичные redirects проверены. Private dry-run
+  и timer envelope дали `not_due`; версия секрета не изменилась.
+- Неопубликованный IMAGE reply через настоящий Threads API достиг `FINISHED`
+  за 9,5 секунды. Ручных постов не было; claims/markers/tail не сбрасывались.
+  Основной архив: 17147127 байт, SHA-256 `0f36b363df9fe80f85074fb24556d1e349c5088b48a0010588b6ca23c76c8ed4`;
+  OAuth SHA-256 `c0d82549b79cc4f6bd24b1d614b32384319e884137b3ecdb92e89c72733d5de7`. Xray, publisher/OAuth исходники и
+  реестр турнирных тем сверены внутри ZIP. Незавершённый основной checkout сохранён.
 
-- По запросу владельца добавлены две меры: ожидание обработки изображений и
-  автоматическое продление токена. Расширенный мониторинг отложен.
-- Publisher проверяет все дочерние контейнеры и итоговый `FINISHED` перед
-  публикацией: общий бюджет 30 секунд, интервал 2 секунды. Определённый отказ
-  оставляет result outbox для повторов; неопределённый исход по-прежнему
-  блокирует повтор и цепочку, чтобы не создавать дубли.
-- В существующей OAuth-функции подготовлен приватный `threads_token_refresh`:
-  свежий токен пропускается, за 14 дней до expiry проверяются срок, app/account,
-  scopes и профиль. Только подтверждённые новые данные добавляются в Lockbox
-  с наследованием остальных записей. Public refresh route не добавлен.
-- Для включения потребуется отдельный релиз основной и OAuth-функции;
-  OAuth concurrency=1, timeout 180 секунд, чтение Threads payload и добавление
-  версии секрета, один ежедневный таймер на OAuth `production`.
-  Семь существующих таймеров основной функции и её release gate не меняются.
-- Проверки: `pytest -q -k 'threads or social_oauth'` — **94 passed**,
-  664 остальных теста исключены из локальной точечной проверки. Компиляция,
-  diff и локальные ссылки проверены; оба ZIP с Xray собраны, исходники в них
-  сверены. Пользователь утвердил release 4 октября; полный набор на актуальной базе PR #134 — **784 passed** за 213,06 с, без ошибок.
-  Production-версии остаются последними проверенными ниже; новые меры в облако
-  не выпускались, секреты и публикации этой итерацией не менялись.
+## Остаточные риски Threads
 
-## Остаточные риски после восстановления Threads
-
-- Ошибка OAuth scopes устранена, но гарантии отсутствия любых будущих отказов нет.
-- У нового токена API debugger expiry: 2 декабря 2026, 22:34:10 МСК.
-  В действующей OAuth-версии ежедневное продление ещё не включено;
-  подготовленный локальный job описан выше. Внешние renewal jobs не проверялись.
-- Действующий production publisher пока не ожидает `FINISHED` media container. На probe
-  обработка изображения занимала около 5 секунд; временные HTTP 400 при
-  восстановлении ушли на штатных повторах, точная причина этих HTTP 400
-  не подтверждена. Локальные изменения требуют отдельного согласованного релиза.
+- Первый реальный refresh ещё не наступил: проверено корректное пропускание
+  свежего токена и запуск timer payload. Текущая подтверждённая expiry —
+  2 декабря 2026, 22:34:10 МСК; job будет продлевать в 14-дневном окне.
+- Отозванный или уже истёкший токен требует повторной авторизации владельца.
+  Перед ручной переавторизацией/правкой секрета приостанавливать OAuth timer
+  и ждать конца текущего invocation: `baseVersionId` не CAS, instance concurrency=1
+  не является распределённой блокировкой.
+- Точная причина временных HTTP 400 при восстановлении 3 октября не установлена.
+  Три старые таблицы StarLadder остаются отдельной задачей. Расширенный мониторинг
+  отложен; гарантий отсутствия всех будущих отказов нет.
 
 ## Threads восстановлен — 3 октября 2026, 22:46 МСК
 
@@ -173,7 +178,7 @@ production и сверки фактического состояния. Теку
 - Полный набор: 716 тестов за 221,53 с. CI Python 3.11/3.12, security audit,
   зависимости, компиляция и сборка прошли; итоговый diff проверен.
 - Единственный архив: 16 491 288 байт, SHA-256
-  `a832d7fbd7f02060813745a147f9611550626843fd942efb8ecfb43e03999213`.
+  `0f36b363df9fe80f85074fb24556d1e349c5088b48a0010588b6ca23c76c8ed4`.
   Код Reel в архиве сверен с checkout; Linux Xray включён.
 - Candidate и production smoke: `200`, `dry_run=true`, startup-ошибок нет.
   Branded cloud render-probe: 20 синтетических матчей, 29 с видео,
@@ -423,21 +428,22 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 4 октября 2026 в 10:42 МСК, версия
-  `d4egkm2nv8ai69o10144` из Git `f11fa1a` (PR #134).
-  Прежняя `d4e87d60bhtme5g971ds` закреплена для rollback.
+- Последний production-деплой: 4 октября 2026 в 14:28 МСК, версия
+  `d4ebicjjg2tpneivruvs` из Git `b2deeb50f901` (PR #135 + endpoint fix).
+  Прежняя `d4egkm2nv8ai69o10144` закреплена для rollback.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
 - В production включён `ENABLE_TOURNAMENT_PREVIEWS=1`, сохранены `ENABLE_LIQUIPEDIA_FINAL_CARDS=1` и
   `ENABLE_VRS=1`; Liquipedia fallback остаётся выключен.
-- Семь timer trigger вызывают тег `production`, а не `$latest`.
-  Шесть ACTIVE; `cs2results-radar-discovery-12msk` PAUSED. Анонсы:
+- Восемь timer trigger вызывают тег `production`, а не `$latest`.
+  Семь ACTIVE; `cs2results-radar-discovery-12msk` PAUSED. Анонсы:
   `cs2results-preview-discovery-18msk`, ID `a1suf0l0l534jn9cfk80`,
   `0 15 ? * * *` (18:00 МСК), три повтора через 30 с.
-  Для всех следующих release-команд: `YC_EXPECTED_TRIGGER_COUNT=7`.
+  OAuth renewal: `cs2results-threads-token-refresh-06msk`, ежедневно 06:00 МСК.
+  Для main release-команд: `YC_EXPECTED_TRIGGER_COUNT=7`.
 - SHA-256 release-архива:
-  `a832d7fbd7f02060813745a147f9611550626843fd942efb8ecfb43e03999213`.
+  `0f36b363df9fe80f85074fb24556d1e349c5088b48a0010588b6ca23c76c8ed4`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.

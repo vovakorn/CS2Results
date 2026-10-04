@@ -76,9 +76,9 @@
 | `THREADS_LOCKBOX_SECRET_ID` | ID Lockbox-секрета с OAuth-данными Threads; не сам токен. Для цепочек необходимы `threads_basic`, `threads_content_publish`, `threads_manage_replies`; после изменения scopes требуется повторная авторизация. См. [восстановление](docs/threads-publishing.md#oauth-permissions-and-recovery). |
 | `XRAY_CONFIG_JSON` | Конфигурация Xray-клиента для запросов основной функции к Meta; в production подключается через Lockbox. |
 
-Локально подготовлены ожидание готовности Threads-карточек и приватный job
-`threads_token_refresh` для продления за 14 дней до expiry. Для включения нужен
-релиз основной/OAuth-функций и ежедневный OAuth-таймер; см.
+В production включены ожидание готовности Threads-карточек и приватный job
+`threads_token_refresh` для продления за 14 дней до expiry. OAuth-таймер запускается
+ежедневно в 06:00 МСК; перед ручной переавторизацией его приостанавливают. См.
 [инструкцию запуска](docs/yandex-cloud-deploy.md#threads-token-renewal).
 
 Опционально:

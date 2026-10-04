@@ -9,16 +9,18 @@
 
 ## Now
 
-- [x] Локально реализовать продление Threads-токена за 14 дней до expiry
+- [x] Реализовать и выпустить продление Threads-токена за 14 дней до expiry
   в существующей OAuth-функции: проверять account/app/grants, сохранять прочие
-  записи Lockbox и пропускать свежий токен. Подготовлено 4 октября;
+  записи Lockbox и пропускать свежий токен. Выпущено 4 октября;
   текущий production expiry — 2 декабря 2026 в 22:34:10 МСК.
 - [x] Перед `threads_publish` ожидать `FINISHED` дочерних и итогового контейнеров
   с общим бюджетом 30 секунд, сохраняя outbox и защиту от дублей.
   Точная причина временных HTTP 400 при восстановлении не подтверждена.
-- [ ] Выполнить утверждённый 4 октября релиз двух мер надёжности: основная функция,
+- [x] Выполнить утверждённый 4 октября релиз двух мер надёжности: основная функция,
   отдельная OAuth-функция, один ежедневный OAuth-таймер на `production`.
-  Runbook и условия проверки: `docs/yandex-cloud-deploy.md#threads-token-renewal`.
+  PR #135 + endpoint fix; main `d4ebicjjg2tpneivruvs`, OAuth `d4e4cnk940fa21sjk50s`.
+  784 теста, CI, candidate/production smoke и timer envelope успешны.
+  Runbook: `docs/yandex-cloud-deploy.md#threads-token-renewal`.
 
 - [x] Диагностировать отказ результатов Threads 3 октября: действующий токен
   без `threads_manage_replies`, HTTP 403 при `reply_to_id`; подготовить локальное

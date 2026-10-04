@@ -72,8 +72,8 @@ not add an API Gateway route for this function.
   final-result outbox item is removed, so a retry is manual only after checking
   Threads. Definite pre-publication errors release the claim for a later retry.
 
-Readiness waiting and automatic renewal below are implemented locally on
-4 October 2026; they are **not yet deployed** to production.
+Readiness waiting and automatic renewal below were deployed on 4 October 2026;
+the existing OAuth function is invoked daily at 03:00 UTC / 06:00 Moscow.
 
 ## Automatic token renewal
 
@@ -108,6 +108,7 @@ exception; logs/responses omit token values. Deployment, IAM and daily schedule 
 described in [the cloud runbook](yandex-cloud-deploy.md#threads-token-renewal).
 
 References: [Meta refresh endpoint](https://www.postman.com/meta/threads/documentation/dht3nzz/threads-api?entity=request-34203612-ee0a2365-9d95-4cbe-8087-1cfb04d38c05),
+[Lockbox payload endpoint](https://yandex.cloud/en/docs/lockbox/api-ref/Payload/get),
 [Lockbox version inheritance](https://yandex.cloud/en/docs/lockbox/api-ref/Secret/addVersion),
 [Yandex timer envelope](https://yandex.cloud/en/docs/functions/concepts/trigger/timer).
 
@@ -155,13 +156,15 @@ Container readiness reference: [Meta Threads status API](https://www.postman.com
 The OAuth scope omission is corrected and the callback rejects tokens without
 reply permission. This does not prevent a later token revocation or expiry.
 The new token's debugger response showed expiry at 2026-12-02 22:34:10 Moscow.
-The deployed OAuth version still has no scheduled token renewal; the local job
-above requires a separate release and timer. External renewal jobs were not audited.
+Scheduled renewal is enabled from 4 October. Production dry-run and timer-envelope
+smokes returned `not_due` without changing the current secret version. The first
+actual refresh is still pending the 14-day window; revoked/expired tokens require
+owner authorization. External renewal jobs were not audited.
 
-The deployed Threads publisher also calls `threads_publish` immediately after
-container creation, without polling `FINISHED`. Unpublished probes showed image
+Before the 4 October release, the Threads publisher called `threads_publish`
+immediately after container creation, without polling `FINISHED`. Unpublished probes showed image
 processing taking about five seconds. Intermittent HTTP 400 failures observed
 during recovery were resolved by scheduled result retries; the exact error body
-was not captured. Container readiness and token renewal are prepared locally,
-but were not deployed in this incident. Network-uncertain delivery can
+was not captured. Readiness polling and scheduled token renewal were deployed separately on
+4 October after the scope recovery. Network-uncertain delivery can
 still intentionally block a tournament chain to prevent duplicates.
