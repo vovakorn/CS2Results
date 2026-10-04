@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Sequence
 from urllib.parse import quote
@@ -25,6 +26,8 @@ HTTP_TIMEOUT_SECONDS = 20
 META_HTTP_HEADERS = {"User-Agent": "curl/8.7.1"}
 MAX_CAROUSEL_ITEMS = 20
 MAX_TEXT_LENGTH = 500
+MEDIA_READY_TIMEOUT_SECONDS = 30
+MEDIA_POLL_INTERVAL_SECONDS = 2
 
 
 class ThreadsPublishError(RuntimeError):
@@ -166,6 +169,41 @@ def _published_post_id(payload: dict[str, Any]) -> str:
     return identifier
 
 
+def _wait_for_containers(container_ids: Sequence[str], access_token: str,
+                         proxy: dict[str, str] | None, deadline: float) -> None:
+    """No publication has happened yet, so status-check failures are retryable."""
+    pending = list(container_ids)
+    while pending:
+        for identifier in pending[:]:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ThreadsPublishError("Threads media readiness timed out before publication")
+            try:
+                response = requests.get(
+                    f"{THREADS_GRAPH_URL}/{identifier}",
+                    params={"fields": "status"},
+                    headers={**META_HTTP_HEADERS, "Authorization": f"Bearer {access_token}"},
+                    proxies=proxy, timeout=min(HTTP_TIMEOUT_SECONDS, remaining),
+                    allow_redirects=False,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except (requests.RequestException, ValueError):
+                raise ThreadsPublishError("Threads media status check failed before publication") from None
+            status = payload.get("status") if isinstance(payload, dict) else None
+            if status == "FINISHED":
+                pending.remove(identifier)
+            elif status == "PUBLISHED":
+                raise ThreadsDeliveryUncertainError("Threads container is already published")
+            elif status != "IN_PROGRESS":
+                raise ThreadsPublishError("Threads media container is not publishable")
+        if pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ThreadsPublishError("Threads media readiness timed out before publication")
+            time.sleep(min(MEDIA_POLL_INTERVAL_SECONDS, remaining))
+
+
 def _caption(value: str) -> str:
     normalized = value.strip()
     if not normalized:
@@ -205,6 +243,7 @@ def publish_cards(image_urls: Sequence[str], caption: str, context: Any, reply_t
                 proxy,
             )
             creation_id = _container_id(container)
+            readiness_deadline = time.monotonic() + MEDIA_READY_TIMEOUT_SECONDS
         else:
             child_ids = []
             for image_url in image_urls:
@@ -219,6 +258,9 @@ def publish_cards(image_urls: Sequence[str], caption: str, context: Any, reply_t
                     proxy,
                 )
                 child_ids.append(_container_id(child))
+            # One shared polling budget for all children and their parent.
+            readiness_deadline = time.monotonic() + MEDIA_READY_TIMEOUT_SECONDS
+            _wait_for_containers(child_ids, access_token, proxy, readiness_deadline)
             parent = _meta_post(
                 f"{THREADS_GRAPH_URL}/{user_id}/threads",
                 {
@@ -231,6 +273,7 @@ def publish_cards(image_urls: Sequence[str], caption: str, context: Any, reply_t
                 proxy,
             )
             creation_id = _container_id(parent)
+        _wait_for_containers([creation_id], access_token, proxy, readiness_deadline)
         published = _meta_post(
             f"{THREADS_GRAPH_URL}/{user_id}/threads_publish",
             {"creation_id": creation_id, "access_token": access_token},

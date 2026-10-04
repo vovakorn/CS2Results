@@ -69,12 +69,17 @@
 | `INSTAGRAM_MEDIA_BUCKET` | Публичный bucket только для Instagram-карточек; не bucket состояния. |
 | `INSTAGRAM_MEDIA_PUBLIC_BASE_URL` | Публичная HTTPS-база для Instagram-карточек в media bucket. |
 | `INSTAGRAM_LOCKBOX_SECRET_ID` | ID Lockbox-секрета с OAuth-данными Instagram; не сам токен. |
-| `THREADS_EXPECTED_USER_ID` | Обязательный ID владельца Threads OAuth-связки для операций отзыва доступа и удаления данных. |
+| `THREADS_EXPECTED_USER_ID` | Обязательный ID владельца Threads OAuth-связки для отзыва доступа, удаления данных и безопасного автоматического продления токена. |
 | `ENABLE_THREADS_PUBLISHING` | `1` включает независимую доставку карточек в Threads; по умолчанию `0`. |
 | `THREADS_MEDIA_BUCKET` | Публичный bucket только для Threads-карточек; не bucket состояния. |
 | `THREADS_MEDIA_PUBLIC_BASE_URL` | Публичная HTTPS-база для Threads-карточек в media bucket. |
-| `THREADS_LOCKBOX_SECRET_ID` | ID Lockbox-секрета с OAuth-данными Threads; не сам токен. |
+| `THREADS_LOCKBOX_SECRET_ID` | ID Lockbox-секрета с OAuth-данными Threads; не сам токен. Для цепочек необходимы `threads_basic`, `threads_content_publish`, `threads_manage_replies`; после изменения scopes требуется повторная авторизация. См. [восстановление](docs/threads-publishing.md#oauth-permissions-and-recovery). |
 | `XRAY_CONFIG_JSON` | Конфигурация Xray-клиента для запросов основной функции к Meta; в production подключается через Lockbox. |
+
+Локально подготовлены ожидание готовности Threads-карточек и приватный job
+`threads_token_refresh` для продления за 14 дней до expiry. Для включения нужен
+релиз основной/OAuth-функций и ежедневный OAuth-таймер; см.
+[инструкцию запуска](docs/yandex-cloud-deploy.md#threads-token-renewal).
 
 Опционально:
 

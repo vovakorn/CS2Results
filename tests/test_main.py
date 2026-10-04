@@ -2899,6 +2899,26 @@ def test_threads_chain_uncertain_append_blocks_only_its_tournament(monkeypatch):
     assert "threads:pandascore:two" not in active
 
 
+def test_threads_result_readiness_timeout_keeps_outbox_and_releases_claim(monkeypatch):
+    match = _match()
+    pending = PendingDelivery(key="outbox/result", channel_id="threads", channel_name="threads", match=match,
+                              created_at="2026-10-04T00:00:00Z")
+    claim = DeliveryClaim("channel", "claim", "id")
+    released, deleted, attempted, marked = [], [], [], []
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(claim))
+    monkeypatch.setattr(main, "render_result_card", lambda *args: b"card")
+    monkeypatch.setattr(main, "release_delivery_claim", lambda *args: _async(released.append(args)))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda *args: _async(deleted.append(args)))
+    monkeypatch.setattr(main, "record_result_delivery_attempt", lambda *args: _async(attempted.append(args)))
+    monkeypatch.setattr(main, "mark_channel_processed", lambda *args: _async(marked.append(args)))
+    def timeout(*args, **kwargs):
+        raise main.ThreadsPublishError("Threads media readiness timed out before publication")
+    monkeypatch.setattr(main, "publish_threads_rendered_cards", timeout)
+    assert main._deliver_threads_result(pending, None) == "failed"
+    assert released == [(claim,)] and attempted == [(pending,)]
+    assert not deleted and not marked
+
+
 def test_threads_schedule_groups_cards_by_stable_tournament_id():
     first = _upcoming().model_copy(update={
         "match_id": "match-1", "source_refs": SourceReferences(tournament_id="tournament-1"),

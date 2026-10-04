@@ -60,7 +60,7 @@ def test_health_is_public_and_contains_no_configuration():
             "ig-app-id",
             "instagram_business_basic,instagram_business_content_publish",
         ),
-        ("threads", "threads-app-id", "threads_basic,threads_content_publish"),
+        ("threads", "threads-app-id", "threads_basic,threads_content_publish,threads_manage_replies"),
     ],
 )
 def test_start_redirects_with_minimal_scopes(platform, app_id, scope):
@@ -227,6 +227,8 @@ def test_threads_authorization_code_exchange_uses_query_parameters(monkeypatch):
         calls.append((method, url, kwargs))
         if url.endswith("/oauth/access_token"):
             return {"access_token": "short-token", "user_id": "threads-user-id"}
+        if url.endswith("/debug_token"):
+            return {"data": {"is_valid": True, "scopes": ["threads_basic", "threads_content_publish", "threads_manage_replies"]}}
         return {"access_token": "long-token", "expires_in": 5_184_000}
 
     monkeypatch.setattr(social_oauth, "_request_json", fake_request_json)
@@ -234,10 +236,33 @@ def test_threads_authorization_code_exchange_uses_query_parameters(monkeypatch):
     result = social_oauth._threads_tokens("authorization-code", social_oauth._platform_config("threads"))
 
     assert result["access_token"] == "long-token"
+    assert result["permissions"] == "threads_basic,threads_content_publish,threads_manage_replies"
     assert calls[0][0] == "POST"
     assert calls[0][2]["params"]["code"] == "authorization-code"
     assert calls[0][2]["params"]["grant_type"] == "authorization_code"
     assert "data" not in calls[0][2]
+    assert calls[2][1].endswith("/debug_token")
+    assert calls[2][2]["params"]["input_token"] == "long-token"
+
+
+@pytest.mark.parametrize("token_info,reason", [
+    ({"is_valid": True, "scopes": ["threads_basic", "threads_content_publish"]}, "missing required permissions: threads_manage_replies"),
+    ({"is_valid": False, "scopes": ["threads_basic", "threads_content_publish", "threads_manage_replies"]}, "did not confirm a valid token"),
+    ({"is_valid": True, "scopes": "threads_manage_replies"}, "did not return granted scopes"),
+])
+def test_threads_callback_keeps_existing_credentials_when_grants_are_incomplete(monkeypatch, token_info, reason):
+    def fake_request_json(method, url, **kwargs):
+        if url.endswith("/debug_token"):
+            return {"data": token_info}
+        return {"access_token": "secret-token", "user_id": "789", "expires_in": 60}
+
+    monkeypatch.setattr(social_oauth, "_request_json", fake_request_json)
+    monkeypatch.setattr(social_oauth, "_store_credentials", lambda *args: pytest.fail("Existing credentials must remain untouched"))
+    state = social_oauth._state("threads", "threads-app-secret")
+    response = social_oauth.handler(_event("/oauth/meta/threads/callback", query={"code": "one-time-code", "state": state}), None)
+    assert response["statusCode"] == 400
+    assert reason in response["body"]
+    assert "secret-token" not in response["body"]
 
 
 def test_threads_credentials_check_returns_only_boolean(monkeypatch):
@@ -384,7 +409,7 @@ def test_store_credentials_adds_lockbox_version(monkeypatch):
         {
             "access_token": "threads-secret-token",
             "expires_in": 5_184_000,
-            "permissions": "threads_basic,threads_content_publish",
+            "permissions": "threads_basic,threads_content_publish,threads_manage_replies",
         },
         {"id": "789", "username": "cs2results"},
         {"token": "iam-token"},
@@ -395,6 +420,7 @@ def test_store_credentials_adds_lockbox_version(monkeypatch):
     entries = {entry["key"]: entry["textValue"] for entry in captured["json"]["payloadEntries"]}
     assert entries["APP_SECRET"] == "threads-app-secret"
     assert entries["ACCESS_TOKEN"] == "threads-secret-token"
+    assert entries["GRANTED_SCOPES"] == "threads_basic,threads_content_publish,threads_manage_replies"
     assert entries["USER_ID"] == "789"
     assert entries["USERNAME"] == "cs2results"
 
