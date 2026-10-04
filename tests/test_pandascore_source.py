@@ -95,6 +95,18 @@ def test_pandascore_normalizes_series_result_by_team_id():
     assert match.maps == []
 
 
+def test_pandascore_competition_key_keeps_league_context_and_legacy_alias():
+    item = _sample_match()
+    item["league"] = {"id": 41, "name": "StarLadder StarSeries"}
+    item["serie"] = {"id": 42, "full_name": "Fall 2026"}
+    item["tournament"] = {"id": 43, "name": "Playoffs", "tier": "S"}
+
+    match = pandascore_source._normalize_raw_matches([item])[0]
+
+    assert match.competition_key == "StarLadder StarSeries Fall 2026"
+    assert match.competition_key_aliases == ["Fall 2026"]
+
+
 def test_pandascore_blast_bounty_finals_are_recognized_as_tier1_lan():
     item = _sample_match()
     item["league"] = {"id": 11, "name": "BLAST Bounty"}

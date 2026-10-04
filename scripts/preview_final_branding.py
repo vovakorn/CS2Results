@@ -59,7 +59,7 @@ def main():
             match = MatchNormalized(source="liquipedia", match_id=f"demo-{count}",
                 tournament_name=title, tournament_parent=profile.liquipedia_page,
                 team1_name="Team Spirit", team2_name="FUT Esports", score1=3, score2=count - 3,
-                is_final=True, winner_prize_usd=300000, maps=maps)
+                is_final=True, final_identity_confirmed=True, winner_prize_usd=300000, maps=maps)
             data = media_cards.render_final_card(match, branding=profile.branding)
             save_demo(data, args.output / f"{profile.key}-{count}.png")
         series = Image.new("RGB", (3240, 1080))

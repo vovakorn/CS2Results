@@ -12,7 +12,7 @@ def final(count=4):
     return MatchNormalized(source="liquipedia", match_id="final-brand-test",
         tournament_name="PGL Masters Bucharest 2026", tournament_parent="PGL/2026/Masters",
         team1_name="Team Spirit International", team2_name="FUT Esports",
-        score1=3, score2=count - 3, is_final=True, winner_prize_usd=300000,
+        score1=3, score2=count - 3, is_final=True, final_identity_confirmed=True, winner_prize_usd=300000,
         maps=[MapResult(name=f"Map {index + 1}", score1=13, score2=8)
               for index in range(count)])
 

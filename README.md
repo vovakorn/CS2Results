@@ -479,9 +479,14 @@ ENABLE_LIQUIPEDIA_SHADOW=1
 BOT_MODE=production
 ```
 
-10. Создайте пять timer trigger: получение результатов раз в 15 минут,
+10. Для основной функции предусмотрены семь timer triggers: получение результатов раз в 15 минут,
     `retry_only` для outbox раз в 5 минут, расписание в 09:00 МСК и итоги в 23:00 МСК;
-    также создайте ежедневный `radar_discovery` в 12:00 МСК.
+    также `radar_discovery` в 12:00 МСК (сейчас PAUSED), `schedule_reel`
+    в 09:15 МСК и `preview_discovery` в 18:00 МСК. Восьмой timer папки вызывает
+    отдельную OAuth-функцию для обновления Threads-токена в 06:00 МСК.
+    Новые таймеры/включение
+    публикаций требуют разрешения; сверяйте фактические имена и расписания
+    с `PROJECT_STATUS.md` перед изменением облака.
 11. Для каждого `job` сначала запустите функцию вручную с `dry_run=true`.
 12. После проверки отключите `dry_run` и проверьте, что объекты появляются в `outbox/results/`, `claims/` и `processed/`; после подтверждения outbox удаляется, а claim имеет состояние `sent` до завершения записи marker.
 
@@ -497,13 +502,19 @@ scripts/build_function_zip.sh
 
 Безопасный deploy через `yc` выполняется только после read-only проверки:
 
+Согласованная схема: отдельная ветка → PR → успешный CI → merge → свежая
+чистая копия main → candidate → smoke → promote того же архива. GitHub merge
+сам по себе не обновляет локальные папки или production. Deploy-скрипт не
+ограничивает ветку автоматически: Git SHA слитого изменения необходимо сверить
+до сборки. См. [восстановление и работу с ветками](docs/local-recovery.md).
+
 ```bash
-YC_FUNCTION_ID=<function_id> scripts/deploy_yandex_function.sh check
-YC_FUNCTION_ID=<function_id> YC_FUNCTION_PACKAGE_BUCKET=<private_bucket> \
+YC_FUNCTION_ID=<function_id> YC_EXPECTED_TRIGGER_COUNT=7 scripts/deploy_yandex_function.sh check
+YC_FUNCTION_ID=<function_id> YC_EXPECTED_TRIGGER_COUNT=7 YC_FUNCTION_PACKAGE_BUCKET=<private_bucket> \
   scripts/deploy_yandex_function.sh candidate
-YC_FUNCTION_ID=<function_id> YC_PROMOTE_APPROVED=1 \
+YC_FUNCTION_ID=<function_id> YC_EXPECTED_TRIGGER_COUNT=7 YC_PROMOTE_APPROVED=1 \
   scripts/deploy_yandex_function.sh promote dist/releases/<candidate_version_id>.json
-YC_FUNCTION_ID=<function_id> YC_ROLLBACK_APPROVED=1 \
+YC_FUNCTION_ID=<function_id> YC_EXPECTED_TRIGGER_COUNT=7 YC_ROLLBACK_APPROVED=1 \
   scripts/deploy_yandex_function.sh rollback dist/releases/<candidate_version_id>.json
 ```
 

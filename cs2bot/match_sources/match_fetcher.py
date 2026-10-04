@@ -5,13 +5,21 @@ import asyncio
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from . import config as source_config
 from .filters import is_tier1_lan, is_valid_match
 from .models import MatchNormalized, SourceUnavailableError
-from .storage import is_channel_processed, is_match_processed, mark_channel_processed
+from .storage import (
+    clear_pending_liquipedia_final,
+    get_or_create_pending_liquipedia_final,
+    is_channel_processed,
+    is_match_processed,
+    mark_channel_processed,
+    mark_pending_liquipedia_final_ready,
+)
 
 ConcreteSourceName = Literal["pandascore", "liquipedia"]
 SourceName = Literal["auto", "pandascore", "liquipedia"]
@@ -20,6 +28,13 @@ logger = logging.getLogger(__name__)
 
 
 SHADOW_MATCH_TIME_WINDOW = timedelta(hours=12)
+LIQUIPEDIA_FINAL_WAIT_SECONDS = 10 * 60
+FINAL_STAGE_TOKENS = {
+    "final", "finals", "grand", "semi", "semifinal", "semifinals", "quarterfinal",
+    "quarterfinals", "playoff", "playoffs", "group", "groups", "stage", "results",
+    "upper", "lower", "bracket", "qualifier", "qualifiers", "consolation",
+}
+EVENT_NEUTRAL_TOKENS = FINAL_STAGE_TOKENS | {"starseries"}
 
 
 def _shadow_match_teams(match: MatchNormalized) -> tuple[str, str]:
@@ -50,6 +65,7 @@ def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
     complete_result_card = (
         match.source == "liquipedia"
         and match.is_final
+        and match.final_identity_confirmed
         and match.winner_prize_usd is not None
         and 3 <= len(match.maps) <= 5
         and all(item.score1 is not None and item.score2 is not None for item in match.maps)
@@ -57,6 +73,7 @@ def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
     complete_standings = (
         match.source == "liquipedia"
         and match.is_final
+        and match.final_identity_confirmed
         and bool(match.tournament_parent)
         and 2 <= len(match.tournament_placements) <= 64
         and all(item.prize_usd is not None for item in match.tournament_placements)
@@ -75,26 +92,174 @@ def _same_match(left: MatchNormalized, right: MatchNormalized) -> bool:
     )
 
 
+def _event_identity(value: str | None) -> str:
+    normalized = MatchNormalized._identity_part(value)
+    return " ".join(token for token in normalized.split() if token not in EVENT_NEUTRAL_TOKENS)
+
+
+def _same_final_match(left: MatchNormalized, right: MatchNormalized) -> bool:
+    left_time = _shadow_match_datetime(left)
+    right_time = _shadow_match_datetime(right)
+    if (
+        left_time is None
+        or right_time is None
+        or _shadow_match_teams(left) != _shadow_match_teams(right)
+        or abs(left_time - right_time) > SHADOW_MATCH_TIME_WINDOW
+    ):
+        return False
+    left_events = set(filter(None, map(_event_identity, (left.competition_key, left.tournament_name))))
+    right_events = set(filter(None, map(_event_identity, (right.competition_key, right.tournament_name))))
+    return bool(left_events & right_events)
+
+
+def _placement_rank(value: str) -> int | None:
+    found = re.fullmatch(r"\s*(\d+)(?:\s*[-–]\s*\d+)?\s*", value)
+    return int(found.group(1)) if found else None
+
+
+def _competitive_match(match: MatchNormalized) -> bool:
+    return (
+        match.score1 is not None
+        and match.score2 is not None
+        and match.score1 != match.score2
+        and match.forfeit is not True
+        and (match.result_type or "").casefold() != "default"
+    )
+
+
+def confirm_liquipedia_final_candidates(
+    matches: list[MatchNormalized],
+) -> tuple[list[MatchNormalized], dict[str, str]]:
+    """Confirm only the unique latest competitive match between table places 1 and 2."""
+    groups: dict[str, list[MatchNormalized]] = {}
+    rejected: dict[str, str] = {}
+    for match in matches:
+        if match.source != "liquipedia":
+            continue
+        if match.tournament_parent:
+            groups.setdefault(match.tournament_parent, []).append(match)
+        else:
+            rejected[match.match_id or match.match_uid] = "missing_tournament_parent"
+
+    confirmed: list[MatchNormalized] = []
+    for parent, group in groups.items():
+        standings_source = next(
+            (
+                match
+                for match in group
+                if match.tournament_placements_complete and match.tournament_placements
+            ),
+            None,
+        )
+        standings = standings_source.tournament_placements if standings_source else []
+        by_rank: dict[int, list[str]] = {}
+        identities = set()
+        table_complete = (
+            standings_source is not None
+            and len(standings) >= 4
+            and all(item.prize_usd is not None for item in standings)
+        )
+        for item in standings:
+            identity = MatchNormalized._identity_part(item.team_name)
+            rank = _placement_rank(item.placement)
+            if rank in (1, 2) and item.placement.strip() != str(rank):
+                table_complete = False
+            if identity:
+                identities.add(identity)
+            if rank is not None:
+                by_rank.setdefault(rank, []).append(identity)
+        table_complete = table_complete and len(identities) == len(standings)
+        top_one = by_rank.get(1, [])
+        top_two = by_rank.get(2, [])
+        table_complete = table_complete and len(top_one) == 1 and len(top_two) == 1 and top_one[0] != top_two[0]
+
+        competitive = [
+            (match, _parse_match_datetime(match.end_date or match.date or match.start_date))
+            for match in group
+            if _competitive_match(match)
+        ]
+        competitive = [(match, timestamp) for match, timestamp in competitive if timestamp is not None]
+        latest_at = max((timestamp for _, timestamp in competitive), default=None)
+        latest = [(match, timestamp) for match, timestamp in competitive if timestamp == latest_at]
+
+        for match in group:
+            identity = match.match_id or match.match_uid
+            reason = None
+            teams = {_shadow_match_teams(match)[0], _shadow_match_teams(match)[1]}
+            if not table_complete:
+                reason = "incomplete_standings"
+            elif not _competitive_match(match):
+                reason = "not_competitive"
+            elif teams != {top_one[0], top_two[0]}:
+                reason = "teams_not_first_and_second"
+            elif match.score1 is None or match.score2 is None:
+                reason = "missing_score"
+            else:
+                winner = match.team1_name if match.score1 > match.score2 else match.team2_name
+                if MatchNormalized._identity_part(winner) != top_one[0]:
+                    reason = "winner_not_first_place"
+                else:
+                    timestamp = _parse_match_datetime(match.end_date or match.date or match.start_date)
+                    if timestamp is None:
+                        reason = "missing_match_time"
+                    elif timestamp != latest_at:
+                        reason = "not_latest_in_tournament_parent"
+                    elif len(latest) != 1 or latest[0][0].match_id != match.match_id:
+                        reason = "ambiguous_latest_match_time"
+            if reason:
+                rejected[identity] = reason
+                logger.info(
+                    "event=liquipedia_final_candidate_rejected match_id=%s tournament_parent=%s reason=%s",
+                    match.match_id,
+                    parent,
+                    reason,
+                )
+                continue
+            final = match.model_copy(
+                update={
+                    "final_candidate_hint": False,
+                    "is_final": True,
+                    "final_identity_confirmed": True,
+                }
+            )
+            confirmed.append(final)
+            logger.info(
+                "event=liquipedia_final_identity_confirmed match_id=%s tournament_parent=%s bridge_uid=%s",
+                match.match_id,
+                parent,
+                final.final_bridge_uid,
+            )
+    return confirmed, rejected
+
+
 def _replace_with_liquipedia_finals(
     primary_matches: list[MatchNormalized],
     liquipedia_matches: list[MatchNormalized],
 ) -> list[MatchNormalized]:
     """Use Liquipedia as the complete source for eligible final cards only."""
     merged = list(primary_matches)
-    replacements = additions = 0
+    replacements = 0
     for final in liquipedia_matches:
         if not _is_eligible_liquipedia_final(final):
             continue
-        index = next((i for i, match in enumerate(merged) if _same_match(match, final)), None)
+        index = next((i for i, match in enumerate(merged) if _same_final_match(match, final)), None)
         if index is None:
-            merged.append(final)
-            additions += 1
+            continue
         else:
             primary = merged[index]
             primary_tournament_id = (
                 primary.source_refs.tournament_id if primary.source_refs else None
             )
             updates = {}
+            updates["canonical_uid_override"] = primary.match_uid
+            updates["competition_key"] = primary.competition_key or final.competition_key
+            updates["competition_key_aliases"] = list(
+                dict.fromkeys(
+                    [*primary.competition_key_aliases, final.competition_key]
+                    if final.competition_key
+                    else primary.competition_key_aliases
+                )
+            )[:8]
             if primary_tournament_id:
                 updates["vrs_baseline_id"] = primary_tournament_id
             # Liquipedia is authoritative for final scores/maps, but its match
@@ -125,11 +290,7 @@ def _replace_with_liquipedia_finals(
                 final = final.model_copy(update=updates)
             merged[index] = final
             replacements += 1
-    logger.info(
-        "event=liquipedia_final_card_selection replacements=%s additions=%s",
-        replacements,
-        additions,
-    )
+    logger.info("event=liquipedia_final_card_selection replacements=%s", replacements)
     return merged
 
 
@@ -137,6 +298,9 @@ async def _apply_liquipedia_final_card_selection(
     primary_matches: list[MatchNormalized],
     limit: int,
     require_fresh: bool,
+    *,
+    now: datetime | None = None,
+    dry_run: bool = False,
 ) -> list[MatchNormalized]:
     if not source_config.ENABLE_LIQUIPEDIA_FINAL_CARDS:
         return primary_matches
@@ -147,7 +311,59 @@ async def _apply_liquipedia_final_card_selection(
         matches = await _fetch_from_source("liquipedia", limit)
         if require_fresh:
             matches = [match for match in matches if is_match_fresh(match)]
-        return _replace_with_liquipedia_finals(primary_matches, matches)
+        finals, _ = confirm_liquipedia_final_candidates(matches)
+        selected = _replace_with_liquipedia_finals(primary_matches, finals)
+        for final in finals:
+            primary_match = next(
+                (match for match in primary_matches if _same_final_match(match, final)), None
+            )
+            if primary_match:
+                if final.final_bridge_uid and not dry_run:
+                    await clear_pending_liquipedia_final(final.final_bridge_uid)
+                logger.info(
+                    "event=liquipedia_final_candidate_resolved resolution=pandascore_replacement match_uid=%s bridge_uid=%s",
+                    primary_match.match_uid,
+                    final.final_bridge_uid,
+                )
+                continue
+            if dry_run:
+                continue
+            pending = await get_or_create_pending_liquipedia_final(final, now=now)
+            if pending.created:
+                logger.info(
+                    "event=liquipedia_final_pending_created bridge_uid=%s wait_seconds=%s",
+                    pending.bridge_uid,
+                    LIQUIPEDIA_FINAL_WAIT_SECONDS,
+                )
+            if pending.status == "ready":
+                selected.insert(0, final)
+                logger.info(
+                    "event=liquipedia_final_candidate_resolved resolution=ready_state bridge_uid=%s",
+                    pending.bridge_uid,
+                )
+                continue
+            created_at = _parse_match_datetime(pending.created_at)
+            age_seconds = (
+                ((now or datetime.now(timezone.utc)) - created_at).total_seconds()
+                if created_at is not None
+                else 0
+            )
+            if age_seconds >= LIQUIPEDIA_FINAL_WAIT_SECONDS:
+                pending = await mark_pending_liquipedia_final_ready(pending)
+                selected.insert(0, final)
+                logger.info(
+                    "event=liquipedia_final_candidate_resolved resolution=wait_elapsed bridge_uid=%s age_seconds=%s",
+                    pending.bridge_uid,
+                    int(age_seconds),
+                )
+            else:
+                logger.info(
+                    "event=liquipedia_final_pending_wait bridge_uid=%s age_seconds=%s wait_seconds=%s",
+                    pending.bridge_uid,
+                    int(max(0, age_seconds)),
+                    LIQUIPEDIA_FINAL_WAIT_SECONDS,
+                )
+        return selected
     except Exception as exc:
         logger.warning("event=liquipedia_final_card_skipped error_type=%s", type(exc).__name__)
         return primary_matches
@@ -529,7 +745,21 @@ async def get_new_finished_matches(
                 fetched,
                 fetch_limit,
                 require_fresh=require_fresh,
+                dry_run=dry_run,
             )
+    elif used_source == "liquipedia":
+        confirmed, _ = confirm_liquipedia_final_candidates(fetched)
+        confirmed_ids = {match.match_id for match in confirmed}
+        fetched = [
+            match.model_copy(
+                update={
+                    "final_candidate_hint": False,
+                    "is_final": match.match_id in confirmed_ids,
+                    "final_identity_confirmed": match.match_id in confirmed_ids,
+                }
+            )
+            for match in fetched
+        ]
     if require_fresh:
         fresh_matches = [match for match in fetched if is_match_fresh(match)]
         dropped = len(fetched) - len(fresh_matches)

@@ -16,7 +16,7 @@ from cs2bot.match_sources.models import (
     TournamentRadar,
     UpcomingMatchNormalized,
 )
-from cs2bot.match_sources.storage import DeliveryClaim, PendingDelivery, ThreadsChainAppend
+from cs2bot.match_sources.storage import DeliveryClaim, PendingDelivery, ThreadsChainAppend, StorageUnavailableError
 
 
 async def _async(value):
@@ -173,6 +173,7 @@ def test_tournament_standings_are_delivered_as_a_separate_confirmed_album(monkey
         update={
             "source": "liquipedia",
             "is_final": True,
+            "final_identity_confirmed": True,
             "tournament_parent": "BLAST/Open/Porto/2026",
             "tournament_placements": [
                 TournamentPlacement(placement="1", team_name="NAVI", prize_usd=150_000),
@@ -231,6 +232,7 @@ def test_tournament_standings_are_delivered_to_each_social_platform(
         update={
             "source": "liquipedia",
             "is_final": True,
+            "final_identity_confirmed": True,
             "tournament_parent": "BLAST/Open/Porto/2026",
             "tournament_placements": [
                 TournamentPlacement(placement="1", team_name="NAVI", prize_usd=150_000),
@@ -2943,7 +2945,7 @@ def test_preview_is_root_and_schedule_result_liquipedia_standings_vrs_follow_it(
     key = "threads:event:esl-pro-league-season-24-2026"
     first = _match().model_copy(update={"source_refs": SourceReferences(serie_id="11004", tournament_id="22017")})
     final = first.model_copy(update={"source": "liquipedia", "source_refs": None,
-        "tournament_parent": "ESL/Pro_League/Season_24", "is_final": True,
+        "tournament_parent": "ESL/Pro_League/Season_24", "is_final": True, "final_identity_confirmed": True,
         "tournament_placements": [TournamentPlacement(placement="1", team_name="NAVI", prize_usd=100_000),
                                    TournamentPlacement(placement="2", team_name="FaZe", prize_usd=60_000)]})
     pending = PendingDelivery(key="outbox/result", channel_id="threads", channel_name="threads",
@@ -2986,3 +2988,356 @@ def test_preview_is_root_and_schedule_result_liquipedia_standings_vrs_follow_it(
         PendingDelivery(key="outbox/vrs", channel_id="threads", channel_name="threads", match=final,
             created_at=pending.created_at, content_type="tournament_vrs_standings", vrs_impacts=impacts), None) == "sent"
     assert [args[4] for args in published] == [None, "post-1", "post-2", "post-3", "post-4"]
+
+
+@pytest.mark.parametrize(
+    ("delivery", "publisher_name", "error"),
+    [
+        (
+            main._deliver_instagram_result,
+            "publish_rendered_cards",
+            main.InstagramDeliveryUncertainError("unknown"),
+        ),
+        (
+            main._deliver_threads_result,
+            "publish_threads_rendered_cards",
+            main.ThreadsDeliveryUncertainError("unknown"),
+        ),
+    ],
+)
+def test_social_uncertain_result_marks_claim_and_calls_publisher_once(
+    monkeypatch,
+    delivery,
+    publisher_name,
+    error,
+):
+    match = _match()
+    pending = PendingDelivery(
+        key=f"outbox/results/social_{match.match_uid}.json",
+        channel_id="social",
+        channel_name="social",
+        match=match,
+        created_at="2026-08-30T10:00:00Z",
+    )
+    published = []
+    uncertain = []
+    released = []
+    deleted = []
+
+    def publisher(*args):
+        published.append(args)
+        raise error
+
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
+    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(main, publisher_name, publisher)
+    monkeypatch.setattr(main, "mark_delivery_claim_uncertain", lambda claim: _async(uncertain.append(claim.match_uid) or claim))
+    monkeypatch.setattr(main, "release_delivery_claim", lambda claim: _async(released.append(claim.match_uid)))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: None)
+
+    assert delivery(pending, None) == "uncertain"
+    assert len(published) == 1
+    assert uncertain == [f"social_{match.match_uid}"]
+    assert released == []
+    assert deleted == [pending.key]
+
+
+@pytest.mark.parametrize(
+    ("delivery", "publisher_name"),
+    [
+        (main._deliver_instagram_result, "publish_rendered_cards"),
+        (main._deliver_threads_result, "publish_threads_rendered_cards"),
+    ],
+)
+def test_social_failure_before_external_request_releases_claim_and_keeps_outbox(
+    monkeypatch,
+    delivery,
+    publisher_name,
+):
+    match = _match()
+    pending = PendingDelivery(
+        key=f"outbox/results/social_{match.match_uid}.json",
+        channel_id="social",
+        channel_name="social",
+        match=match,
+        created_at="2026-08-30T10:00:00Z",
+    )
+    published = []
+    released = []
+    attempts = []
+    deleted = []
+
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
+    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(main, publisher_name, lambda *args: published.append(args))
+
+    async def fail_before_request(claim):
+        raise StorageUnavailableError("attempting-state write failed")
+
+    monkeypatch.setattr(main, "mark_delivery_claim_attempting", fail_before_request)
+    monkeypatch.setattr(main, "release_delivery_claim", lambda claim: _async(released.append(claim.match_uid)))
+    monkeypatch.setattr(main, "record_result_delivery_attempt", lambda item: _async(attempts.append(item.key)))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+
+    assert delivery(pending, None) == "failed"
+    assert published == []
+    assert released == [f"social_{match.match_uid}"]
+    assert attempts == [pending.key]
+    assert deleted == []
+
+
+@pytest.mark.parametrize(
+    ("delivery", "publisher_name"),
+    [
+        (main._deliver_instagram_result, "publish_rendered_cards"),
+        (main._deliver_threads_result, "publish_threads_rendered_cards"),
+    ],
+)
+def test_social_marker_failure_reconciles_without_republishing(
+    monkeypatch,
+    delivery,
+    publisher_name,
+):
+    match = _match()
+    pending = PendingDelivery(
+        key=f"outbox/results/social_{match.match_uid}.json",
+        channel_id="social",
+        channel_name="social",
+        match=match,
+        created_at="2026-08-30T10:00:00Z",
+    )
+    published = []
+    claim_states = []
+    marker_calls = []
+    attempts = []
+    deleted = []
+    reconciled = []
+
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
+    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(main, publisher_name, lambda *args: published.append(args))
+    monkeypatch.setattr(main, "mark_delivery_claim_attempting", lambda claim: _async(claim_states.append("attempting") or claim))
+    monkeypatch.setattr(main, "mark_delivery_claim_sent", lambda claim: _async(claim_states.append("sent") or claim))
+
+    async def marker_fails(*args):
+        marker_calls.append(args)
+        raise StorageUnavailableError("processed marker write failed")
+
+    monkeypatch.setattr(main, "mark_channel_processed", marker_fails)
+    monkeypatch.setattr(main, "record_result_delivery_attempt", lambda item: _async(attempts.append(item.key)))
+    monkeypatch.setattr(main, "delete_result_delivery", lambda item: _async(deleted.append(item.key)))
+
+    async def reconcile(*args):
+        if not reconciled:
+            reconciled.append(True)
+            return False
+        return True
+
+    monkeypatch.setattr(main, "reconcile_channel_delivery", reconcile)
+
+    assert delivery(pending, None) == "failed"
+    assert claim_states == ["attempting", "sent"]
+    assert len(marker_calls) == 1
+    assert attempts == [pending.key]
+    assert deleted == []
+
+    assert delivery(pending, None) == "reconciled"
+    assert len(published) == 1
+    assert deleted == [pending.key]
+
+
+def test_handler_failure_before_telegram_request_releases_claim_and_keeps_outbox(monkeypatch):
+    released = []
+    attempts = []
+    sent = []
+
+    async def fake_get_new_finished_matches(**kwargs):
+        return [_match()]
+
+    async def fake_claim(match, channel_id, legacy_channel_name=None):
+        return _claim(match, channel_id)
+
+    async def fail_before_request(claim):
+        raise StorageUnavailableError("attempting-state write failed")
+
+    async def fake_release(claim):
+        released.append(claim.match_uid)
+
+    async def fake_record(pending):
+        attempts.append(pending.key)
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", False)
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_delivery_claim_attempting", fail_before_request)
+    monkeypatch.setattr(main, "release_delivery_claim", fake_release)
+    monkeypatch.setattr(main, "record_result_delivery_attempt", fake_record)
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent.append(args))
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 502
+    assert sent == []
+    assert released == [f"global_{_match().match_uid}"]
+    assert attempts == [f"outbox/results/global_{_match().match_uid}.json"]
+
+
+def test_handler_marker_failure_reconciles_telegram_without_republishing(monkeypatch):
+    match = _match()
+    pending = PendingDelivery(
+        key=f"outbox/results/global_{match.match_uid}.json",
+        channel_id="global",
+        channel_name="global",
+        match=match,
+        created_at="2026-08-30T10:00:00Z",
+    )
+    fetch_calls = 0
+    reconcile_calls = 0
+    sent = []
+    claim_states = []
+    marker_calls = []
+    deleted = []
+
+    async def fake_get_new_finished_matches(**kwargs):
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return [match] if fetch_calls == 1 else []
+
+    async def fake_reconcile(*args):
+        nonlocal reconcile_calls
+        reconcile_calls += 1
+        return reconcile_calls > 1
+
+    async def fake_claim(match_value, channel_id, legacy_channel_name=None):
+        return _claim(match_value, channel_id)
+
+    async def fake_attempting(claim):
+        claim_states.append("attempting")
+        return claim
+
+    async def fake_sent(claim):
+        claim_states.append("sent")
+        return claim
+
+    async def marker_fails(*args):
+        marker_calls.append(args)
+        raise StorageUnavailableError("processed marker write failed")
+
+    async def fake_list_pending(*args, **kwargs):
+        return [pending]
+
+    async def fake_delete(item):
+        deleted.append(item.key)
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", False)
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+    monkeypatch.setattr(main, "enqueue_result_delivery", lambda *args, **kwargs: _async(True))
+    monkeypatch.setattr(main, "list_pending_result_deliveries", fake_list_pending)
+    monkeypatch.setattr(main, "reconcile_channel_delivery", fake_reconcile)
+    monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_delivery_claim_attempting", fake_attempting)
+    monkeypatch.setattr(main, "mark_delivery_claim_sent", fake_sent)
+    monkeypatch.setattr(main, "mark_channel_processed", marker_fails)
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent.append(args) or {"ok": True})
+    monkeypatch.setattr(main, "delete_result_delivery", fake_delete)
+
+    first = main.handler({"limit": 1}, None)
+    second = main.handler({"limit": 1, "retry_only": True}, None)
+
+    assert first["statusCode"] == 502
+    assert len(marker_calls) == 1
+    assert claim_states == ["attempting", "sent"]
+    assert len(sent) == 1
+    assert deleted == [pending.key]
+    assert second["statusCode"] == 200
+    assert reconcile_calls == 2
+    assert len(sent) == 1
+
+
+@pytest.mark.parametrize("failed_platform", ["instagram", "threads"])
+def test_social_failure_does_not_change_other_platform_claims(monkeypatch, failed_platform):
+    telegram_sent = []
+    instagram_published = []
+    threads_published = []
+    claim_states = []
+
+    async def fake_fetch(start, end):
+        return [_upcoming()]
+
+    async def fake_contexts(matches):
+        return [None for _ in matches]
+
+    async def fake_claim(content_uid):
+        return DeliveryClaim(content_uid, f"claims/{content_uid}.json", f"claim-{content_uid}")
+
+    async def fake_attempting(claim):
+        claim_states.append((claim.match_uid, "attempting"))
+        return claim
+
+    async def fake_sent(claim):
+        claim_states.append((claim.match_uid, "sent"))
+        return claim
+
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", False)
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fake_fetch)
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", fake_contexts)
+    monkeypatch.setattr(
+        main,
+        "_local_day_window",
+        lambda days_ahead=1: (
+            main.datetime.fromisoformat("2026-08-29T21:00:00+00:00"),
+            main.datetime.fromisoformat("2026-08-30T21:00:00+00:00"),
+            main.datetime.fromisoformat("2026-08-30T10:00:00+03:00"),
+        ),
+    )
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: [b"social-card"])
+    monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
+    monkeypatch.setattr(main, "mark_delivery_claim_attempting", fake_attempting)
+    monkeypatch.setattr(main, "mark_delivery_claim_sent", fake_sent)
+    monkeypatch.setattr(main, "release_delivery_claim", lambda *args, **kwargs: _async(None))
+    monkeypatch.setattr(main, "mark_content_processed", lambda *args, **kwargs: _async(None))
+    monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: telegram_sent.append(args))
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: None)
+
+    def instagram_publish(*args):
+        if failed_platform == "instagram":
+            raise main.InstagramPublishError("instagram failed")
+        instagram_published.append(args)
+
+    def threads_publish(*args):
+        if failed_platform == "threads":
+            raise main.ThreadsPublishError("threads failed")
+        threads_published.append(args)
+
+    monkeypatch.setattr(main, "publish_rendered_cards", instagram_publish)
+    monkeypatch.setattr(main, "publish_threads_rendered_cards", threads_publish)
+
+    response = main._handle_content_job("schedule", False)
+    body = json.loads(response["body"])
+
+    assert body["delivery_failures"] == 0
+    assert telegram_sent
+    if failed_platform == "instagram":
+        assert body["instagram_delivery_failures"] == 1
+        assert body["threads_messages_sent"] == 1
+        assert instagram_published == []
+        assert len(threads_published) == 1
+    else:
+        assert body["instagram_messages_sent"] == 1
+        assert body["threads_delivery_failures"] == 1
+        assert len(instagram_published) == 1
+        assert threads_published == []
+    assert ("schedule_2026-08-30_global", "sent") in claim_states
+    assert any(uid.startswith(f"{failed_platform}_schedule_2026-08-30") and state == "attempting" for uid, state in claim_states)
+    successful_platform = "threads" if failed_platform == "instagram" else "instagram"
+    assert any(uid.startswith(f"{successful_platform}_schedule_2026-08-30") and state == "sent" for uid, state in claim_states)

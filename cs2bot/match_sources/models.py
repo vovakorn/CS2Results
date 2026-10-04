@@ -114,9 +114,14 @@ class MatchNormalized(BaseModel):
     tournament_tier_type: str | None = Field(default=None, max_length=100)
     publisher_tier: str | None = Field(default=None, max_length=100)
     tournament_section: str | None = Field(default=None, max_length=200)
+    final_candidate_hint: bool = False
     is_final: bool = False
+    final_identity_confirmed: bool = False
+    competition_key_aliases: list[str] = Field(default_factory=list, max_length=8)
+    canonical_uid_override: str | None = Field(default=None, max_length=100)
     vrs_baseline_id: str | None = Field(default=None, max_length=500)
     tournament_parent: str | None = Field(default=None, max_length=500)
+    tournament_placements_complete: bool = False
     tournament_placements: list[TournamentPlacement] = Field(default_factory=list, max_length=64)
     team1_name: str = Field(min_length=1, max_length=200)
     team2_name: str = Field(min_length=1, max_length=200)
@@ -171,6 +176,11 @@ class MatchNormalized(BaseModel):
     @property
     def canonical_match_uid(self) -> str:
         """Return a stable cross-source fingerprint when the source data permits it."""
+        if self.canonical_uid_override:
+            return self.canonical_uid_override
+        return self._canonical_uid_for_competition(self.competition_key or self.tournament_name)
+
+    def _canonical_uid_for_competition(self, competition: str | None) -> str:
         match_datetime = self.end_date or self.date or self.start_date
         match_day = match_datetime[:10] if match_datetime and len(match_datetime) >= 10 else ""
         if not match_day:
@@ -185,12 +195,56 @@ class MatchNormalized(BaseModel):
         identity = "|".join(
             [
                 match_day,
-                self._identity_part(self.competition_key or self.tournament_name),
+                self._identity_part(competition),
                 *(f"{team}:{score if score is not None else ''}" for team, score in team_scores),
             ]
         )
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
         return f"match_v1_{digest}"
+
+    @property
+    def canonical_match_uid_candidates(self) -> tuple[str, ...]:
+        """Include old source keys so richer competition names keep old markers effective."""
+        values = [self.match_uid]
+        values.extend(
+            self._canonical_uid_for_competition(alias)
+            for alias in self.competition_key_aliases
+            if alias
+        )
+        values.append(self.legacy_match_uid)
+        return tuple(dict.fromkeys(values))
+
+    @property
+    def final_bridge_uid(self) -> str | None:
+        """Strong cross-provider bridge for a final: event, day, teams and exact score."""
+        match_datetime = self.end_date or self.date or self.start_date
+        match_day = match_datetime[:10] if match_datetime and len(match_datetime) >= 10 else ""
+        if not match_day or not self.competition_key or self.score1 is None or self.score2 is None:
+            return None
+        stage_tokens = {
+            "final", "finals", "grand", "semi", "semifinal", "semifinals", "quarterfinal",
+            "quarterfinals", "playoff", "playoffs", "group", "groups", "stage", "results",
+            "upper", "lower", "bracket", "qualifier", "qualifiers", "consolation",
+        }
+        stage_tokens.add("starseries")
+        tournament_tokens = [
+            token
+            for token in self._identity_part(self.tournament_name).split()
+            if token not in stage_tokens
+        ]
+        event_identity = " ".join(tournament_tokens) or self._identity_part(self.competition_key)
+        team_scores = sorted(
+            (
+                (self._identity_part(self.team1_name), self.score1),
+                (self._identity_part(self.team2_name), self.score2),
+            )
+        )
+        identity = "|".join(
+            [match_day, event_identity,
+             *(f"{team}:{score}" for team, score in team_scores)]
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+        return f"final_bridge_v1_{digest}"
 
     @property
     def match_uid(self) -> str:

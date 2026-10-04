@@ -80,6 +80,54 @@ def test_canonical_uid_matches_provider_team_aliases_and_display_names():
     assert pandascore.match_uid == liquipedia.match_uid
 
 
+def test_incident_pandascore_and_liquipedia_names_share_strict_final_bridge():
+    pandascore = _match(
+        tournament_name="StarLadder — Fall 2026 — Playoffs",
+        competition_key="StarLadder Fall 2026",
+        team1_name="Aurora Gaming",
+        team2_name="Vitality",
+        score1=1,
+        score2=3,
+        date="2026-09-20T21:00:00Z",
+    )
+    liquipedia = _match(
+        source="liquipedia",
+        match_id="lp-final",
+        tournament_name="StarLadder StarSeries Fall 2026",
+        competition_key="StarLadder StarSeries Fall 2026",
+        team1_name="Aurora Gaming",
+        team2_name="Vitality",
+        score1=1,
+        score2=3,
+        date="2026-09-20T21:00:00Z",
+    )
+
+    assert pandascore.match_uid != liquipedia.match_uid
+    assert pandascore.final_bridge_uid == liquipedia.final_bridge_uid
+
+
+def test_richer_competition_key_still_checks_previous_serie_fingerprint():
+    old = _match(
+        competition_key="Fall 2026",
+        date="2026-09-20",
+        team1_name="Aurora Gaming",
+        team2_name="Vitality",
+        score1=1,
+        score2=3,
+    )
+    current = _match(
+        competition_key="StarLadder StarSeries Fall 2026",
+        competition_key_aliases=["Fall 2026"],
+        date="2026-09-20",
+        team1_name="Aurora Gaming",
+        team2_name="Vitality",
+        score1=1,
+        score2=3,
+    )
+
+    assert old.match_uid in current.canonical_match_uid_candidates
+
+
 def test_match_without_date_keeps_legacy_uid_to_avoid_false_collisions():
     assert _match(date=None).match_uid == "pandascore_123456"
 
