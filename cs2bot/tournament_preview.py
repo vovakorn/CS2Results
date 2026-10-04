@@ -39,7 +39,15 @@ class PreviewStage(BaseModel):
 
 class PreviewBranding(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    accent: str = Field(default="#16C7FF", pattern=r"^#[0-9A-Fa-f]{6}$")
+    accent: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    secondary: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    background: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    motif: Literal["lines", "grid", "diagonal", "ember", "metal", "target",
+                   "electric-pulse", "broken-planes", "zigzag", "star", "medal"] | None = None
+    theme_key: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,99}$")
+    series_key: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,99}$")
+    organizer_key: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,99}$")
+    theme_source_urls: list[HttpUrl] = Field(default_factory=list, max_length=8)
     logo_asset: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,99}\.png$")
     logo_source_url: HttpUrl | None = None
     headline: str | None = Field(default=None, min_length=5, max_length=80)
@@ -104,6 +112,8 @@ class PreviewProfile(BaseModel):
         if max(stage.end for stage in initial) > playoffs.start:
             raise ValueError("playoffs must follow the initial stage")
         self.stages.sort(key=lambda stage: stage.start)
+        from .tournament_branding import resolve_branding
+        self.branding = resolve_branding(self.branding, event_key=self.key)
         return self
 
     @field_validator("pandascore_tournament_ids", mode="before")
@@ -169,6 +179,8 @@ class TournamentPreview(BaseModel):
             local_date = self.first_match_at.astimezone(ZoneInfo("Europe/Moscow")).date()
             if not self.start <= local_date <= self.end:
                 raise ValueError("first match outside tournament dates")
+        from .tournament_branding import resolve_branding
+        self.branding = resolve_branding(self.branding, event_key=self.key)
         return self
 
 

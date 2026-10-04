@@ -11,7 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from cs2bot.tournament_preview import PreviewTeam, TournamentPreview, format_preview_caption, load_profiles
+from cs2bot.tournament_preview import PreviewBranding, PreviewTeam, TournamentPreview, format_preview_caption, load_profiles
+from cs2bot.tournament_branding import load_theme_registry, resolve_branding
 from cs2bot.tournament_preview_cards import render_preview_cards
 from cs2bot.match_sources.sources.tournament_preview_source import fetch_tournament_preview
 
@@ -27,9 +28,13 @@ def main():
     parser.add_argument("--teams", type=int, choices=(0, 1, 4, 10, 16, 24, 128), default=16,
                         help="Demo participant count")
     parser.add_argument("--long-names", action="store_true", help="Demo overflow check")
+    parser.add_argument("--theme", choices=[theme.key for theme in load_theme_registry().themes],
+                        help="Approved visual theme for a marked demo; never changes publication approval")
     args = parser.parse_args()
     if args.draft and args.demo:
         parser.error("--draft needs --profile; --demo already marks fictional data")
+    if args.theme and not args.demo:
+        parser.error("--theme is only available with --demo")
     if args.demo:
         preview = TournamentPreview.model_validate_json((ROOT / "tests/fixtures/tournament_preview_demo.json").read_text())
         names = ["Team Spirit", "Vitality", "Natus Vincere", "MOUZ", "G2 Esports", "FaZe Clan",
@@ -45,6 +50,8 @@ def main():
             })
             for team in preview.teams:
                 team.name = "International Counter-Strike Championship Academy Division " + team.name
+        if args.theme:
+            preview = preview.model_copy(update={"branding": resolve_branding(PreviewBranding(theme_key=args.theme))})
     else:
         profiles = [profile for profile in load_profiles(args.profiles) if profile.key == args.profile]
         if len(profiles) != 1:
