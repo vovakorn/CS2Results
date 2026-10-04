@@ -148,8 +148,10 @@ def save_pending_reel(
         raise storage.StorageUnavailableError("Reel state write failed") from exc
 
 
-def advance_pending_reel(state: PendingReel, context: Any) -> str:
+def advance_pending_reel(state: PendingReel, context: Any, *, allowed: bool = True) -> str:
     """Advance one persisted container safely; never retry an ambiguous publish."""
+    if not allowed:
+        return "held"
     if asyncio.run(storage.reconcile_content_delivery(state.content_uid, "schedule_reel")):
         return "reconciled"
     claim = asyncio.run(storage.claim_content_delivery(state.content_uid))
@@ -190,7 +192,7 @@ def advance_pending_reel(state: PendingReel, context: Any) -> str:
         raise
 
 
-def advance_today_reel(context: Any, now: datetime | None = None) -> dict[str, str]:
+def advance_today_reel(context: Any, now: datetime | None = None, *, allowed: bool = True) -> dict[str, str]:
     """The existing five-minute worker never publishes a stale day's schedule."""
     from zoneinfo import ZoneInfo
 
@@ -198,4 +200,4 @@ def advance_today_reel(context: Any, now: datetime | None = None) -> dict[str, s
     state = load_pending_reel(local_date.isoformat())
     if state is None:
         return {}
-    return {local_date.isoformat(): advance_pending_reel(state, context)}
+    return {local_date.isoformat(): advance_pending_reel(state, context, allowed=allowed)}

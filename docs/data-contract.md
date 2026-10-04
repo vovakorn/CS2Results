@@ -36,6 +36,18 @@
 - не помечает матч обработанным после публикации;
 - не знает о конкретных Telegram-каналах, кроме CLI debug-режима с `--channel`.
 
+## Owner policy и журнал выпусков
+
+`admin/publication-policy-v1.json` содержит revision, `enabled` и generation для
+пары `destination_id:publication_type`. Изменения используют conditional Object
+Storage writes; устаревшая revision отклоняется. При выключении generation растёт,
+поэтому outbox с меньшим generation удерживается и не оживает после включения.
+
+`PendingDelivery.generation` отсутствующий в старых объектах считается `0`.
+Подтверждённые доставки сохраняются идемпотентно в
+`admin/publications/YYYY-MM-DD/`; запись включает destination, platform, type,
+source key, timestamp, generation и безопасные metadata. Это не заменяет claims.
+
 ## TournamentPreview
 
 `TournamentPreview` содержит паспорт Liquipedia (`name`, `start`, `end`,

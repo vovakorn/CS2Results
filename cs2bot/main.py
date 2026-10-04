@@ -23,8 +23,10 @@ from .config import (
     TELEGRAM_PROXY_URL,
     TELEGRAM_SPOILERS,
     TELEGRAM_TOKEN,
+    PUBLICATION_CONTROL_ENABLED,
 )
 from .analytics import record_manual_post_metrics, record_post, record_subscriber_snapshot
+from .publication_admin import publication_allowed, record_publication
 from .instagram_publish import (
     InstagramDeliveryUncertainError,
     InstagramPublishError,
@@ -281,6 +283,38 @@ def _record_post_analytics(channel_id: str, content_uid: str, job: str, **metada
             job=job,
             error_type=type(exc).__name__,
         )
+    # The legacy analytics journal is best-effort.  This second, idempotent
+    # record is the admin source of truth and is written only after `sent`.
+    try:
+        platform = channel_id if channel_id in {"instagram", "threads"} else "telegram"
+        asyncio.run(record_publication(
+            f"{platform}:{channel_id}:{job}:{content_uid}", channel_id, platform, job, content_uid,
+            metadata=metadata,
+            test="_test_" in content_uid,
+        ))
+    except Exception as exc:
+        log_event(logger, logging.WARNING, "publication_journal_record_failed", channel=channel_id,
+                  job=job, error_type=type(exc).__name__)
+
+
+def publication_delivery_allowed(destination_id: str, publication_type: str) -> tuple[bool, int]:
+    """Read the owner policy only when the opt-in control flag is on."""
+    try:
+        return asyncio.run(publication_allowed(destination_id, publication_type,
+                                                control_enabled=PUBLICATION_CONTROL_ENABLED))
+    except Exception as exc:
+        log_event(logger, logging.ERROR, "publication_policy_unavailable", destination=destination_id,
+                  publication_type=publication_type, error_type=type(exc).__name__)
+        return (False, 0) if PUBLICATION_CONTROL_ENABLED else (True, 0)
+
+
+def _pending_publication_type(content_type: str) -> str:
+    return {"result": "results"}.get(content_type, content_type)
+
+
+def _delivery_is_current(destination_id: str, content_type: str, generation: int = 0) -> bool:
+    allowed, current_generation = publication_delivery_allowed(destination_id, _pending_publication_type(content_type))
+    return allowed and generation >= current_generation
 
 
 def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
@@ -919,13 +953,15 @@ def _tournament_standings_content_uid(match: MatchNormalized, channel_id: str) -
 def _enqueue_tournament_standings(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
     """Queue one standings post after the platform's final-result marker exists."""
     created = False
-    if _can_publish_tournament_standings(match):
+    allowed, generation = publication_delivery_allowed(channel_id, "tournament_standings")
+    if allowed and _can_publish_tournament_standings(match):
         created = asyncio.run(
             enqueue_result_delivery(
                 match,
                 channel_id,
                 channel_name,
                 content_type="tournament_standings",
+                generation=generation,
             )
         )
     _enqueue_tournament_vrs(match, channel_id, channel_name)
@@ -986,7 +1022,8 @@ def _capture_preview_vrs_baseline(profile, preview, *, dry_run: bool = False) ->
 
 
 def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
-    if not ENABLE_VRS or not match.is_final or not match.tournament_placements:
+    allowed, generation = publication_delivery_allowed(channel_id, "tournament_vrs_standings")
+    if not allowed or not ENABLE_VRS or not match.is_final or not match.tournament_placements:
         return False
     if match.source == "liquipedia" and not match.final_identity_confirmed:
         return False
@@ -1013,6 +1050,7 @@ def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_nam
             match, channel_id, channel_name,
             content_type="tournament_vrs_standings",
             vrs_impacts=tuple(impacts),
+            generation=generation,
         ))
     except (VRSUnavailableError, VRSDataError, StorageUnavailableError, requests.RequestException) as exc:
         log_event(logger, logging.WARNING, "vrs_publication_skipped", match_uid=match.match_uid,
@@ -1033,6 +1071,8 @@ def _hold_unconfirmed_final_outbox(pending: PendingDelivery) -> bool:
 def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], channel_name: str) -> str:
     if _hold_unconfirmed_final_outbox(pending):
         return "failed"
+    if not _delivery_is_current(pending.channel_id, "tournament_vrs_standings", pending.generation):
+        return "held"
     impacts = pending.vrs_impacts
     if not can_render_tournament_vrs(impacts):
         asyncio.run(delete_result_delivery(pending))
@@ -1092,6 +1132,8 @@ def _deliver_tournament_standings(
     """Publish a queued standings album only after the final score has been confirmed."""
     if _hold_unconfirmed_final_outbox(pending):
         return "failed"
+    if not _delivery_is_current(pending.channel_id, "tournament_standings", pending.generation):
+        return "held"
     match = pending.match
     channel_id = pending.channel_id
     if not _can_publish_tournament_standings(match):
@@ -1713,6 +1755,9 @@ def _deliver_instagram_content(
     marker, matching Telegram's crash-safe protocol.  Network ambiguity retains
     the claim and intentionally disables automatic retry to avoid a duplicate.
     """
+    if not _delivery_is_current("instagram", job):
+        log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination="instagram", publication_type=job)
+        return 0, 0, 0
     if not instagram_publishing_enabled():
         return 0, 0, 0
     if not cards:
@@ -1780,6 +1825,8 @@ def _deliver_instagram_content(
 
 def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
     """Deliver one durable result to Instagram at most once automatically."""
+    if not _delivery_is_current("instagram", "results", pending.generation):
+        return "held"
     match = pending.match
     channel_id = "instagram"
     claim = None
@@ -1863,6 +1910,8 @@ def _deliver_social_tournament_standings(
     """Publish a complete final table to one Meta platform after its final score."""
     if _hold_unconfirmed_final_outbox(pending):
         return "failed"
+    if not _delivery_is_current(platform, "tournament_standings", pending.generation):
+        return "held"
     match = pending.match
     if not _can_publish_tournament_standings(match):
         asyncio.run(delete_result_delivery(pending))
@@ -1962,6 +2011,8 @@ def _deliver_social_tournament_vrs(
 ) -> str:
     if _hold_unconfirmed_final_outbox(pending):
         return "failed"
+    if not _delivery_is_current(platform, "tournament_vrs_standings", pending.generation):
+        return "held"
     impacts = pending.vrs_impacts
     if not can_render_tournament_vrs(impacts):
         asyncio.run(delete_result_delivery(pending))
@@ -2052,6 +2103,9 @@ def _deliver_threads_content(
     tournament_key: str | None = None,
 ) -> tuple[int, int, int]:
     """Deliver a daily Threads issue independently from Telegram and Instagram."""
+    if not _delivery_is_current("threads", job):
+        log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination="threads", publication_type=job)
+        return 0, 0, 0
     if not threads_publishing_enabled():
         return 0, 0, 0
     if not cards:
@@ -2113,6 +2167,8 @@ def _deliver_threads_content(
 
 def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
     """Deliver one durable result to Threads at most once automatically."""
+    if not _delivery_is_current("threads", "results", pending.generation):
+        return "held"
     match = pending.match
     channel_id = "threads"
     claim = None
@@ -2203,6 +2259,12 @@ def _send_schedule_context_to_telegram(
     if not messages:
         return
     channel_id = str(channel.get("id") or channel.get("name", "unknown"))
+    # Context is an independent publication.  It still depends on the schedule
+    # having been confirmed by the caller, but the owner can pause it alone.
+    if not _delivery_is_current(channel_id, "schedule_context"):
+        log_event(logger, logging.INFO, "publication_held_by_owner_policy",
+                  destination=channel_id, publication_type="schedule_context")
+        return
     pending_messages = list(messages)
     covers: list[bytes] = []
     if TELEGRAM_MEDIA_CARDS and 1 <= len(matches) <= MAX_SCHEDULE_TOTAL_MATCHES:
@@ -2302,6 +2364,8 @@ def _handle_schedule_reel_job(dry_run: bool, context: Any, render_probe: bool = 
         return _error_response(503, "instagram_reels_configuration_invalid")
     if not dry_run and not enabled:
         return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "skipped_reason": "disabled"})}
+    if not dry_run and not publication_delivery_allowed("instagram", "schedule_reel")[0]:
+        return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "skipped_reason": "held_by_owner_policy"})}
     start, end, local_now = _local_day_window()
     day_key = local_now.date().isoformat()
     try:
@@ -2337,7 +2401,8 @@ def _handle_schedule_reel_job(dry_run: bool, context: Any, render_probe: bool = 
             public_url = upload_public_reel(f"schedule_reel_{day_key}", video)
             container_id = create_reel_container(public_url, reel_caption(local_now, count), context)
             state = save_pending_reel(day_key, container_id, count, audio_style=audio_style)
-        result = advance_pending_reel(state, context)
+        result = (advance_pending_reel(state, context)
+                  if publication_delivery_allowed("instagram", "schedule_reel")[0] else "held")
     except (InstagramPublishError, ScheduleReelError, StorageUnavailableError) as exc:
         log_event(logger, logging.ERROR, "schedule_reel_failed", error_type=type(exc).__name__)
         _notify_admin("schedule_reel_failed", f"Не удалось подготовить Reel за {day_key}; проверьте логи.")
@@ -2509,6 +2574,9 @@ def _handle_content_job(
             sent += 1
             continue
         channel_id = str(channel.get("id") or channel.get("name", "unknown"))
+        if not _delivery_is_current(channel_id, job):
+            log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination=channel_id, publication_type=job)
+            continue
         content_uid = f"{job}_{day_key}_{channel_id}"
         if test_run_id:
             content_uid = f"{content_uid}_test_{test_run_id}"
@@ -2776,6 +2844,10 @@ def _handle_radar_job(
             sent += 1
             continue
         channel_id = str(channel.get("id") or channel.get("name", "unknown"))
+        if not _delivery_is_current(channel_id, "radar"):
+            log_event(logger, logging.INFO, "publication_held_by_owner_policy",
+                      destination=channel_id, publication_type="radar")
+            continue
         content_uid = f"radar_{tournament_id}_{day_key}_{channel_id}"
         if test_run_id:
             content_uid = f"{content_uid}_test_{test_run_id}"
@@ -3349,6 +3421,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                     continue
                 name = str(channel.get("name", "unknown"))
                 channel_id = str(channel.get("id") or name)
+                allowed, generation = publication_delivery_allowed(channel_id, "results")
+                if not allowed:
+                    continue
                 key = result_outbox_key(match, channel_id)
                 try:
                     if asyncio.run(
@@ -3370,7 +3445,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             )
                         skipped_duplicates += 1
                         continue
-                    created = asyncio.run(enqueue_result_delivery(match, channel_id, name))
+                    created = asyncio.run(enqueue_result_delivery(match, channel_id, name, generation=generation))
                     if created:
                         current_targets[key] = PendingDelivery(
                             key=key,
@@ -3378,6 +3453,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             channel_name=name,
                             match=match,
                             created_at=queued_at,
+                            generation=generation,
                         )
                 except Exception as exc:
                     failed_messages += 1
@@ -3393,13 +3469,16 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
         if instagram_results_enabled:
             for match in eligible_matches:
+                allowed, generation = publication_delivery_allowed("instagram", "results")
+                if not allowed:
+                    continue
                 key = result_outbox_key(match, "instagram")
                 try:
                     if asyncio.run(is_channel_processed(match, "instagram")):
                         _enqueue_tournament_standings(match, "instagram", "instagram")
                         skipped_duplicates += 1
                         continue
-                    created = asyncio.run(enqueue_result_delivery(match, "instagram", "instagram"))
+                    created = asyncio.run(enqueue_result_delivery(match, "instagram", "instagram", generation=generation))
                     if created:
                         current_targets[key] = PendingDelivery(
                             key=key,
@@ -3407,6 +3486,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             channel_name="instagram",
                             match=match,
                             created_at=queued_at,
+                            generation=generation,
                         )
                 except Exception as exc:
                     failed_messages += 1
@@ -3421,13 +3501,16 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
         if threads_results_enabled:
             for match in eligible_matches:
+                allowed, generation = publication_delivery_allowed("threads", "results")
+                if not allowed:
+                    continue
                 key = result_outbox_key(match, "threads")
                 try:
                     if asyncio.run(is_channel_processed(match, "threads")):
                         _enqueue_tournament_standings(match, "threads", "threads")
                         skipped_duplicates += 1
                         continue
-                    created = asyncio.run(enqueue_result_delivery(match, "threads", "threads"))
+                    created = asyncio.run(enqueue_result_delivery(match, "threads", "threads", generation=generation))
                     if created:
                         current_targets[key] = PendingDelivery(
                             key=key,
@@ -3435,6 +3518,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                             channel_name="threads",
                             match=match,
                             created_at=queued_at,
+                            generation=generation,
                         )
                 except Exception as exc:
                     failed_messages += 1
@@ -3524,6 +3608,10 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             continue
         name = str(channel.get("name", pending.channel_name))
         channel_id = pending.channel_id
+        if not _delivery_is_current(channel_id, pending.content_type, pending.generation):
+            log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination=channel_id,
+                      publication_type=_pending_publication_type(pending.content_type), generation=pending.generation)
+            continue
 
         if pending.content_type == "tournament_standings":
             if channel.get("platform") == "instagram":
@@ -3895,7 +3983,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     if retry_only:
         try:
             if instagram_publishing_enabled() and instagram_reels_enabled():
-                reel_worker_states = advance_today_reel(context)
+                reel_worker_states = (advance_today_reel(context)
+                                      if publication_delivery_allowed("instagram", "schedule_reel")[0] else {})
                 for reel_day, reel_state in reel_worker_states.items():
                     if reel_state == "published":
                         _record_post_analytics(

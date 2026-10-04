@@ -28,6 +28,12 @@ def _bool_env(name: str, default: bool) -> bool:
 TELEGRAM_SPOILERS = _bool_env("TELEGRAM_SPOILERS", True)
 TELEGRAM_MEDIA_CARDS = _bool_env("TELEGRAM_MEDIA_CARDS", False)
 TELEGRAM_ADMIN_CHAT_ID = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+# Админка живёт в отдельной функции. Эти параметры намеренно выключены по
+# умолчанию: их отсутствие не меняет поток существующих публикаций.
+TELEGRAM_ADMIN_ENABLED = _bool_env("TELEGRAM_ADMIN_ENABLED", False)
+TELEGRAM_ADMIN_USER_ID = os.getenv("TELEGRAM_ADMIN_USER_ID")
+TELEGRAM_ADMIN_WEBHOOK_SECRET = os.getenv("TELEGRAM_ADMIN_WEBHOOK_SECRET")
+PUBLICATION_CONTROL_ENABLED = _bool_env("PUBLICATION_CONTROL_ENABLED", False)
 
 
 def _optional_proxy_url() -> str | None:

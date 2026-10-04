@@ -60,6 +60,12 @@ def _send_telegram(runtime, channel, profile, cards, text):
     return runtime.send_to_telegram(channel["chat_id"], text)
 
 
+def _allowed(runtime, destination_id: str) -> bool:
+    """Legacy preview test runtimes predate owner policy and remain permissive."""
+    checker = getattr(runtime, "publication_delivery_allowed", None)
+    return True if checker is None else bool(checker(destination_id, "tournament_preview")[0])
+
+
 def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None, context=None) -> dict:
     now = now or datetime.now(timezone.utc)
     body = {"job": "tournament_preview" if preview_key else "preview_discovery", "dry_run": dry_run,
@@ -125,6 +131,9 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
             for channel in runtime._iter_channels():
                 channel_id = str(channel.get("id") or channel.get("name", "unknown"))
                 uid = f"preview_{profile.key}_{channel_id}"
+                if not _allowed(runtime, channel_id):
+                    deliveries[f"telegram:{channel_id}"] = {"status": "held"}
+                    continue
                 telegram_cards = cards if runtime.TELEGRAM_MEDIA_CARDS else []
                 deliveries[f"telegram:{channel_id}"] = _deliver(runtime, uid, channel_id,
                     lambda: _send_telegram(runtime, channel, profile, telegram_cards, text),
@@ -132,6 +141,9 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
             for platform, enabled in (("instagram", instagram), ("threads", threads)):
                 if not enabled:
                     deliveries[platform] = {"status": "disabled"}
+                    continue
+                if not _allowed(runtime, platform):
+                    deliveries[platform] = {"status": "held"}
                     continue
                 if platform in caption_errors or not cards:
                     deliveries[platform] = {"status": "failed",

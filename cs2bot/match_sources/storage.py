@@ -48,6 +48,7 @@ class PendingDelivery:
     last_attempt_at: str | None = None
     attempt_count: int = 0
     content_type: str = "result"
+    generation: int = 0
     vrs_impacts: tuple[TournamentVRSImpact, ...] = ()
 
 
@@ -288,6 +289,7 @@ def _pending_delivery_payload(
     last_attempt_at: str | None,
     attempt_count: int,
     content_type: str,
+    generation: int = 0,
     vrs_impacts: tuple[TournamentVRSImpact, ...] = (),
 ) -> bytes:
     return json.dumps(
@@ -299,6 +301,7 @@ def _pending_delivery_payload(
             "last_attempt_at": last_attempt_at,
             "attempt_count": attempt_count,
             "content_type": content_type,
+            "generation": generation,
             "vrs_impacts": [item.model_dump(mode="json") for item in vrs_impacts],
             "match": match.model_dump(mode="json"),
         },
@@ -316,6 +319,7 @@ async def enqueue_result_delivery(
     now: datetime | None = None,
     content_type: str = "result",
     vrs_impacts: tuple[TournamentVRSImpact, ...] = (),
+    generation: int = 0,
 ) -> bool:
     """Create a durable result outbox item without resetting existing retry state."""
     s3 = client or _client()
@@ -332,6 +336,7 @@ async def enqueue_result_delivery(
         last_attempt_at=None,
         attempt_count=0,
         content_type=content_type,
+        generation=generation,
         vrs_impacts=vrs_impacts,
     )
 
@@ -473,6 +478,7 @@ async def list_pending_result_deliveries(
                         ),
                         attempt_count=max(0, int(payload.get("attempt_count", 0))),
                         content_type=str(payload.get("content_type", "result")),
+                        generation=int(payload.get("generation", 0)),
                         vrs_impacts=tuple(TournamentVRSImpact.model_validate(item) for item in payload.get("vrs_impacts", [])),
                     )
                 )
@@ -516,6 +522,8 @@ async def record_result_delivery_attempt(
         last_attempt_at=attempted_at,
         attempt_count=pending.attempt_count + 1,
         content_type=pending.content_type,
+        generation=pending.generation,
+        vrs_impacts=pending.vrs_impacts,
     )
     body = _pending_delivery_payload(
         updated.match,
@@ -525,6 +533,7 @@ async def record_result_delivery_attempt(
         last_attempt_at=updated.last_attempt_at,
         attempt_count=updated.attempt_count,
         content_type=updated.content_type,
+        generation=updated.generation,
         vrs_impacts=updated.vrs_impacts,
     )
     try:
