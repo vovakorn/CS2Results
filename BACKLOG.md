@@ -16,6 +16,9 @@
 - [x] Проверить первый `/admin` владельца: ожидающий update обработан за 3,75 с,
   меню доставлено, webhook снова не имеет pending updates и не сообщает ошибок.
   Admin production получил Telegram destination `global` / `@cs2_results`.
+- [x] Исправить ложный alert о legacy-финалах: удержанные standings/VRS больше
+  не попадают в `delivery_failures`; main production `d4eha7jqetbnb4oov7c9`,
+  PR #142, 843 локальных теста и CI Python 3.11/3.12 успешны.
 
 - [ ] После отдельного решения разобрать 9 старых итогов StarLadder в outbox:
   3 матча × 3 сети, без подтверждения финала. Копии сохранены 4 октября;
