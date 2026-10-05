@@ -218,7 +218,8 @@ MIN_MATCHES = 1
 MAX_MATCHES = 30
 MAX_TELEGRAM_MESSAGE_LENGTH = 4000
 MAX_TELEGRAM_CAPTION_LENGTH = 1024
-RESULT_MEDIA_BUDGET_SECONDS = 35.0
+# Measured from handler entry, including source and storage preparation.
+RESULT_MEDIA_BUDGET_SECONDS = 50.0
 RESULT_TELEGRAM_TIMEOUT_SECONDS = 10
 RESULT_TELEGRAM_MAX_ATTEMPTS = 2
 # Results make up to two bounded photo attempts, but retry only before a TCP
@@ -3303,6 +3304,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     )
     rejected_matches: List[MatchNormalized] = []
     shadow_diagnostics: Dict[str, int] = {}
+    source_started_at = _monotonic()
     if retry_only:
         matches: list[MatchNormalized] = []
     else:
@@ -3333,6 +3335,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 )
             return _error_response(502, "match_source_unavailable")
 
+    source_finished_at = _monotonic()
     unconfirmed_tier1 = [
         match
         for match in rejected_matches
@@ -3413,6 +3416,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 channel_stats["threads"] += 1
                 sent_messages += 1
         pending_deliveries: list[PendingDelivery] = []
+        outbox_enqueue_finished_at = _monotonic()
+        outbox_loaded_at = outbox_enqueue_finished_at
     else:
         current_targets: dict[str, PendingDelivery] = {}
         queued_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -3532,6 +3537,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                         error=_safe_error_message(exc),
                     )
 
+        outbox_enqueue_finished_at = _monotonic()
         try:
             stored_targets = asyncio.run(
                 list_pending_result_deliveries(limit=RESULT_OUTBOX_LIMIT)
@@ -3558,6 +3564,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             ),
         )
 
+        outbox_loaded_at = _monotonic()
+
     media_degraded = False
     if not dry_run and TELEGRAM_MEDIA_CARDS:
         try:
@@ -3572,6 +3580,23 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             )
         if media_degraded:
             log_event(logger, logging.WARNING, "telegram_text_only_mode_active", job="results")
+
+    preparation_finished_at = _monotonic()
+    log_event(
+        logger,
+        logging.INFO,
+        "results_preparation_complete",
+        retry_only=retry_only,
+        dry_run=dry_run,
+        matches_received=len(matches),
+        pending_deliveries=len(pending_deliveries),
+        handler_setup_seconds=round(source_started_at - handler_started_at, 3),
+        source_fetch_seconds=round(source_finished_at - source_started_at, 3),
+        routing_and_enqueue_seconds=round(outbox_enqueue_finished_at - source_finished_at, 3),
+        outbox_load_seconds=round(outbox_loaded_at - outbox_enqueue_finished_at, 3),
+        media_health_seconds=round(preparation_finished_at - outbox_loaded_at, 3),
+        elapsed_seconds=round(preparation_finished_at - handler_started_at, 3),
+    )
 
     for pending_index, pending in enumerate(pending_deliveries):
         elapsed = _monotonic() - handler_started_at
