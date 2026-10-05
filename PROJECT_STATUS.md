@@ -1,31 +1,46 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 4 октября 2026 года; выпущены восстановленные защиты финалов.
-Production и восемь таймеров сверены; надёжность Threads и турнирные темы сохранены.
+Обновлено: 5 октября 2026 года; выпущены лимит PNG 50 секунд и замеры подготовки.
+Production, настройки и таймеры проверены после релиза.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## Telegram PNG — локальная мера, 5 октября 2026
+## Telegram PNG — production-релиз, 5 октября 2026
 
-- Read-only диагностика двух запусков подтвердила `media_card_budget_exhausted`:
-  4 октября в 19:00 МСК — 41,040 секунды до проверки PNG; 5 октября в 16:30
-  МСК — 35,622 секунды. `sendPhoto` не начинался; оба результата подтверждены
-  текстом, затем доставлены Instagram/Threads. Детали:
-  [диагностика](docs/incidents/2026-10-05-telegram-result-card-budget.md).
-- Подготовлены локальные изменения: soft budget PNG 35 → 50 секунд и событие
-  `results_preparation_complete` с длительностями этапов. Лимит считается с
-  начала handler; интервал scheduler, сетевые повторы и claims не меняются.
-- Локальная проверка: все 148 тестов `tests/test_main.py` прошли. Проверены
-  реальные задержки 35,622/41,040 секунды, границы 49,999/50/51 секунду,
-  замеры этапов и существующие сценарии доставки/дедупликации. Ссылки документов
-  и `git diff --check` прошли. Полный набор перед утверждённым релизом: 849 тестов прошли за 223,71 с;
-  зависимости и compileall проверены. Cloud smoke выполняется после CI.
-- Релиз не выполнялся. При read-only сверке в этом чате publisher production
-  был `d4eha7jqetbnb4oov7c9` из Git `da9bcb76a977`; исправление лимита на него
-  не переносилось. Нужен отдельно разрешённый release-цикл.
+- Два пропуска PNG 4–5 октября подтверждены `media_card_budget_exhausted`:
+  41,040 и 35,622 секунды подготовки; запрос `sendPhoto` не начинался.
+  [Диагностика](docs/incidents/2026-10-05-telegram-result-card-budget.md).
+- PR #147 слит после CI Python 3.11/3.12. Release Git `db1d9967775d`;
+  candidate/production `d4eq0pvtvvav4qis9svd`, продвижение 17:13:29 МСК.
+  Предыдущая версия `d4eha7jqetbnb4oov7c9` сохранена как rollback.
+- Лимит начала рендера результата увеличен 35 → 50 секунд от входа в handler;
+  после порога сохраняется текст. Добавлено `results_preparation_complete`
+  с отдельными замерами источника, подготовки очереди, чтения outbox и media health.
+- 148 тестов handler, затем все 849 локальных тестов за 223,71 с; зависимости,
+  compileall и CI успешны. Архив с Xray собран один раз для candidate:
+  17164118 байт, SHA-256
+  `7f0a95d74de3e6243765a878d315e0277633e9205735a453c228b02ed0505cb3`.
+- Candidate и production smoke: HTTP 200, dry-run подтверждён, startup ошибок
+  нет. Дополнительный production results dry-run: HTTP 200, 20 матчей,
+  `delivery_failures=0`, публикаций не выполнял. Manifest
+  `dist/releases/d4eq0pvtvvav4qis9svd.json`, статус `promoted`.
+- Проверка после релиза: runtime, handler, ресурсы, timeout 120s, concurrency,
+  service account, environment, Lockbox bindings и logging совпали с прежней
+  версией. Все восемь таймеров идентичны дорелизному снимку; семь основной
+  функции вызывают `production`, радар остаётся PAUSED. SHA-256 всех 63
+  незавершённых/неотслеживаемых файлов основного checkout совпал.
+- Новые замеры подтверждены в production: dry-run в 17:14 — 7,806 с,
+  из них источник 7,805 с; штатный retry в 17:15 — 0,449 с. Обычный
+  results в 17:15 — 25,961 с, источник 6,009 с, routing/enqueue 19,747 с,
+  outbox 0,135 с, media health 0,071 с. Это измерения новых запусков,
+  не восстановленная детализация двух прежних инцидентов. В этом же штатном
+  запуске Telegram подтвердил доставку `photo` в 17:15:51 МСК с первой попытки
+  (`match_v1_c118e391d551b74f4f2bae90`); отдельный тестовый пост не требовался.
+- Лимит 50 секунд не гарантирует PNG при более долгой подготовке. Нужные
+  этапы измеряются новым событием; дополнительных постов вручную не отправляли.
 
 ## Telegram-админка — подключена, 5 октября 2026
 
@@ -556,9 +571,9 @@ production и сверки фактического состояния. Теку
 - Handler: `cs2bot.main.handler`.
 - Function ID: `d4e6e13rlrl7go01m2q2` (`cs2results`).
 - Yandex Cloud folder ID: `b1g5j8hk4gjas2vpvgqr`.
-- Последний production-деплой: 4 октября 2026 в 16:21:23 МСК, версия
-  `d4esmikop5grj6bfhlfm` из Git `83cae2c` (PR #137).
-  Прежняя `d4ecbutjpl11hkf1qiu7` закреплена для rollback.
+- Последний production-деплой: 5 октября 2026 в 17:13:29 МСК, версия
+  `d4eq0pvtvvav4qis9svd` из Git `db1d996` (PR #147).
+  Прежняя `d4eha7jqetbnb4oov7c9` закреплена для rollback.
 - Release-архив хранится в приватном unversioned bucket
   `cs2results-function-packages-b1g5j8hk4gjas2vpvgqr`; lifecycle удаляет только
   `function-packages/` через 30 дней. Release manifest хранится отдельно.
@@ -571,7 +586,7 @@ production и сверки фактического состояния. Теку
   OAuth renewal: `cs2results-threads-token-refresh-06msk`, ежедневно 06:00 МСК.
   Для main release-команд: `YC_EXPECTED_TRIGGER_COUNT=7`.
 - SHA-256 release-архива:
-  `f257ac220b912eed0a1a4d535c42eb1ec9f8cf9cd024d1ecb0989a7f5ab1bc73`.
+  `7f0a95d74de3e6243765a878d315e0277633e9205735a453c228b02ed0505cb3`.
 - GitHub Actions проверяет зависимости, безопасность, компиляцию, pytest и
   сборку архива. Оркестрация автоматического release-цикла находится вне
   репозитория.

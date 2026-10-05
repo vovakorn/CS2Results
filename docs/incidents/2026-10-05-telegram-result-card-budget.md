@@ -53,10 +53,12 @@ Live список версий подтвердил текущий production `d
 из Git `da9bcb76a977`; причинный участок прочитан из этого Git, а не только
 из устаревшего основного checkout.
 
-## Согласованная локальная мера — подготовлена 5 октября
+## Согласованная мера — выпущена 5 октября
 
-По решению пользователя подготовлен лимит 35 → 50 секунд и отдельные замеры
-подготовки. Это временная мера; production ещё не изменён. Soft budget по-прежнему
+После отдельного утверждения пользователя PR #147 слит и выпущен production
+`d4eq0pvtvvav4qis9svd` из Git `db1d996`, rollback `d4eha7jqetbnb4oov7c9`.
+Лимит 35 → 50 секунд и отдельные замеры подготовки проверены 849 тестами,
+CI Python 3.11/3.12 и candidate/production smoke. Это временная мера. Soft budget по-прежнему
 считается с входа в handler, после его достижения остаётся текстовый fallback.
 Замеры описаны в [architecture](../architecture.md#границы-отказов).
 
@@ -74,5 +76,5 @@ Live список версий подтвердил текущий production `d
 
 В отдельном worktree обновлены [requirements](../requirements.md),
 [architecture](../architecture.md), `PROJECT_CONTEXT.md`, `PROJECT_STATUS.md`
-и `BACKLOG.md`: локальная готовность отделена от production. Основной checkout
+и `BACKLOG.md`: зафиксированы проверки и фактический production-релиз. Основной checkout
 и его незавершённые изменения сохранены.
