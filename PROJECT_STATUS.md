@@ -8,7 +8,7 @@ Production и восемь таймеров сверены; надёжность
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## Telegram-админка — подключена, 4 октября 2026
+## Telegram-админка — подключена, 5 октября 2026
 
 - PR #138–140 смержены. Основной publisher: candidate и production
   `d4e7f2tjqrkjl9p3la5v` из Git `90631d2`; rollback
@@ -17,18 +17,23 @@ production и сверки фактического состояния. Теку
   поэтому он сохраняет прежнее разрешение всех пар, но больше не допускает
   fail-open при отсутствии документа.
 - Private Cloud Function `cs2results-telegram-admin` работает на production
-  `d4eoh7cd4dnhhdcpiuur`; отключённая версия `d4eh77fdof316iic4kbb` сохранена
-  под rollback. Owner ID и webhook secret находятся только в отдельном Lockbox
-  secret; `TELEGRAM_ADMIN_CHAT_ID` не используется как право доступа.
+  `d4eo6o0llg2ap95fphit`; прежняя рабочая версия
+  `d4erkci8uq4qm3gptqhs` сохранена под rollback. Owner ID и webhook secret
+  находятся только в отдельном Lockbox secret; `TELEGRAM_ADMIN_CHAT_ID` не
+  используется как право доступа.
 - Gateway `cs2results-telegram-admin` вызывает только тег `production` через
   отдельный service account с `functions.functionInvoker`. Пустой запрос и
   запрос от чужого user ID получили `403`; Gateway ответил за 1,10 с и не
   отправлял сообщений. Webhook Telegram зарегистрирован для `/telegram/admin`
   с secret token и updates `message`, `callback_query`.
-- При последней сверке Telegram сохранил старую ошибку доставки `Connection
-  timed out`; после разогрева Gateway прямой защищённый запрос отвечает быстро.
-  Нужна живая проверка: владелец открывает личный чат с ботом и отправляет
-  `/admin`. Она не запускает публикацию.
+- После инцидента с не реагирующими кнопками PR #145 прошёл полный CI на Python
+  3.11/3.12 и выпущен отдельной admin-функцией. Callback подтверждается до
+  чтения Object Storage; главное меню, каналы и форматы не зависят от
+  хранилища. Concurrency увеличена с 1 до 4. Candidate smoke вернул `403` на
+  неавторизованном событии без отправки Telegram-сообщений; production Gateway
+  также вернул `403` за 1,43 с. Webhook повторно зарегистрирован с тем же URL,
+  secret и списком updates, очередь пуста. Нужна живая проверка владельцем:
+  открыть `/admin` и нажать одну из кнопок — это не запускает публикацию.
 - После первой команды меню было доставлено повторной обработкой ожидающего
   update за 3,75 с; webhook снова имеет пустую очередь и не сообщает ошибку.
   Admin production `d4erkci8uq4qm3gptqhs` также получил destination
