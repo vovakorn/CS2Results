@@ -55,8 +55,9 @@ Legacy-итоги турниров без подтверждённого фин�
 4 октября 2026 подключены private функция `cs2results-telegram-admin` и Gateway
 `cs2results-telegram-admin`. Gateway использует отдельный service account только
 с ролью `functions.functionInvoker` и обращается к тегу `production`; publisher
-не стал публичным. Admin production — `d4eoh7cd4dnhhdcpiuur`, основной publisher
-— `d4e7f2tjqrkjl9p3la5v`; для обоих сохранены rollback-версии.
+не стал публичным. После исправления callback 5 октября admin production —
+`d4eo6o0llg2ap95fphit`, rollback — `d4erkci8uq4qm3gptqhs`; основной publisher
+не менялся.
 
 Owner ID и webhook secret находятся в отдельном Lockbox secret. Initial policy
 `admin/publication-policy-v1.json` записан с revision 1 и пустыми entries: это
@@ -66,8 +67,9 @@ Owner ID и webhook secret находятся в отдельном Lockbox secr
 `callback_query`.
 
 Пустой запрос и корректно подписанный запрос от чужого user ID получили `403`.
-Ожидающий `/admin` владельца обработан за 3,75 с, меню доставлено, а webhook
-снова не имеет pending updates и не сообщает ошибок. Admin-function получает
+Ожидающий `/admin` владельца обработан за 3,75 с, меню доставлено. После
+callback-исправления безопасный production smoke Gateway вернул `403` за 1,43 с,
+а webhook повторно зарегистрирован с пустой очередью. Admin-function получает
 `TELEGRAM_CHAT_ID=@cs2_results`, поэтому каталог содержит Telegram-канал `global`.
 
 ## Порядок подключения
