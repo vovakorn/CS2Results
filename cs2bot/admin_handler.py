@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import secrets
 from datetime import datetime
 from typing import Any
@@ -15,13 +16,14 @@ from .config import (CHANNELS, PUBLICATION_CONTROL_ENABLED, TELEGRAM_ADMIN_ENABL
                      TELEGRAM_ADMIN_USER_ID, TELEGRAM_ADMIN_WEBHOOK_SECRET,
                      TELEGRAM_PROXY_URL, TELEGRAM_TOKEN)
 from .match_sources.storage import list_pending_result_deliveries
-from .publication_admin import (PUBLICATION_TYPES, list_publications, pending_delivery_status,
+from .publication_admin import (PUBLICATION_TYPES, PolicySnapshot, list_publications, pending_delivery_status,
                                 policy_status, publications_in_period, queue_counts, read_policy,
                                 update_policy)
 
 MOSCOW = ZoneInfo("Europe/Moscow")
 SECRET_HEADER = "x-telegram-bot-api-secret-token"
 TELEGRAM_API_URL = "https://api.telegram.org"
+logger = logging.getLogger(__name__)
 
 
 def _error(status: int) -> dict[str, Any]:
@@ -62,9 +64,15 @@ def telegram_call(method: str, payload: dict[str, Any]) -> dict[str, Any]:
     if not TELEGRAM_TOKEN: raise RuntimeError("telegram credentials are not configured")
     options: dict[str, Any] = {"json": payload, "timeout": 7, "allow_redirects": False}
     if TELEGRAM_PROXY_URL: options["proxies"] = {"http": TELEGRAM_PROXY_URL, "https": TELEGRAM_PROXY_URL}
-    response = requests.post(f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/{method}", **options)
+    try:
+        response = requests.post(f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/{method}", **options)
+    except requests.RequestException:
+        raise RuntimeError("telegram admin transport unavailable") from None
     if response.status_code >= 300: raise RuntimeError("telegram admin response unavailable")
-    data = response.json()
+    try:
+        data = response.json()
+    except requests.JSONDecodeError:
+        raise RuntimeError("telegram admin response invalid") from None
     if not isinstance(data, dict) or data.get("ok") is not True: raise RuntimeError("telegram admin response invalid")
     return data
 
@@ -133,7 +141,8 @@ def _render(view: str, policy, *, dest_index: int = 0, type_index: int = 0, peri
 def _send_or_edit(update: dict[str, Any], text: str, markup: dict[str, Any]) -> None:
     callback = update.get("callback_query")
     if isinstance(callback, dict):
-        telegram_call("answerCallbackQuery", {"callback_query_id": callback["id"]})
+        if not callback.get("_admin_callback_answered"):
+            telegram_call("answerCallbackQuery", {"callback_query_id": callback["id"]})
         message = callback.get("message") or {}
         telegram_call("editMessageText", {"chat_id": message["chat"]["id"], "message_id": message["message_id"], "text": text, "parse_mode": "HTML", "reply_markup": markup, "disable_web_page_preview": True})
     else:
@@ -208,18 +217,34 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
     update = _owner_update(event or {})
     if update is None: return _error(403)
     callback = update.get("callback_query")
+    # Telegram gives callback requests a short delivery window.  Acknowledge the
+    # tap before reading Object Storage or rendering a screen, otherwise a slow
+    # storage/API call leaves the owner with a spinner and Telegram retries it.
+    if isinstance(callback, dict):
+        try:
+            telegram_call("answerCallbackQuery", {"callback_query_id": callback["id"]})
+            callback["_admin_callback_answered"] = True
+        except Exception:
+            # Keep the callback path usable when only the acknowledgement call
+            # has a transient failure; the following edit can still succeed.
+            logger.warning("telegram_admin_callback_ack_failed")
     data = callback.get("data", "") if isinstance(callback, dict) else "a:h"
     message = update.get("message") if isinstance(update.get("message"), dict) else None
     if message and message.get("text") != "/admin": return {"statusCode": 200, "body": json.dumps({"ok": True})}
     try:
-        policy = asyncio.run(read_policy())
+        # Top-level navigation is deliberately storage-free.  It must remain
+        # available for diagnosis even if the policy/journal store is degraded.
+        policy = PolicySnapshot(0, {}, None)
         parts = data.split(":")
         if parts[0] != "a": raise ValueError
         view, kwargs = "home", {}
         if parts[1] == "c": view = "channels"
         elif parts[1] == "f": view, kwargs = ("formats", {}) if len(parts) == 2 else ("format", {"type_index": int(parts[2])})
-        elif parts[1] == "d": view, kwargs = "destination", {"dest_index": int(parts[2])}
+        elif parts[1] == "d":
+            policy = asyncio.run(read_policy())
+            view, kwargs = "destination", {"dest_index": int(parts[2])}
         elif parts[1] == "x":
+            policy = asyncio.run(read_policy())
             dest_index, type_index = int(parts[2]), int(parts[3])
             destinations, types = _destinations(), list(PUBLICATION_TYPES)
             text, markup = _render("detail", policy, dest_index=dest_index, type_index=type_index)
@@ -254,6 +279,7 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
             _send_or_edit(update, text, markup)
             return {"statusCode": 200, "body": json.dumps({"ok": True})}
         elif parts[1] == "o":
+            policy = asyncio.run(read_policy())
             period = parts[2] if len(parts) > 2 and parts[2] in PERIODS else "today"
             records = asyncio.run(list_publications(limit=500))
             _send_or_edit(update, _overview(records, _pending(), policy, period), _keyboard([
@@ -261,6 +287,7 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
                 [('Журнал', f'a:j:0:{period}')], [('Главное меню', 'a:h')]]))
             return {"statusCode": 200, "body": json.dumps({"ok": True})}
         elif parts[1] == "j":
+            policy = asyncio.run(read_policy())
             page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
             period = parts[3] if len(parts) > 3 and parts[3] in PERIODS else "today"
             text = _journal_text(asyncio.run(list_publications(limit=500)), _pending(), policy, period, page)
@@ -268,6 +295,7 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
             _send_or_edit(update, text, _keyboard([navigation, [('Обзор', f'a:o:{period}')], [('Главное меню', 'a:h')]]))
             return {"statusCode": 200, "body": json.dumps({"ok": True})}
         elif parts[1] == "p":
+            policy = asyncio.run(read_policy())
             pending = _pending()
             problems = [item for item in pending if pending_delivery_status(item, policy) in {"suspended", "manual_review"}]
             if problems:
@@ -285,8 +313,9 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
         text, markup = _render(view, policy, **kwargs)
         _send_or_edit(update, text, markup)
     except (ValueError, IndexError):
-        text, markup = _render("home", asyncio.run(read_policy()), notice="Экран устарел. Откройте меню заново.")
+        text, markup = _render("home", PolicySnapshot(0, {}, None), notice="Экран устарел. Откройте меню заново.")
         _send_or_edit(update, text, markup)
     except Exception:
+        logger.exception("telegram_admin_handler_failed")
         return _error(503)
     return {"statusCode": 200, "body": json.dumps({"ok": True})}

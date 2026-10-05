@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 from cs2bot import admin_handler as admin
 from cs2bot.publication_admin import PolicySnapshot
@@ -37,10 +38,32 @@ def test_admin_opens_menu_and_uses_short_callback(monkeypatch):
     assert len(callback.encode()) <= 64
 
 
+def test_callback_is_acknowledged_before_storage_free_navigation(monkeypatch):
+    monkeypatch.setattr(admin, "TELEGRAM_ADMIN_ENABLED", True)
+    monkeypatch.setattr(admin, "TELEGRAM_ADMIN_USER_ID", "42")
+    monkeypatch.setattr(admin, "TELEGRAM_ADMIN_WEBHOOK_SECRET", "secret")
+    calls, sent = [], []
+
+    def telegram_call(method, payload):
+        calls.append((method, payload))
+        return {"ok": True}
+
+    async def unavailable_policy():
+        raise AssertionError("top-level navigation must not read storage")
+
+    monkeypatch.setattr(admin, "telegram_call", telegram_call)
+    monkeypatch.setattr(admin, "read_policy", unavailable_policy)
+    monkeypatch.setattr(admin, "_send_or_edit", lambda update, text, markup: sent.append(text))
+
+    assert admin.handler(_event("a:c", callback=True), None)["statusCode"] == 200
+    assert calls == [("answerCallbackQuery", {"callback_query_id": "callback"})]
+    assert sent == ["<b>Каналы и аккаунты</b>\nВыберите назначение."]
+
+
 def test_pair_card_reports_confirmed_count_and_held_queue():
     policy = PolicySnapshot(1, {"channel:results": {"enabled": True, "generation": 1}}, '"1"')
     record = {"publication_id": "one", "destination_id": "channel", "publication_type": "results",
-              "confirmed_at": "2026-10-04T09:00:00Z", "test": False}
+              "confirmed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "test": False}
     pending = type("Pending", (), {"channel_id": "channel", "content_type": "result", "generation": 0,
                                     "attempt_count": 0})()
     text = admin._pair_detail([record], [pending], policy, "channel", "results")
