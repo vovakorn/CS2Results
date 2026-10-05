@@ -716,12 +716,14 @@ def test_result_uses_spoiler_photo_when_media_cards_enabled(monkeypatch):
     assert "<tg-spoiler>2 : 1</tg-spoiler>" in sent_photos[0][0][2]
 
 
-def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch):
+@pytest.mark.parametrize("preparation_seconds", [50.0, 51.0])
+def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch, preparation_seconds):
     sent_text = []
     match = _match()
-    monotonic_values = iter([0.0, 1.0, main.RESULT_MEDIA_BUDGET_SECONDS + 1.0])
+    clock = {"now": 0.0}
 
     async def fake_get_new_finished_matches(**kwargs):
+        clock["now"] = preparation_seconds
         return [match]
 
     async def fake_claim(*args, **kwargs):
@@ -735,7 +737,7 @@ def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
     monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
-    monkeypatch.setattr(main, "_monotonic", lambda: next(monotonic_values))
+    monkeypatch.setattr(main, "_monotonic", lambda: clock["now"])
     monkeypatch.setattr(
         main,
         "render_result_card",
@@ -752,6 +754,86 @@ def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch
     assert response["statusCode"] == 200
     assert sent_text[0][1]["timeout"] == main.RESULT_TELEGRAM_TIMEOUT_SECONDS
     assert sent_text[0][1]["max_attempts"] == main.RESULT_TEXT_TELEGRAM_MAX_ATTEMPTS
+
+
+@pytest.mark.parametrize("preparation_seconds", [35.622, 41.04, 49.999])
+def test_result_sends_photo_after_slow_preparation(monkeypatch, preparation_seconds):
+    match = _match()
+    clock = {"now": 0.0}
+    photos, texts, events = [], [], []
+
+    async def fetch(**kwargs):
+        clock["now"] = preparation_seconds
+        return [match]
+
+    async def claim(*args, **kwargs):
+        return _claim(match, "global")
+
+    monkeypatch.setattr(main, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "get_new_finished_matches", fetch)
+    monkeypatch.setattr(main, "claim_channel_delivery", claim)
+    monkeypatch.setattr(main, "mark_channel_processed", lambda *a, **k: _async(None))
+    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(main, "send_photo_to_telegram", lambda *a, **k: photos.append(a) or {"ok": True})
+    monkeypatch.setattr(main, "send_to_telegram", lambda *a, **k: texts.append(a))
+    monkeypatch.setattr(main, "log_event", lambda logger, level, event, **fields: events.append((event, fields)))
+
+    response = main.handler({"limit": 1}, None)
+
+    assert response["statusCode"] == 200
+    assert len(photos) == 1
+    assert texts == []
+    assert json.loads(response["body"])["delivery_failures"] == 0
+    preparation = next(fields for event, fields in events if event == "results_preparation_complete")
+    assert preparation["source_fetch_seconds"] == round(preparation_seconds, 3)
+    assert not any(event == "media_card_budget_exhausted" for event, _ in events)
+
+
+def test_result_preparation_log_separates_source_queue_and_storage(monkeypatch):
+    match = _match()
+    clock = {"now": 0.0}
+    events = []
+
+    async def fetch(**kwargs):
+        clock["now"] += 3.0
+        return [match]
+
+    async def enqueue(*args, **kwargs):
+        clock["now"] += 5.0
+        return True
+
+    async def pending(**kwargs):
+        clock["now"] += 7.0
+        return []
+
+    async def health():
+        clock["now"] += 2.0
+        return False
+
+    monkeypatch.setattr(main, "_monotonic", lambda: clock["now"])
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "get_new_finished_matches", fetch)
+    monkeypatch.setattr(main, "enqueue_result_delivery", enqueue)
+    monkeypatch.setattr(main, "list_pending_result_deliveries", pending)
+    monkeypatch.setattr(main, "is_telegram_media_degraded", health)
+    monkeypatch.setattr(main, "claim_channel_delivery", lambda *a, **k: _async(None))
+    monkeypatch.setattr(main, "log_event", lambda logger, level, event, **fields: events.append((event, fields)))
+
+    assert main.handler({"limit": 1}, None)["statusCode"] == 200
+    preparation = next(fields for event, fields in events if event == "results_preparation_complete")
+    assert preparation["handler_setup_seconds"] == 0.0
+    assert preparation["source_fetch_seconds"] == 3.0
+    assert preparation["routing_and_enqueue_seconds"] == 5.0
+    assert preparation["outbox_load_seconds"] == 7.0
+    assert preparation["media_health_seconds"] == 2.0
+    assert preparation["elapsed_seconds"] == 17.0
+    assert preparation["matches_received"] == 1
+    assert preparation["pending_deliveries"] == 1
 
 
 def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):

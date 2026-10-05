@@ -9,6 +9,13 @@
 
 ## Now
 
+- [x] Локально подготовить меру против двух пропусков Telegram PNG 4–5 октября:
+  лимит 35 → 50 секунд и замер этапов подготовки. Production не изменён;
+  [диагностика](docs/incidents/2026-10-05-telegram-result-card-budget.md).
+- [ ] После отдельного разрешения выпустить изменение лимита и проверить новые
+  `results_preparation_complete` на штатных запусках: задержки 35,6/41 секунду
+  должны сохранять картинку; после 50 секунд прежний текстовый fallback остаётся.
+
 - [x] Подключить Telegram-админку: owner ID и webhook secret сохранены в Lockbox,
   initial policy revision 1 записан, admin/control flags включены и webhook
   зарегистрирован. Publisher `d4e7f2tjqrkjl9p3la5v` и admin-function
