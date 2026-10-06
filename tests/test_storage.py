@@ -33,6 +33,7 @@ from cs2bot.match_sources.storage import (
     mark_processed,
     processed_key,
     record_result_delivery_attempt,
+    record_source_health,
     release_delivery_claim,
     reconcile_channel_delivery,
     reconcile_content_delivery,
@@ -49,6 +50,7 @@ from cs2bot.match_sources.storage import (
     clear_pending_liquipedia_final,
     write_vrs_snapshot,
     read_vrs_snapshot,
+    source_health_key,
 )
 
 
@@ -1050,6 +1052,37 @@ def test_admin_alert_is_claimed_only_once_per_cooldown_window():
     assert asyncio.run(claim_admin_alert("source-down", client=s3, bucket="bucket", now=now))
     assert not asyncio.run(claim_admin_alert("source-down", client=s3, bucket="bucket", now=now))
     assert alert_key("source-down", now) in s3.objects
+
+
+def test_source_health_counts_failures_and_resets_after_a_success():
+    s3 = FakeS3()
+    now = datetime(2026, 2, 17, 13, 0, tzinfo=timezone.utc)
+
+    assert asyncio.run(
+        record_source_health(
+            "results-auto", healthy=False, reason="timeout", client=s3, bucket="bucket", now=now
+        )
+    ) == 1
+    assert asyncio.run(
+        record_source_health(
+            "results-auto",
+            healthy=False,
+            reason="stale_or_undated",
+            client=s3,
+            bucket="bucket",
+            now=now + timedelta(minutes=15),
+        )
+    ) == 2
+    assert asyncio.run(
+        record_source_health(
+            "results-auto", healthy=True, client=s3, bucket="bucket", now=now + timedelta(minutes=30)
+        )
+    ) == 0
+
+    payload = json.loads(s3.objects[source_health_key("results-auto")]["Body"])
+    assert payload["consecutive_failures"] == 0
+    assert payload["last_success_at"] == "2026-02-17T13:30:00Z"
+    assert payload["last_failure_reason"] is None
 
 
 def test_content_delivery_is_atomic_and_persisted_after_success():

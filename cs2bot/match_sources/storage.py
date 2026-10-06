@@ -77,6 +77,7 @@ RESULT_OUTBOX_PREFIX = "outbox/results/"
 LIQUIPEDIA_FINAL_PENDING_PREFIX = "pending/liquipedia-finals/"
 VRS_SNAPSHOT_PREFIX = "vrs-snapshots/"
 TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
+SOURCE_HEALTH_PREFIX = "source-health/"
 CLAIM_CREATE_MAX_ATTEMPTS = 3
 
 
@@ -106,6 +107,11 @@ def result_outbox_key(match: MatchNormalized, channel_id: str, content_type: str
 def alert_key(alert_code: str, now: datetime) -> str:
     window = int(now.timestamp()) // ALERT_COOLDOWN_SECONDS
     return f"alerts/{safe_storage_part(alert_code)}/{window}.json"
+
+
+def source_health_key(source: str) -> str:
+    """Return the durable health state key for one independent match source."""
+    return f"{SOURCE_HEALTH_PREFIX}{safe_storage_part(source)}.json"
 
 
 def safe_storage_part(value: str) -> str:
@@ -808,6 +814,90 @@ async def claim_admin_alert(
         if _is_precondition_failed(exc):
             return False
         raise StorageUnavailableError(f"alert claim failed for {key}") from exc
+
+
+async def record_source_health(
+    source: str,
+    *,
+    healthy: bool,
+    reason: str | None = None,
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Persist one source check and return its consecutive-failure count.
+
+    The state is updated with conditional writes so overlapping scheduler
+    invocations cannot lose a failure or turn a confirmed success into an
+    older failure.  It is intentionally separate from delivery claims: a
+    source check must never alter a publication's delivery lifecycle.
+    """
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    key = source_health_key(source)
+    reference = now or datetime.now(timezone.utc)
+    timestamp = reference.isoformat().replace("+00:00", "Z")
+
+    for _ in range(CLAIM_CREATE_MAX_ATTEMPTS):
+        exists = False
+        etag: str | None = None
+        try:
+            response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
+            body = response["Body"]
+            try:
+                current = json.loads(body.read())
+            finally:
+                body.close()
+            if not isinstance(current, dict):
+                raise StorageUnavailableError(f"source health state is invalid for {key}")
+            exists = True
+            etag = response.get("ETag")
+        except ClientError as exc:
+            if not _is_not_found(exc):
+                raise StorageUnavailableError(f"source health read failed for {key}") from exc
+            current = {}
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise StorageUnavailableError(f"source health state is invalid for {key}") from exc
+
+        previous_failures = current.get("consecutive_failures", 0)
+        if not isinstance(previous_failures, int) or previous_failures < 0:
+            raise StorageUnavailableError(f"source health failure count is invalid for {key}")
+        failures = 0 if healthy else previous_failures + 1
+        payload = {
+            "schema_version": 1,
+            "source": source,
+            "consecutive_failures": failures,
+            "last_success_at": timestamp if healthy else current.get("last_success_at"),
+            "last_failure_at": None if healthy else timestamp,
+            "last_failure_reason": None if healthy else (reason or "unavailable"),
+        }
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket_name,
+            "Key": key,
+            "Body": json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"),
+            "ContentType": "application/json",
+        }
+        if not exists:
+            kwargs["IfNoneMatch"] = "*"
+            etags: tuple[str | None, ...] = (None,)
+        else:
+            etags = _etag_candidates(etag)
+            if not etags:
+                raise StorageUnavailableError(f"source health ETag is missing for {key}")
+
+        for candidate in etags:
+            if candidate:
+                kwargs["IfMatch"] = candidate
+            try:
+                await asyncio.to_thread(s3.put_object, **kwargs)
+                return failures
+            except ClientError as exc:
+                if not _is_precondition_failed(exc):
+                    raise StorageUnavailableError(f"source health write failed for {key}") from exc
+                kwargs.pop("IfMatch", None)
+                continue
+
+    raise StorageUnavailableError(f"source health state did not stabilize for {key}")
 
 
 async def is_processed(match_uid: str, client: Any | None = None, bucket: str | None = None) -> bool:

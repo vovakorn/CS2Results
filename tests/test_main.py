@@ -1638,12 +1638,51 @@ def test_source_failure_only_alerts_outside_dry_run(monkeypatch, job, fetcher, d
     alerts = []
     monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "test-chat", "teams": None}])
     monkeypatch.setattr(main, fetcher, fail)
+    if job == "results":
+        async def below_threshold(*args, **kwargs):
+            return main.SOURCE_ALERT_FAILURE_THRESHOLD - 1
+
+        monkeypatch.setattr(main, "record_source_health", below_threshold)
     monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
 
     response = main.handler({"job": job, "dry_run": dry_run}, None)
 
     assert response["statusCode"] == 502
-    assert len(alerts) == (0 if dry_run else 1)
+    assert len(alerts) == (0 if dry_run or job == "results" else 1)
+
+
+def test_result_source_alert_waits_for_consecutive_failures(monkeypatch):
+    async def fail(**kwargs):
+        raise RuntimeError("PandaScore request failed: TimeoutError")
+
+    counts = iter((1, 2, 3))
+    alerts = []
+
+    async def record(*args, **kwargs):
+        assert kwargs["healthy"] is False
+        assert kwargs["reason"] == "timeout"
+        return next(counts)
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fail)
+    monkeypatch.setattr(main, "record_source_health", record)
+    monkeypatch.setattr(main, "CHANNELS", [{"name": "global", "chat_id": "test-chat", "teams": None}])
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: alerts.append(args))
+
+    for _ in range(3):
+        response = main.handler({"job": "results"}, None)
+        assert response["statusCode"] == 502
+
+    assert len(alerts) == 1
+    assert alerts[0][0] == "match_source_consecutive_failures"
+    assert "PandaScore не ответил" in alerts[0][1]
+    assert "48" not in alerts[0][1]
+
+
+def test_source_failure_summary_distinguishes_freshness_from_timeout():
+    assert "не ответил" in main._source_failure_summary("auto", RuntimeError("TimeoutError"))
+    assert "свежие датированные" in main._source_failure_summary(
+        "auto", RuntimeError("pandascore is not usable: stale_or_undated")
+    )
 
 
 def test_invalid_dry_run_value_cannot_fall_through_to_production(monkeypatch):
