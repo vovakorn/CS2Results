@@ -74,6 +74,7 @@ from .match_sources.config import (
     OBJECT_STORAGE_BUCKET,
     PANDASCORE_API_TOKEN,
     POPULAR_TEAMS,
+    SOURCE_ALERT_FAILURE_THRESHOLD,
 )
 from .match_sources.filters import is_tier1_candidate, tier1_autopilot_decision
 from .match_sources.match_fetcher import SourceName, apply_quality_filters, get_new_finished_matches
@@ -116,6 +117,7 @@ from .match_sources.storage import (
     record_result_delivery_attempt,
     reconcile_channel_delivery,
     reconcile_content_delivery,
+    record_source_health,
     release_delivery_claim,
     result_outbox_key,
     read_latest_vrs_snapshot,
@@ -412,6 +414,64 @@ def _safe_error_message(exc: Exception) -> str:
             message = message.replace(secret, "[REDACTED]")
     message = re.sub(r"/bot[^/\s]+/", "/bot[REDACTED]/", message, flags=re.IGNORECASE)
     return message[:500] or type(exc).__name__
+
+
+def _source_failure_summary(source: str, exc: Exception) -> str:
+    """Describe a match-source failure without exposing provider details or secrets."""
+    detail = str(exc).casefold()
+    if source == "liquipedia" or "liquipedia" in detail:
+        provider = "Liquipedia"
+    else:
+        provider = "PandaScore"
+    if "timeout" in detail:
+        return f"{provider} не ответил за установленное время"
+    if "stale_or_undated" in detail:
+        return f"{provider} не вернул свежие датированные матчи"
+    if "empty" in detail:
+        return f"{provider} вернул пустой набор матчей"
+    return f"{provider} временно недоступен"
+
+
+def _source_failure_code(exc: Exception) -> str:
+    detail = str(exc).casefold()
+    if "timeout" in detail:
+        return "timeout"
+    if "stale_or_undated" in detail:
+        return "stale_or_undated"
+    if "empty" in detail:
+        return "empty"
+    return "unavailable"
+
+
+def _record_results_source_health(source: str, *, healthy: bool, exc: Exception | None = None) -> int | None:
+    """Record a result-source check without making Object Storage a fetch dependency."""
+    try:
+        failures = asyncio.run(
+            record_source_health(
+                f"results-{source}",
+                healthy=healthy,
+                reason=None if healthy else _source_failure_code(exc or RuntimeError()),
+            )
+        )
+    except Exception as storage_exc:
+        log_event(
+            logger,
+            logging.ERROR,
+            "source_health_record_failed",
+            source=source,
+            error_type=type(storage_exc).__name__,
+            error=_safe_error_message(storage_exc),
+        )
+        return None
+    log_event(
+        logger,
+        logging.INFO,
+        "source_health_recorded",
+        source=source,
+        healthy=healthy,
+        consecutive_failures=failures,
+    )
+    return failures
 
 
 def _telegram_request_options() -> Dict[str, Any]:
@@ -3329,11 +3389,25 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 error=_safe_error_message(exc),
             )
             if not dry_run:
-                _notify_admin(
-                    "match_source_unavailable",
-                    "Источник матчей недоступен, пуст или не обновлялся более 48 часов.",
-                )
+                failures = _record_results_source_health(source, healthy=False, exc=exc)
+                if failures is None:
+                    _notify_admin(
+                        "match_source_health_unavailable",
+                        "Не удалось проверить состояние источника матчей; новые результаты в этом запуске не обработаны.",
+                    )
+                elif failures >= SOURCE_ALERT_FAILURE_THRESHOLD:
+                    _notify_admin(
+                        "match_source_consecutive_failures",
+                        (
+                            f"{_source_failure_summary(source, exc)}: {failures} проверки подряд "
+                            "не дали пригодных данных. Новые результаты временно не обрабатываются; "
+                            "бот продолжит попытки автоматически."
+                        ),
+                    )
             return _error_response(502, "match_source_unavailable")
+
+        if not dry_run:
+            _record_results_source_health(source, healthy=True)
 
     source_finished_at = _monotonic()
     unconfirmed_tier1 = [
