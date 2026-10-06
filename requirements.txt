@@ -17,7 +17,7 @@ charset-normalizer==3.4.9
 frozenlist==1.8.0
 idna==3.18
 jmespath==1.1.0
-multidict==6.7.1
+multidict==6.9.1
 propcache==0.5.2
 pydantic-core==2.46.4
 python-dateutil==2.9.0.post0
