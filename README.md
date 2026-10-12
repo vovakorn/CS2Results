@@ -66,7 +66,7 @@
 | `ENABLE_TOURNAMENT_PREVIEWS` | Превью в Telegram/Instagram/Threads; `0` по умолчанию. Нужен проверенный профиль. |
 | `TOURNAMENT_PREVIEW_PROFILES_PATH` | JSON профилей и точных связей Liquipedia/PandaScore для общей цепочки Threads/VRS; по умолчанию `data/tournament_preview_profiles.json`. Исторические связи сохраняются. |
 | `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`; безопасное значение по умолчанию — `0`. |
-| `ENABLE_LIQUIPEDIA_SHADOW` | `1` параллельно сравнивает завершённые матчи PandaScore и Liquipedia, не меняя источник публикации; по умолчанию `0`. |
+| `ENABLE_LIQUIPEDIA_SHADOW` | `1` сравнивает завершённые матчи PandaScore и Liquipedia, не меняя источник публикации; production — не чаще одной попытки в UTC-час, dry-run без ограничения и записи маркера. По умолчанию `0`. |
 | `DISPLAY_TIMEZONE` | Таймзона для отображения ISO datetime в Telegram, по умолчанию `Europe/Moscow`. |
 | `MAX_SOURCE_STALENESS_HOURS` | Максимальный возраст источника для production-публикации, по умолчанию `48`. |
 | `MAX_SOURCE_FUTURE_SKEW_HOURS` | Допустимое отклонение даты источника в будущее, по умолчанию `6`. |
@@ -352,8 +352,10 @@ Primary source `pandascore` использует документированн�
 
 Если PandaScore вернул пустые, невалидные, недатированные или устаревшие данные, `auto` переключается на одобренный LiquipediaDB API при `ENABLE_LIQUIPEDIA_FALLBACK=1`. Liquipedia вызывается через `https://api.liquipedia.net/api/v3/match` с `Authorization: Apikey ...`. Если ни один источник не прошёл freshness gate, production handler возвращает контролируемую ошибку и ничего не публикует.
 
-При `ENABLE_LIQUIPEDIA_SHADOW=1` и наличии ключа тот же endpoint вызывается после
-успешного PandaScore. Пишется только агрегированное событие
+При `ENABLE_LIQUIPEDIA_SHADOW=1` и наличии ключа Liquipedia сравнивается после
+успешного PandaScore; при включённых final cards обе задачи используют одну
+загрузку. В production атомарный часовой маркер ограничивает попытки сравнения,
+а проверка финалов остаётся на каждом штатном results-запуске. Пишется агрегат
 `liquipedia_shadow_comparison`: покрытие, совпадения, расхождения счёта, `best of`,
 tier, наличие карт и технических результатов. Ошибка shadow-запроса не блокирует
 PandaScore и Telegram; dry-run возвращает те же агрегаты в поле

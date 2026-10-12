@@ -14,6 +14,19 @@ from cs2bot.instagram_publish import InstagramDeliveryUncertainError
 STATE = reel_delivery.PendingReel("2026-09-25", "12345", 4, "2026-09-25T06:15:00Z")
 
 
+@pytest.mark.parametrize("terminal", ["sent", "uncertain", "held"])
+def test_terminal_reel_never_calls_meta(monkeypatch, terminal):
+    async def reconcile(*args, **kwargs):
+        return terminal == "sent"
+    async def blocked(*args, **kwargs):
+        return None
+    monkeypatch.setattr(reel_delivery.storage, "reconcile_content_delivery", reconcile)
+    monkeypatch.setattr(reel_delivery.storage, "claim_content_delivery", blocked)
+    monkeypatch.setattr(reel_delivery, "reel_container_status", lambda *args: pytest.fail("terminal Reel polled Meta"))
+    monkeypatch.setattr(reel_delivery, "publish_reel_container", lambda *args: pytest.fail("terminal Reel republished"))
+    assert reel_delivery.advance_pending_reel(STATE, None, allowed=terminal != "held") in {"reconciled", "duplicate_or_blocked", "held"}
+
+
 @dataclass
 class Claim:
     state: str = "sending"

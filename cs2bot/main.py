@@ -3271,6 +3271,58 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
     return {"statusCode": 502 if failures else 200, "body": json.dumps(body, ensure_ascii=False)}
 
 
+def _retry_reel_worker(context: Any) -> dict[str, str]:
+    """Advance today's persisted Reel once, independently of result work."""
+    states: dict[str, str] = {}
+    try:
+        if instagram_publishing_enabled() and instagram_reels_enabled():
+            states = (advance_today_reel(context)
+                      if publication_delivery_allowed("instagram", "schedule_reel")[0] else {})
+            for day, state in states.items():
+                if state == "published":
+                    _record_post_analytics("instagram", f"instagram_schedule_reel_{day}", "schedule_reel", media_video=True)
+                if state in {"processing_failed", "publish_uncertain"}:
+                    _notify_admin("schedule_reel_delivery_blocked", f"Reel за {day}: исход публикации требует ручной проверки.")
+    except (InstagramPublishError, StorageUnavailableError) as exc:
+        log_event(logger, logging.ERROR, "schedule_reel_worker_failed", error_type=type(exc).__name__)
+        _notify_admin("schedule_reel_worker_failed", "Не удалось проверить ожидающие Reels; проверьте логи.")
+        raise
+    return states
+
+
+def _retry_digest_worker(handler_started_at: float) -> str | None:
+    """Keep the bounded digest worker available even with no result work."""
+    digest_retry_state: str | None = None
+    if _monotonic() - handler_started_at < RESULT_DELIVERY_START_BUDGET_SECONDS - 45:
+        try:
+            attempt = DigestRetryQueue().claim_due()
+            if attempt is not None:
+                if attempt.payload["status"] == "exhausted":
+                    _notify_admin(f"digest_preparation_exhausted_{attempt.day_key}",
+                                  f"Итог дня за {attempt.day_key}: срок или лимит подготовки исчерпан; "
+                                  "подготовка не подтверждена. Автоматические повторы завершены.")
+                    digest_retry_state = "exhausted"
+                elif not PANDASCORE_API_TOKEN:
+                    DigestRetryQueue().finish(attempt, prepared=False)
+                    _notify_admin("digest_retry_configuration", "Повтор подготовки итога дня заблокирован: источник не настроен.")
+                    digest_retry_state = "configuration_error"
+                else:
+                    result = _handle_content_job("digest", False, digest_attempt=attempt)
+                    digest_body = json.loads(result["body"])
+                    digest_retry_state = "failed" if "error" in digest_body else "prepared"
+                    log_event(logger, logging.INFO, "digest_retry_complete", job="digest", day_key=attempt.day_key,
+                              attempts=attempt.payload["attempts"], status_code=result["statusCode"],
+                              messages_sent=digest_body.get("messages_sent", 0),
+                              instagram_messages_sent=digest_body.get("instagram_messages_sent", 0),
+                              threads_messages_sent=digest_body.get("threads_messages_sent", 0))
+        except Exception as exc:
+            log_event(logger, logging.ERROR, "digest_retry_worker_failed", error_type=type(exc).__name__)
+            _notify_admin("digest_retry_worker_failed", "Не удалось проверить очередь подготовки итога дня; проверьте логи.")
+            digest_retry_state = "state_error"
+
+    return digest_retry_state
+
+
 def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     """Yandex Cloud Functions entry point."""
 
@@ -3450,6 +3502,38 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     )
     rejected_matches: List[MatchNormalized] = []
     shadow_diagnostics: Dict[str, int] = {}
+    retry_targets: list[PendingDelivery] | None = None
+    if retry_only:
+        try:
+            retry_targets = asyncio.run(list_pending_result_deliveries(limit=RESULT_OUTBOX_LIMIT))
+        except Exception as exc:
+            log_event(logger, logging.ERROR, "result_outbox_load_failed", error_type=type(exc).__name__)
+            _notify_admin("result_outbox_unavailable", "Не удалось прочитать очередь доставки; повтор будет выполнен автоматически.")
+            return _error_response(502, "result_outbox_unavailable")
+        if not retry_targets:
+            reel_failed = False
+            try:
+                reel_states = _retry_reel_worker(context)
+            except (InstagramPublishError, StorageUnavailableError):
+                reel_states = {}
+                reel_failed = True
+            digest_retry_state = _retry_digest_worker(handler_started_at)
+            if reel_failed:
+                return _error_response(502, "schedule_reel_worker_unavailable")
+            channels = {str(channel.get("name", "unknown")): 0 for channel in _iter_channels()}
+            metrics = {
+                "matches_received": 0, "tier1_lan_unconfirmed": 0, "messages_sent": 0,
+                "duplicates_skipped": 0, "filtered_skipped": 0, "delivery_failures": 0,
+                "delivery_held": 0, "retry_only": True,
+                "reel_worker_states": reel_states, "digest_retry_state": digest_retry_state, "channels": channels,
+            }
+            log_event(logger, logging.INFO, "retry_result_outbox_empty", elapsed_seconds=round(_monotonic() - handler_started_at, 3))
+            log_event(logger, logging.INFO, "handler_complete", **metrics)
+            return {"statusCode": 200, "body": json.dumps({
+                **{key: value for key, value in metrics.items() if key not in {"channels", "reel_worker_states"}},
+                "requested_limit": limit, "per_channel": channels, "metrics": metrics,
+                "skipped_reason": "empty_result_outbox", "dry_run": False, "mode": mode, "source": source,
+            })}
     source_started_at = _monotonic()
     if retry_only:
         matches: list[MatchNormalized] = []
@@ -3700,7 +3784,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
         outbox_enqueue_finished_at = _monotonic()
         try:
-            stored_targets = asyncio.run(
+            stored_targets = retry_targets if retry_targets is not None else asyncio.run(
                 list_pending_result_deliveries(limit=RESULT_OUTBOX_LIMIT)
             )
         except Exception as exc:
@@ -4177,50 +4261,11 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     reel_worker_states: dict[str, str] = {}
     if retry_only:
         try:
-            if instagram_publishing_enabled() and instagram_reels_enabled():
-                reel_worker_states = (advance_today_reel(context)
-                                      if publication_delivery_allowed("instagram", "schedule_reel")[0] else {})
-                for reel_day, reel_state in reel_worker_states.items():
-                    if reel_state == "published":
-                        _record_post_analytics(
-                            "instagram", f"instagram_schedule_reel_{reel_day}", "schedule_reel", media_video=True
-                        )
-                    if reel_state in {"processing_failed", "publish_uncertain"}:
-                        _notify_admin(
-                            "schedule_reel_delivery_blocked",
-                            f"Reel за {reel_day}: исход публикации требует ручной проверки.",
-                        )
-        except (InstagramPublishError, StorageUnavailableError) as exc:
-            log_event(logger, logging.ERROR, "schedule_reel_worker_failed", error_type=type(exc).__name__)
-            _notify_admin("schedule_reel_worker_failed", "Не удалось проверить ожидающие Reels; проверьте логи.")
+            reel_worker_states = _retry_reel_worker(context)
+        except (InstagramPublishError, StorageUnavailableError):
+            pass  # The worker already logged/notified; keep result delivery metrics.
 
-    digest_retry_state: str | None = None
-    if retry_only and _monotonic() - handler_started_at < RESULT_DELIVERY_START_BUDGET_SECONDS - 45:
-        try:
-            attempt = DigestRetryQueue().claim_due()
-            if attempt is not None:
-                if attempt.payload["status"] == "exhausted":
-                    _notify_admin(f"digest_preparation_exhausted_{attempt.day_key}",
-                                  f"Итог дня за {attempt.day_key}: срок или лимит подготовки исчерпан; "
-                                  "подготовка не подтверждена. Автоматические повторы завершены.")
-                    digest_retry_state = "exhausted"
-                elif not PANDASCORE_API_TOKEN:
-                    DigestRetryQueue().finish(attempt, prepared=False)
-                    _notify_admin("digest_retry_configuration", "Повтор подготовки итога дня заблокирован: источник не настроен.")
-                    digest_retry_state = "configuration_error"
-                else:
-                    result = _handle_content_job("digest", False, digest_attempt=attempt)
-                    digest_body = json.loads(result["body"])
-                    digest_retry_state = "failed" if "error" in digest_body else "prepared"
-                    log_event(logger, logging.INFO, "digest_retry_complete", job="digest", day_key=attempt.day_key,
-                              attempts=attempt.payload["attempts"], status_code=result["statusCode"],
-                              messages_sent=digest_body.get("messages_sent", 0),
-                              instagram_messages_sent=digest_body.get("instagram_messages_sent", 0),
-                              threads_messages_sent=digest_body.get("threads_messages_sent", 0))
-        except Exception as exc:
-            log_event(logger, logging.ERROR, "digest_retry_worker_failed", error_type=type(exc).__name__)
-            _notify_admin("digest_retry_worker_failed", "Не удалось проверить очередь подготовки итога дня; проверьте логи.")
-            digest_retry_state = "state_error"
+    digest_retry_state = _retry_digest_worker(handler_started_at) if retry_only else None
 
     metrics = {
         "matches_received": len(matches),

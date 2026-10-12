@@ -23,6 +23,88 @@ async def _async(value):
     return value
 
 
+def test_empty_retry_skips_result_platform_setup_and_media_health(monkeypatch):
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    reads = []
+    async def empty(**kwargs):
+        reads.append(kwargs)
+        return []
+    monkeypatch.setattr(main, "list_pending_result_deliveries", empty)
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: pytest.fail("unnecessary Threads setup"))
+    monkeypatch.setattr(main, "is_telegram_media_degraded", lambda: pytest.fail("unnecessary media health"))
+    body = json.loads(main.handler({"retry_only": True}, None)["body"])
+    assert body["skipped_reason"] == "empty_result_outbox"
+    assert body["delivery_failures"] == 0
+    assert len(reads) == 1
+
+
+def test_empty_result_queue_still_advances_reel_with_one_state_read(monkeypatch):
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    from cs2bot import reel_delivery
+    reads = []
+    def load(day):
+        reads.append(day)
+        return reel_delivery.PendingReel(day, "12345", 1, "2026-10-09T06:15:00Z")
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "instagram_reels_enabled", lambda: True)
+    monkeypatch.setattr(main, "publication_delivery_allowed", lambda *args: (True, 0))
+    monkeypatch.setattr(reel_delivery, "load_pending_reel", load)
+    monkeypatch.setattr(reel_delivery, "advance_pending_reel", lambda *args, **kwargs: "processing")
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: pytest.fail("unnecessary Threads setup"))
+    body = json.loads(main.handler({"retry_only": True}, None)["body"])
+    assert list(body["metrics"]["reel_worker_states"].values()) == ["processing"]
+    assert len(reads) == 1
+
+
+def test_retry_queue_failure_is_not_reported_as_empty(monkeypatch):
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    async def unavailable(**kwargs):
+        raise StorageUnavailableError("unavailable")
+    notices = []
+    monkeypatch.setattr(main, "list_pending_result_deliveries", unavailable)
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: notices.append(args))
+    response = main.handler({"retry_only": True}, None)
+    assert response["statusCode"] == 502
+    assert "empty_result_outbox" not in response["body"]
+    assert notices[0][0] == "result_outbox_unavailable"
+
+
+def test_nonempty_retry_reuses_preloaded_queue(monkeypatch):
+    reads = []
+    match = _match()
+    pending = PendingDelivery("outbox/results/key.json", "global", "global", match, "2026-10-09T09:00:00Z")
+    async def load(**kwargs):
+        reads.append(kwargs)
+        return [pending]
+    async def blocked(*args, **kwargs):
+        return None
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "list_pending_result_deliveries", load)
+    monkeypatch.setattr(main, "claim_channel_delivery", blocked)
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: False)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: False)
+    assert main.handler({"retry_only": True}, None)["statusCode"] == 200
+    assert len(reads) == 1
+
+
+def test_reel_read_failure_cannot_report_an_idle_retry(monkeypatch):
+    digest_checks = []
+    monkeypatch.setattr(main, "_retry_digest_worker", lambda started: digest_checks.append(started))
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "instagram_reels_enabled", lambda: True)
+    monkeypatch.setattr(main, "publication_delivery_allowed", lambda *args: (True, 0))
+    monkeypatch.setattr(main, "_notify_admin", lambda *args: None)
+    def unavailable(*args):
+        raise StorageUnavailableError("Reel state unavailable")
+    monkeypatch.setattr(main, "advance_today_reel", unavailable)
+    response = main.handler({"retry_only": True}, None)
+    assert response["statusCode"] == 502
+    assert "empty_result_outbox" not in response["body"]
+    assert len(digest_checks) == 1
+
+
 @pytest.fixture(autouse=True)
 def configured_runtime(monkeypatch):
     monkeypatch.setattr(main, "TELEGRAM_TOKEN", "test-token")

@@ -185,6 +185,7 @@ def test_retry_worker_recovers_after_midnight_with_old_date(monkeypatch, runtime
     monkeypatch.setattr(main, "fetch_pandascore_finished_matches", fetch)
     response = main.handler({"retry_only": True}, None)
     assert response["statusCode"] == 200
+    assert json.loads(response["body"])["skipped_reason"] == "empty_result_outbox"
     assert json.loads(response["body"])["metrics"]["digest_retry_state"] == "prepared"
     assert windows[0] == (datetime(2026, 10, 7, 21, tzinfo=timezone.utc), datetime(2026, 10, 8, 21, tzinfo=timezone.utc))
     assert len(sends) == 1 and "8 октября" in sends[0][1]
@@ -309,8 +310,12 @@ def test_busy_results_worker_defers_digest_before_claim(monkeypatch, runtime):
     clock, _, queue, alerts, _, _ = runtime
     initial_failure(monkeypatch)
     clock[0] += RETRY_DELAY
-    ticks = iter([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    monkeypatch.setattr(main, "_monotonic", lambda: next(ticks, 50.0))
+    elapsed = [0.0]
+    monkeypatch.setattr(main, "_monotonic", lambda: elapsed[0])
+    async def slow_outbox(**kwargs):
+        elapsed[0] = 50.0
+        return []
+    monkeypatch.setattr(main, "list_pending_result_deliveries", slow_outbox)
     main.handler({"retry_only": True}, None)
     assert queue._load("2026-10-08").payload["attempts"] == 1 and alerts == []
 
