@@ -13,6 +13,7 @@ from . import config as source_config
 from .filters import is_tier1_lan, is_valid_match
 from .models import MatchNormalized, SourceUnavailableError
 from .storage import (
+    claim_liquipedia_shadow_hour,
     clear_pending_liquipedia_final,
     get_or_create_pending_liquipedia_final,
     is_channel_processed,
@@ -301,6 +302,7 @@ async def _apply_liquipedia_final_card_selection(
     *,
     now: datetime | None = None,
     dry_run: bool = False,
+    liquipedia_matches: list[MatchNormalized] | None = None,
 ) -> list[MatchNormalized]:
     if not source_config.ENABLE_LIQUIPEDIA_FINAL_CARDS:
         return primary_matches
@@ -308,7 +310,8 @@ async def _apply_liquipedia_final_card_selection(
         logger.warning("event=liquipedia_final_card_skipped reason=missing_credentials")
         return primary_matches
     try:
-        matches = await _fetch_from_source("liquipedia", limit)
+        matches = (liquipedia_matches if liquipedia_matches is not None
+                   else await _fetch_from_source("liquipedia", limit))
         if require_fresh:
             matches = [match for match in matches if is_match_fresh(match)]
         finals, _ = confirm_liquipedia_final_candidates(matches)
@@ -442,6 +445,8 @@ async def _run_liquipedia_shadow(
     primary_matches: list[MatchNormalized],
     limit: int,
     require_fresh: bool,
+    *,
+    liquipedia_matches: list[MatchNormalized] | None = None,
 ) -> dict[str, int] | None:
     if not source_config.ENABLE_LIQUIPEDIA_SHADOW:
         return None
@@ -450,7 +455,8 @@ async def _run_liquipedia_shadow(
         return None
 
     try:
-        shadow_matches = await _fetch_from_source("liquipedia", limit)
+        shadow_matches = (liquipedia_matches if liquipedia_matches is not None
+                          else await _fetch_from_source("liquipedia", limit))
         usable, reason = _source_is_usable(
             "liquipedia_shadow",
             shadow_matches,
@@ -723,15 +729,44 @@ async def get_new_finished_matches(
         require_fresh=require_fresh,
     )
     if used_source == "pandascore":
+        shadow_due = bool(source_config.ENABLE_LIQUIPEDIA_SHADOW and source_config.LIQUIPEDIA_API_KEY)
+        if shadow_due and not dry_run:
+            try:
+                shadow_due = await claim_liquipedia_shadow_hour()
+            except Exception as exc:
+                shadow_due = False
+                logger.warning("event=liquipedia_shadow_skipped reason=hour_claim_unavailable error_type=%s", type(exc).__name__)
+        final_cards_enabled = bool(selected_source == "auto" and source_config.ENABLE_LIQUIPEDIA_FINAL_CARDS
+                                   and source_config.LIQUIPEDIA_API_KEY)
+        shared_matches: list[MatchNormalized] | None = None
+        if shadow_due or final_cards_enabled:
+            try:
+                # Finals retain the source's normal HTTP budget. The optional
+                # diagnostic timeout must not cancel a required final lookup.
+                fetch = _fetch_from_source("liquipedia", fetch_limit)
+                shared_matches = (await fetch if final_cards_enabled else await asyncio.wait_for(
+                    fetch, timeout=source_config.LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS,
+                ))
+            except TimeoutError:
+                logger.warning("event=liquipedia_shadow_timed_out timeout_seconds=%s", source_config.LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS)
+            except Exception as exc:
+                logger.warning("event=liquipedia_shared_fetch_failed error_type=%s", type(exc).__name__)
+                if shadow_due:
+                    logger.warning("event=liquipedia_shadow_failed error_type=%s", type(exc).__name__)
+                if final_cards_enabled:
+                    logger.warning("event=liquipedia_final_card_skipped error_type=%s", type(exc).__name__)
+        comparison = None
         try:
-            comparison = await asyncio.wait_for(
-                _run_liquipedia_shadow(
-                    fetched,
-                    fetch_limit,
-                    require_fresh=require_fresh,
-                ),
-                timeout=source_config.LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS,
-            )
+            if shadow_due and shared_matches is not None:
+                comparison = await asyncio.wait_for(
+                    _run_liquipedia_shadow(
+                        fetched,
+                        fetch_limit,
+                        require_fresh=require_fresh,
+                        liquipedia_matches=shared_matches,
+                    ),
+                    timeout=source_config.LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS,
+                )
         except TimeoutError:
             comparison = None
             logger.warning(
@@ -740,12 +775,13 @@ async def get_new_finished_matches(
             )
         if shadow_diagnostics is not None and comparison is not None:
             shadow_diagnostics.update(comparison)
-        if selected_source == "auto":
+        if final_cards_enabled and shared_matches is not None:
             fetched = await _apply_liquipedia_final_card_selection(
                 fetched,
                 fetch_limit,
                 require_fresh=require_fresh,
                 dry_run=dry_run,
+                liquipedia_matches=shared_matches,
             )
     elif used_source == "liquipedia":
         confirmed, _ = confirm_liquipedia_final_candidates(fetched)

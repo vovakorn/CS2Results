@@ -31,6 +31,71 @@ def _match(source="pandascore", match_id="1", tournament_name="IEM Cologne 2026"
     )
 
 
+@pytest.fixture
+def shared_liquipedia_runtime(monkeypatch):
+    calls = []
+    async def fetch(source, limit):
+        calls.append(source)
+        match = _match(source=source, match_id="1" if source == "pandascore" else "lp-1")
+        match.date = datetime.now(timezone.utc).isoformat()
+        return [match]
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_FINAL_CARDS", True)
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_SHADOW", True)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_API_KEY", "configured")
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fetch)
+    return calls
+
+
+def test_final_and_shadow_share_one_load_without_dry_run_writes(monkeypatch, shared_liquipedia_runtime):
+    async def forbidden():
+        pytest.fail("dry-run wrote diagnostic state")
+    monkeypatch.setattr(match_fetcher, "claim_liquipedia_shadow_hour", forbidden)
+    diagnostics = {}
+    matches = asyncio.run(match_fetcher.get_new_finished_matches(source="auto", dry_run=True, shadow_diagnostics=diagnostics))
+    assert matches[0].source == "pandascore"
+    assert diagnostics["matched"] == 1
+    assert shared_liquipedia_runtime == ["pandascore", "liquipedia"]
+
+
+def test_hourly_shadow_does_not_reduce_final_lookups(monkeypatch, shared_liquipedia_runtime):
+    windows = iter([True, False])
+    async def claim():
+        return next(windows)
+    monkeypatch.setattr(match_fetcher, "claim_liquipedia_shadow_hour", claim)
+    first, second = {}, {}
+    for diagnostics in (first, second):
+        assert asyncio.run(match_fetcher.get_new_finished_matches(source="auto", check_processed=False, shadow_diagnostics=diagnostics))
+    assert first["matched"] == 1
+    assert second == {}
+    assert shared_liquipedia_runtime == ["pandascore", "liquipedia"] * 2
+
+
+def test_shadow_gate_failure_does_not_block_finals(monkeypatch, shared_liquipedia_runtime):
+    async def unavailable():
+        raise storage.StorageUnavailableError("unavailable")
+    monkeypatch.setattr(match_fetcher, "claim_liquipedia_shadow_hour", unavailable)
+    matches = asyncio.run(match_fetcher.get_new_finished_matches(source="auto", check_processed=False))
+    assert matches[0].source == "pandascore"
+    assert shared_liquipedia_runtime == ["pandascore", "liquipedia"]
+
+
+def test_shadow_timeout_does_not_cancel_shared_final_selection(monkeypatch, shared_liquipedia_runtime):
+    selected = []
+    original = match_fetcher._replace_with_liquipedia_finals
+    def replace(primary, secondary):
+        selected.append(secondary)
+        return original(primary, secondary)
+    async def stalled(*args, **kwargs):
+        await asyncio.Event().wait()
+    monkeypatch.setattr(match_fetcher, "_replace_with_liquipedia_finals", replace)
+    monkeypatch.setattr(match_fetcher, "_run_liquipedia_shadow", stalled)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS", 0.001)
+    matches = asyncio.run(match_fetcher.get_new_finished_matches(source="auto", dry_run=True))
+    assert matches[0].source == "pandascore"
+    assert len(selected) == 1
+    assert shared_liquipedia_runtime == ["pandascore", "liquipedia"]
+
+
 def _incident_profile():
     parent = "StarLadder_StarSeries_Fall_2026"
     placements = [
@@ -412,14 +477,15 @@ def test_liquipedia_first_final_waits_then_bridge_suppresses_late_pandascore_dup
 
 def test_liquipedia_shadow_timeout_does_not_block_primary_results(monkeypatch, caplog):
     async def fake_fetch(source, limit):
-        assert source == "pandascore"
-        return [_match()]
+        return [_match(source=source)]
 
     async def slow_shadow(*args, **kwargs):
-        await asyncio.sleep(0.05)
+        await asyncio.Event().wait()
         return {"matched": 1}
 
     monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+    monkeypatch.setattr(match_fetcher.source_config, "ENABLE_LIQUIPEDIA_SHADOW", True)
+    monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_API_KEY", "configured")
     monkeypatch.setattr(match_fetcher, "_run_liquipedia_shadow", slow_shadow)
     monkeypatch.setattr(match_fetcher.source_config, "LIQUIPEDIA_SHADOW_TIMEOUT_SECONDS", 0.001)
 

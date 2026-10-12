@@ -11,6 +11,7 @@ from cs2bot.match_sources.models import MatchNormalized, VRSRankingSnapshot, VRS
 from cs2bot.match_sources.storage import (
     alert_key,
     claim_admin_alert,
+    claim_liquipedia_shadow_hour,
     claim_channel_delivery,
     claim_key,
     claim_content_delivery,
@@ -109,6 +110,59 @@ class FakeS3:
         self.objects.pop(Key, None)
         return {}
 
+
+def test_shadow_hour_is_durable_and_changes_only_at_hour_boundary():
+    s3 = FakeS3()
+    now = datetime(2026, 10, 9, 10, 1, tzinfo=timezone.utc)
+    assert asyncio.run(claim_liquipedia_shadow_hour(s3, "bucket", now))
+    assert not asyncio.run(claim_liquipedia_shadow_hour(s3, "bucket", now + timedelta(minutes=40)))
+    assert asyncio.run(claim_liquipedia_shadow_hour(s3, "bucket", now + timedelta(hours=1)))
+    assert len(s3.objects) == 2
+
+
+def test_outbox_reads_four_at_a_time_then_sorts_before_limit():
+    class ParallelS3(FakeS3):
+        enabled = False
+        active = 0
+        peak = 0
+        lock = threading.Lock()
+        barrier = threading.Barrier(4)
+        def get_object(self, **kwargs):
+            if not self.enabled:
+                return super().get_object(**kwargs)
+            with self.lock:
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            try:
+                self.barrier.wait(timeout=5)
+                return super().get_object(**kwargs)
+            finally:
+                with self.lock:
+                    self.active -= 1
+    s3 = ParallelS3()
+    now = datetime(2026, 10, 9, 10, 0, tzinfo=timezone.utc)
+    for index in range(8):
+        match = MatchNormalized(source="pandascore", match_id=str(index), tournament_name="IEM", team1_name="NAVI", team2_name="FaZe", score1=2, score2=1)
+        asyncio.run(enqueue_result_delivery(match, "global", "global", s3, "bucket", now + timedelta(seconds=index)))
+    s3.enabled = True
+    pending = asyncio.run(list_pending_result_deliveries(s3, "bucket", limit=3))
+    assert s3.peak == 4
+    assert [item.match.match_id for item in pending] == ["0", "1", "2"]
+
+
+def test_corrupt_only_outbox_is_not_empty():
+    s3 = FakeS3()
+    s3.objects["outbox/results/broken.json"] = {"Body": b"invalid", "ETag": "etag"}
+    with pytest.raises(StorageUnavailableError, match="only invalid"):
+        asyncio.run(list_pending_result_deliveries(s3, "bucket"))
+
+
+def test_broken_outbox_pagination_cannot_look_empty():
+    class BrokenS3(FakeS3):
+        def list_objects_v2(self, **kwargs):
+            return {"Contents": [], "IsTruncated": True}
+    with pytest.raises(StorageUnavailableError, match="pagination"):
+        asyncio.run(list_pending_result_deliveries(BrokenS3(), "bucket"))
 
 class ConcurrentClaimS3(FakeS3):
     """Synchronize competing claim creates while keeping conditional PUT atomic."""

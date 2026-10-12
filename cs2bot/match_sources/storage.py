@@ -74,6 +74,7 @@ class ThreadsChainAppend:
 
 
 RESULT_OUTBOX_PREFIX = "outbox/results/"
+RESULT_OUTBOX_READ_CONCURRENCY = 4
 LIQUIPEDIA_FINAL_PENDING_PREFIX = "pending/liquipedia-finals/"
 VRS_SNAPSHOT_PREFIX = "vrs-snapshots/"
 TELEGRAM_MEDIA_HEALTH_KEY = "delivery-health/telegram-media.json"
@@ -445,6 +446,8 @@ async def list_pending_result_deliveries(
     pending: list[PendingDelivery] = []
     continuation_token: str | None = None
     result_limit = max(1, limit)
+    invalid_keys: set[str] = set()
+    seen_tokens: set[str] = set()
 
     while True:
         kwargs: dict[str, Any] = {
@@ -459,10 +462,10 @@ async def list_pending_result_deliveries(
         except ClientError as exc:
             raise StorageUnavailableError("result outbox list failed") from exc
 
-        for item in page.get("Contents", []):
+        async def read_item(item: dict[str, Any]) -> PendingDelivery | None:
             key = item.get("Key")
             if not isinstance(key, str) or not key.startswith(RESULT_OUTBOX_PREFIX):
-                continue
+                return None
             try:
                 response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
                 stream = response["Body"]
@@ -470,33 +473,46 @@ async def list_pending_result_deliveries(
                     payload = json.loads(stream.read())
                 finally:
                     stream.close()
-                pending.append(
-                    PendingDelivery(
-                        key=key,
-                        channel_id=str(payload["channel_id"]),
-                        channel_name=str(payload["channel_name"]),
-                        match=MatchNormalized.model_validate(payload["match"]),
-                        created_at=str(payload["created_at"]),
-                        last_attempt_at=(
-                            str(payload["last_attempt_at"])
-                            if payload.get("last_attempt_at")
-                            else None
-                        ),
-                        attempt_count=max(0, int(payload.get("attempt_count", 0))),
-                        content_type=str(payload.get("content_type", "result")),
-                        generation=int(payload.get("generation", 0)),
-                        vrs_impacts=tuple(TournamentVRSImpact.model_validate(item) for item in payload.get("vrs_impacts", [])),
-                    )
+                return PendingDelivery(
+                    key=key,
+                    channel_id=str(payload["channel_id"]),
+                    channel_name=str(payload["channel_name"]),
+                    match=MatchNormalized.model_validate(payload["match"]),
+                    created_at=str(payload["created_at"]),
+                    last_attempt_at=(str(payload["last_attempt_at"]) if payload.get("last_attempt_at") else None),
+                    attempt_count=max(0, int(payload.get("attempt_count", 0))),
+                    content_type=str(payload.get("content_type", "result")),
+                    generation=int(payload.get("generation", 0)),
+                    vrs_impacts=tuple(TournamentVRSImpact.model_validate(item) for item in payload.get("vrs_impacts", [])),
                 )
-            except (ClientError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            except ClientError as exc:
+                if _is_not_found(exc):
+                    return None  # Another invocation may have delivered/deleted it.
+                raise StorageUnavailableError("result outbox item read failed") from exc
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 logger.error(
                     'storage_error="invalid result outbox item" key="%s" error_type="%s"',
                     key,
                     type(exc).__name__,
                 )
+                invalid_keys.add(key)
+                return None
+
+        items = page.get("Contents", [])
+        for offset in range(0, len(items), RESULT_OUTBOX_READ_CONCURRENCY):
+            loaded = await asyncio.gather(
+                *(read_item(item) for item in items[offset:offset + RESULT_OUTBOX_READ_CONCURRENCY])
+            )
+            pending.extend(item for item in loaded if item is not None)
         continuation_token = page.get("NextContinuationToken")
-        if not page.get("IsTruncated") or not continuation_token:
+        if not page.get("IsTruncated"):
             break
+        if not isinstance(continuation_token, str) or not continuation_token or continuation_token in seen_tokens:
+            raise StorageUnavailableError("result outbox pagination is invalid")
+        seen_tokens.add(continuation_token)
+
+    if invalid_keys and not pending:
+        raise StorageUnavailableError("result outbox contains only invalid items")
 
     pending.sort(
         key=lambda item: (
@@ -507,6 +523,31 @@ async def list_pending_result_deliveries(
         )
     )
     return pending[:result_limit]
+
+
+async def claim_liquipedia_shadow_hour(
+    client: Any | None = None,
+    bucket: str | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Reserve at most one diagnostic comparison per UTC hour, across instances."""
+    s3 = client or _client()
+    bucket_name = bucket or _bucket()
+    reference = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    key = f"diagnostics/liquipedia-shadow/{reference:%Y-%m-%dT%H}.json"
+    try:
+        await asyncio.to_thread(
+            s3.put_object, Bucket=bucket_name, Key=key,
+            Body=json.dumps({"claimed_at": reference.isoformat()}).encode("utf-8"),
+            ContentType="application/json", IfNoneMatch="*",
+        )
+        return True
+    except ClientError as exc:
+        if _is_precondition_failed(exc):
+            return False
+        raise StorageUnavailableError("Liquipedia shadow hour claim failed") from exc
+    except BotoCoreError as exc:
+        raise StorageUnavailableError("Liquipedia shadow hour claim failed") from exc
 
 
 async def record_result_delivery_attempt(
