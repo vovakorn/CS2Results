@@ -29,6 +29,15 @@ def configured_runtime(monkeypatch):
     monkeypatch.setattr(main, "OBJECT_STORAGE_BUCKET", "test-bucket")
     monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", "pandascore-token")
 
+    class EmptyDigestQueue:
+        def claim_due(self):
+            return None
+
+        def enqueue_failure(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(main, "DigestRetryQueue", EmptyDigestQueue)
+
     async def no_reconciliation(*args, **kwargs):
         return False
 
@@ -1648,7 +1657,7 @@ def test_source_failure_only_alerts_outside_dry_run(monkeypatch, job, fetcher, d
     response = main.handler({"job": job, "dry_run": dry_run}, None)
 
     assert response["statusCode"] == 502
-    assert len(alerts) == (0 if dry_run or job == "results" else 1)
+    assert len(alerts) == (0 if dry_run or job in {"results", "digest"} else 1)
 
 
 def test_result_source_alert_waits_for_consecutive_failures(monkeypatch):
