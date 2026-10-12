@@ -89,6 +89,8 @@ def test_nonempty_retry_reuses_preloaded_queue(monkeypatch):
 
 
 def test_reel_read_failure_cannot_report_an_idle_retry(monkeypatch):
+    digest_checks = []
+    monkeypatch.setattr(main, "_retry_digest_worker", lambda started: digest_checks.append(started))
     monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
     monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
     monkeypatch.setattr(main, "instagram_reels_enabled", lambda: True)
@@ -100,6 +102,7 @@ def test_reel_read_failure_cannot_report_an_idle_retry(monkeypatch):
     response = main.handler({"retry_only": True}, None)
     assert response["statusCode"] == 502
     assert "empty_result_outbox" not in response["body"]
+    assert len(digest_checks) == 1
 
 
 @pytest.fixture(autouse=True)
@@ -107,6 +110,15 @@ def configured_runtime(monkeypatch):
     monkeypatch.setattr(main, "TELEGRAM_TOKEN", "test-token")
     monkeypatch.setattr(main, "OBJECT_STORAGE_BUCKET", "test-bucket")
     monkeypatch.setattr(main, "PANDASCORE_API_TOKEN", "pandascore-token")
+
+    class EmptyDigestQueue:
+        def claim_due(self):
+            return None
+
+        def enqueue_failure(self, **kwargs):
+            return None
+
+    monkeypatch.setattr(main, "DigestRetryQueue", EmptyDigestQueue)
 
     async def no_reconciliation(*args, **kwargs):
         return False
@@ -1727,7 +1739,7 @@ def test_source_failure_only_alerts_outside_dry_run(monkeypatch, job, fetcher, d
     response = main.handler({"job": job, "dry_run": dry_run}, None)
 
     assert response["statusCode"] == 502
-    assert len(alerts) == (0 if dry_run or job == "results" else 1)
+    assert len(alerts) == (0 if dry_run or job in {"results", "digest"} else 1)
 
 
 def test_result_source_alert_waits_for_consecutive_failures(monkeypatch):

@@ -27,6 +27,7 @@ from .config import (
 )
 from .analytics import record_manual_post_metrics, record_post, record_subscriber_snapshot
 from .publication_admin import publication_allowed, record_publication
+from .digest_retry import DigestAttempt, DigestRetryQueue, MAX_ATTEMPTS as DIGEST_MAX_ATTEMPTS
 from .instagram_publish import (
     InstagramDeliveryUncertainError,
     InstagramPublishError,
@@ -318,6 +319,13 @@ def _pending_publication_type(content_type: str) -> str:
 def _delivery_is_current(destination_id: str, content_type: str, generation: int = 0) -> bool:
     allowed, current_generation = publication_delivery_allowed(destination_id, _pending_publication_type(content_type))
     return allowed and generation >= current_generation
+
+
+def _daily_delivery_is_current(destination_id: str, job: str,
+                               generations: dict[str, int] | None = None) -> bool:
+    if generations is None:
+        return _delivery_is_current(destination_id, job)
+    return destination_id in generations and _delivery_is_current(destination_id, job, generations[destination_id])
 
 
 def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
@@ -1809,6 +1817,7 @@ def _deliver_instagram_content(
     caption: str,
     context: Any,
     test_run_id: str | None,
+    generations: dict[str, int] | None = None,
 ) -> tuple[int, int, int]:
     """Deliver one daily Instagram issue without coupling it to Telegram state.
 
@@ -1816,7 +1825,7 @@ def _deliver_instagram_content(
     marker, matching Telegram's crash-safe protocol.  Network ambiguity retains
     the claim and intentionally disables automatic retry to avoid a duplicate.
     """
-    if not _delivery_is_current("instagram", job):
+    if not _daily_delivery_is_current("instagram", job, generations):
         log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination="instagram", publication_type=job)
         return 0, 0, 0
     if not instagram_publishing_enabled():
@@ -1835,6 +1844,9 @@ def _deliver_instagram_content(
         claim = asyncio.run(claim_content_delivery(content_uid))
         if claim is None:
             return 0, 1, 0
+        if not _daily_delivery_is_current("instagram", job, generations):
+            asyncio.run(release_delivery_claim(claim))
+            return 0, 0, 0
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         publish_rendered_cards(content_uid, cards, _instagram_caption(caption), context)
         confirmed = True
@@ -1908,6 +1920,9 @@ def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
             if match.source == "liquipedia" and can_render_final_card(match)
             else render_result_card(match)
         )
+        if not _delivery_is_current("instagram", "results", pending.generation):
+            asyncio.run(release_delivery_claim(claim))
+            return "held"
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         publish_rendered_cards(
             f"instagram_result_{safe_storage_part(match.match_uid)}",
@@ -1936,19 +1951,39 @@ def _deliver_instagram_result(pending: PendingDelivery, context: Any) -> str:
         log_event(logger, logging.ERROR, "instagram_delivery_uncertain", job="results", error_type=type(exc).__name__)
         return "uncertain"
     except Exception as exc:
+        if confirmed:
+            try:
+                asyncio.run(record_result_delivery_attempt(pending))
+            except Exception:
+                pass
+            log_event(logger, logging.ERROR, "instagram_confirmation_state_failed", match_uid=match.match_uid,
+                      error_type=type(exc).__name__)
+            _notify_admin("instagram_confirmation_state_failed",
+                          "Instagram подтвердил публикацию, но не удалось сохранить её состояние; "
+                          "автоматическая повторная отправка заблокирована. Проверьте логи.")
+            return "failed"
         if claim is not None and not confirmed:
             try:
                 asyncio.run(release_delivery_claim(claim))
-            except Exception:
-                pass
+            except Exception as state_exc:
+                log_event(logger, logging.ERROR, "instagram_retry_state_failed", match_uid=match.match_uid,
+                          error_type=type(state_exc).__name__)
+                _notify_admin("instagram_retry_state_failed",
+                              "Не удалось освободить состояние безопасного повтора Instagram; проверьте логи.")
+                return "failed"
         try:
-            asyncio.run(record_result_delivery_attempt(pending))
-        except Exception:
-            pass
-        _notify_admin(
-            "instagram_result_publish_failed",
-            f"Instagram не опубликовал результат {match.match_uid}; очередь повторит попытку.",
-        )
+            updated = asyncio.run(record_result_delivery_attempt(pending))
+            attempts = updated.attempt_count if updated is not None else pending.attempt_count + 1
+            if attempts >= 3:
+                _notify_admin(
+                    f"instagram_result_publish_failed_{match.match_uid}",
+                    f"Instagram не опубликовал результат {match.match_uid} после {attempts} попыток; "
+                    "очередь продолжит безопасные повторы. Проверьте логи.",
+                )
+        except Exception as state_exc:
+            log_event(logger, logging.ERROR, "instagram_retry_state_failed", match_uid=match.match_uid,
+                      error_type=type(state_exc).__name__)
+            _notify_admin("instagram_retry_state_failed", "Не удалось сохранить состояние повторов Instagram; проверьте логи.")
         log_event(
             logger,
             logging.ERROR,
@@ -2162,9 +2197,10 @@ def _deliver_threads_content(
     context: Any,
     test_run_id: str | None,
     tournament_key: str | None = None,
+    generations: dict[str, int] | None = None,
 ) -> tuple[int, int, int]:
     """Deliver a daily Threads issue independently from Telegram and Instagram."""
-    if not _delivery_is_current("threads", job):
+    if not _daily_delivery_is_current("threads", job, generations):
         log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination="threads", publication_type=job)
         return 0, 0, 0
     if not threads_publishing_enabled():
@@ -2185,6 +2221,9 @@ def _deliver_threads_content(
         claim = asyncio.run(claim_content_delivery(content_uid))
         if claim is None:
             return 0, 1, 0
+        if not _daily_delivery_is_current("threads", job, generations):
+            asyncio.run(release_delivery_claim(claim))
+            return 0, 0, 0
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         _publish_threads_chain(
             tournament_key or f"threads:daily:{job}:{day_key}",
@@ -2482,8 +2521,24 @@ def _handle_content_job(
     test_run_id: str | None = None,
     include_filtered: bool = False,
     days_ahead: int = 1,
+    digest_attempt: DigestAttempt | None = None,
 ) -> Dict[str, Any]:
     start, end, local_now = _local_day_window(days_ahead=days_ahead)
+    generations: dict[str, int] | None = None
+    if job == "digest" and not dry_run:
+        if digest_attempt is not None:
+            start = datetime.fromisoformat(digest_attempt.payload["window_start"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(digest_attempt.payload["window_end"].replace("Z", "+00:00"))
+            local_now = datetime.fromisoformat(digest_attempt.payload["display_at"])
+            generations = digest_attempt.payload["generations"]
+        else:
+            destinations = {str(channel.get("id", channel["name"])) for channel in _iter_channels()}
+            destinations.update({"instagram", "threads"})
+            generations = {}
+            for destination in destinations:
+                allowed, generation = publication_delivery_allowed(destination, job)
+                if allowed:
+                    generations[destination] = generation
     schedule_context_text = ""
     schedule_context_messages: list[str] = []
     schedule_contexts: dict[str, ScheduleMatchContext] = {}
@@ -2523,8 +2578,34 @@ def _handle_content_job(
             error=_safe_error_message(exc),
         )
         if not dry_run:
-            _notify_admin(f"{job}_source_unavailable", f"Не удалось подготовить выпуск «{job}».")
+            if job == "digest":
+                try:
+                    queue = DigestRetryQueue()
+                    if digest_attempt is None:
+                        queue.enqueue_failure(start=start, end=end, display_at=local_now, generations=generations or {})
+                    else:
+                        failed = queue.finish(digest_attempt, prepared=False)
+                        if failed is not None and failed.payload["status"] == "exhausted":
+                            _notify_admin(f"digest_preparation_exhausted_{failed.day_key}",
+                                          f"Итог дня за {failed.day_key} не подготовлен после {DIGEST_MAX_ATTEMPTS} попыток. "
+                                          f"{_source_failure_summary('pandascore', exc)}. Автоматические повторы завершены.")
+                except Exception as state_exc:
+                    log_event(logger, logging.ERROR, "digest_retry_state_failed", error_type=type(state_exc).__name__)
+                    _notify_admin("digest_retry_state_failed", "Не удалось сохранить очередь подготовки итога дня; проверьте логи.")
+            else:
+                _notify_admin(f"{job}_source_unavailable", f"Не удалось подготовить выпуск «{job}».")
         return _error_response(502, "match_source_unavailable")
+
+    if digest_attempt is not None:
+        # Close preparation before any external send; delivery claims remain the authority.
+        # A stale worker that lost its lease cannot publish a prepared edition.
+        try:
+            if DigestRetryQueue().finish(digest_attempt, prepared=True) is None:
+                return _error_response(409, "digest_retry_lease_lost")
+        except Exception as exc:
+            log_event(logger, logging.ERROR, "digest_retry_state_failed", error_type=type(exc).__name__)
+            _notify_admin("digest_retry_state_failed", "Не удалось подтвердить состояние подготовки итога дня; отправка остановлена.")
+            return _error_response(503, "digest_retry_state_unavailable")
 
     if not text:
         body = {
@@ -2635,7 +2716,7 @@ def _handle_content_job(
             sent += 1
             continue
         channel_id = str(channel.get("id") or channel.get("name", "unknown"))
-        if not _delivery_is_current(channel_id, job):
+        if not _daily_delivery_is_current(channel_id, job, generations):
             log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination=channel_id, publication_type=job)
             continue
         content_uid = f"{job}_{day_key}_{channel_id}"
@@ -2650,6 +2731,9 @@ def _handle_content_job(
             claim = asyncio.run(claim_content_delivery(content_uid))
             if claim is None:
                 duplicates += 1
+                continue
+            if not _daily_delivery_is_current(channel_id, job, generations):
+                asyncio.run(release_delivery_claim(claim))
                 continue
             claim = asyncio.run(mark_delivery_claim_attempting(claim))
             if telegram_media_cards:
@@ -2767,6 +2851,7 @@ def _handle_content_job(
             caption=text,
             context=None,
             test_run_id=test_run_id,
+            generations=generations,
         )
 
     threads_sent = 0
@@ -2786,6 +2871,7 @@ def _handle_content_job(
             s, d, f = _deliver_threads_content(
                 job=job, day_key=day_key, cards=cards, caption=caption,
                 context=None, test_run_id=test_run_id, tournament_key=tournament_key,
+                generations=generations,
             )
             threads_sent += s
             threads_duplicates += d
@@ -3204,6 +3290,39 @@ def _retry_reel_worker(context: Any) -> dict[str, str]:
     return states
 
 
+def _retry_digest_worker(handler_started_at: float) -> str | None:
+    """Keep the bounded digest worker available even with no result work."""
+    digest_retry_state: str | None = None
+    if _monotonic() - handler_started_at < RESULT_DELIVERY_START_BUDGET_SECONDS - 45:
+        try:
+            attempt = DigestRetryQueue().claim_due()
+            if attempt is not None:
+                if attempt.payload["status"] == "exhausted":
+                    _notify_admin(f"digest_preparation_exhausted_{attempt.day_key}",
+                                  f"Итог дня за {attempt.day_key}: срок или лимит подготовки исчерпан; "
+                                  "подготовка не подтверждена. Автоматические повторы завершены.")
+                    digest_retry_state = "exhausted"
+                elif not PANDASCORE_API_TOKEN:
+                    DigestRetryQueue().finish(attempt, prepared=False)
+                    _notify_admin("digest_retry_configuration", "Повтор подготовки итога дня заблокирован: источник не настроен.")
+                    digest_retry_state = "configuration_error"
+                else:
+                    result = _handle_content_job("digest", False, digest_attempt=attempt)
+                    digest_body = json.loads(result["body"])
+                    digest_retry_state = "failed" if "error" in digest_body else "prepared"
+                    log_event(logger, logging.INFO, "digest_retry_complete", job="digest", day_key=attempt.day_key,
+                              attempts=attempt.payload["attempts"], status_code=result["statusCode"],
+                              messages_sent=digest_body.get("messages_sent", 0),
+                              instagram_messages_sent=digest_body.get("instagram_messages_sent", 0),
+                              threads_messages_sent=digest_body.get("threads_messages_sent", 0))
+        except Exception as exc:
+            log_event(logger, logging.ERROR, "digest_retry_worker_failed", error_type=type(exc).__name__)
+            _notify_admin("digest_retry_worker_failed", "Не удалось проверить очередь подготовки итога дня; проверьте логи.")
+            digest_retry_state = "state_error"
+
+    return digest_retry_state
+
+
 def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     """Yandex Cloud Functions entry point."""
 
@@ -3392,16 +3511,21 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             _notify_admin("result_outbox_unavailable", "Не удалось прочитать очередь доставки; повтор будет выполнен автоматически.")
             return _error_response(502, "result_outbox_unavailable")
         if not retry_targets:
+            reel_failed = False
             try:
                 reel_states = _retry_reel_worker(context)
             except (InstagramPublishError, StorageUnavailableError):
+                reel_states = {}
+                reel_failed = True
+            digest_retry_state = _retry_digest_worker(handler_started_at)
+            if reel_failed:
                 return _error_response(502, "schedule_reel_worker_unavailable")
             channels = {str(channel.get("name", "unknown")): 0 for channel in _iter_channels()}
             metrics = {
                 "matches_received": 0, "tier1_lan_unconfirmed": 0, "messages_sent": 0,
                 "duplicates_skipped": 0, "filtered_skipped": 0, "delivery_failures": 0,
                 "delivery_held": 0, "retry_only": True,
-                "reel_worker_states": reel_states, "channels": channels,
+                "reel_worker_states": reel_states, "digest_retry_state": digest_retry_state, "channels": channels,
             }
             log_event(logger, logging.INFO, "retry_result_outbox_empty", elapsed_seconds=round(_monotonic() - handler_started_at, 3))
             log_event(logger, logging.INFO, "handler_complete", **metrics)
@@ -3486,6 +3610,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     skipped_filtered = 0
     sent_messages = 0
     failed_messages = 0
+    instagram_result_failures = 0
     held_messages = 0
     channels = list(_iter_channels())
     channels_by_id: dict[str, dict[str, Any]] = {}
@@ -3802,8 +3927,12 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 sent_messages += 1
             elif outcome in {"duplicate", "reconciled"}:
                 skipped_duplicates += 1
+            elif outcome == "held":
+                held_messages += 1
             else:
                 failed_messages += 1
+                # This delivery has its own delayed/uncertain alert. Do not duplicate it.
+                instagram_result_failures += 1
             continue
 
         if channel.get("platform") == "threads":
@@ -4136,6 +4265,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         except (InstagramPublishError, StorageUnavailableError):
             pass  # The worker already logged/notified; keep result delivery metrics.
 
+    digest_retry_state = _retry_digest_worker(handler_started_at) if retry_only else None
+
     metrics = {
         "matches_received": len(matches),
         "tier1_lan_unconfirmed": len(unconfirmed_tier1),
@@ -4146,13 +4277,14 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "delivery_held": held_messages,
         "retry_only": retry_only,
         "reel_worker_states": reel_worker_states,
+        "digest_retry_state": digest_retry_state,
         "channels": channel_stats,
     }
     log_event(logger, logging.INFO, "handler_complete", **metrics)
-    if failed_messages:
+    if failed_messages > instagram_result_failures:
         _notify_admin(
             "delivery_failed",
-            f"Не доставлено сообщений: {failed_messages}. Проверьте логи функции.",
+            f"Не доставлено сообщений: {failed_messages - instagram_result_failures}. Проверьте логи функции.",
         )
     body = {
         "requested_limit": limit,
