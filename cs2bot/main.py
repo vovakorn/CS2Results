@@ -46,6 +46,7 @@ from .threads_publish import (
     threads_publishing_enabled,
 )
 from .logging_utils import log_event
+from .tournament_preview import load_profiles
 from .tournament_preview_job import run_preview_job
 from .tournament_identity import event_for_match, event_key, find_event
 from .tournament_visuals import branding_for_match
@@ -257,7 +258,7 @@ RUSSIAN_MONTHS = (
     "декабря",
 )
 CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics",
-                "tournament_preview", "preview_discovery"}
+                "tournament_preview", "preview_discovery", "tournament_recovery"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -3342,6 +3343,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     tournament_id: str | None = None
     tournament_name = "Турнир"
     preview_key: str | None = None
+    recovery_profile_key: str | None = None
+    recovery_start: datetime | None = None
+    recovery_end: datetime | None = None
     radar_card_variant = "auto"
     try:
         event = _unwrap_timer_event(event)
@@ -3354,6 +3358,24 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 preview_key = event.get("preview_key")
                 if not isinstance(preview_key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", preview_key):
                     raise ValueError("preview_key is required")
+            if job == "tournament_recovery":
+                requested_profile_key = event.get("recovery_profile_key")
+                if not isinstance(requested_profile_key, str) or not re.fullmatch(
+                    r"[a-z0-9][a-z0-9_-]{0,99}", requested_profile_key
+                ):
+                    raise ValueError("recovery_profile_key is required")
+                profile = next(
+                    (item for item in load_profiles(TOURNAMENT_PREVIEW_PROFILES_PATH)
+                     if item.key == requested_profile_key),
+                    None,
+                )
+                if profile is None or not profile.approved:
+                    raise ValueError("recovery profile is not approved")
+                recovery_profile_key = profile.key
+                local_zone = ZoneInfo(DISPLAY_TIMEZONE)
+                recovery_day = max(stage.end for stage in profile.stages)
+                recovery_start = datetime.combine(recovery_day, datetime_time.min, tzinfo=local_zone)
+                recovery_end = recovery_start + timedelta(days=1)
             requested_test_run_id = event.get("test_run_id")
             if requested_test_run_id is not None:
                 if job not in {"schedule", "radar"}:
@@ -3386,6 +3408,10 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             if isinstance(requested, int) and not isinstance(requested, bool):
                 limit = max(MIN_MATCHES, min(MAX_MATCHES, requested))
             source = _parse_source(event.get("source"))
+            if job == "tournament_recovery":
+                if event.get("source") not in {None, "pandascore"}:
+                    raise ValueError("tournament recovery requires PandaScore")
+                source = "pandascore"
             mode = _parse_mode(event.get("mode"))
             dry_run = _parse_bool(event.get("dry_run"), default=False)
             render_probe = _parse_bool(event.get("render_probe"), default=False)
@@ -3499,6 +3525,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         mode=mode,
         dry_run=dry_run,
         retry_only=retry_only,
+        recovery_profile_key=recovery_profile_key,
     )
     rejected_matches: List[MatchNormalized] = []
     shadow_diagnostics: Dict[str, int] = {}
@@ -3548,6 +3575,8 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                     check_processed=False,
                     rejected_matches=rejected_matches,
                     shadow_diagnostics=shadow_diagnostics,
+                    start=recovery_start,
+                    end=recovery_end,
                 )
             )
         except Exception as exc:
@@ -3641,6 +3670,11 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         if not isinstance(match, MatchNormalized):
             skipped_filtered += 1
             continue
+        if recovery_profile_key is not None:
+            profile = event_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH)
+            if profile is None or profile.key != recovery_profile_key:
+                skipped_filtered += 1
+                continue
         if not match.is_tier1_lan and not include_filtered:
             skipped_filtered += 1
             continue
@@ -4287,6 +4321,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             f"Не доставлено сообщений: {failed_messages - instagram_result_failures}. Проверьте логи функции.",
         )
     body = {
+        "job": job,
         "requested_limit": limit,
         "matches_received": len(matches),
         "tier1_lan_unconfirmed": len(unconfirmed_tier1),
@@ -4302,6 +4337,12 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         "mode": mode,
         "source": source,
     }
+    if recovery_profile_key is not None:
+        body.update({
+            "recovery_profile_key": recovery_profile_key,
+            "recovery_window_start": recovery_start.isoformat() if recovery_start else None,
+            "recovery_window_end": recovery_end.isoformat() if recovery_end else None,
+        })
     if dry_run:
         diagnostic_matches: List[MatchNormalized] = []
         seen_match_uids: set[str] = set()

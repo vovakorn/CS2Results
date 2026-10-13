@@ -795,6 +795,35 @@ def test_configured_online_tier1_stage_enters_public_output(monkeypatch):
     assert diagnostics == []
 
 
+def test_historical_pandascore_window_keeps_confirmed_old_match(monkeypatch):
+    selected = _match(match_id="historical")
+    selected.end_date = "2026-10-11T18:00:00Z"
+    captured = {}
+
+    async def fake_fetch(source, limit, *, start=None, end=None):
+        captured.update({"source": source, "start": start, "end": end})
+        return [selected]
+
+    async def no_shadow(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(match_fetcher, "_fetch_from_source", fake_fetch)
+    monkeypatch.setattr(match_fetcher, "_run_liquipedia_shadow", no_shadow)
+
+    matches = asyncio.run(match_fetcher.get_new_finished_matches(
+        source="pandascore",
+        dry_run=False,
+        check_processed=False,
+        start=datetime(2026, 10, 11, tzinfo=timezone.utc),
+        end=datetime(2026, 10, 12, tzinfo=timezone.utc),
+    ))
+
+    assert matches == [selected]
+    assert captured["source"] == "pandascore"
+    assert captured["start"] == datetime(2026, 10, 11, tzinfo=timezone.utc)
+    assert captured["end"] == datetime(2026, 10, 12, tzinfo=timezone.utc)
+
+
 def test_log_source_freshness_warns_when_latest_match_is_stale(monkeypatch, caplog):
     monkeypatch.setattr(match_fetcher.source_config, "MAX_SOURCE_STALENESS_HOURS", 48)
     match = _match()

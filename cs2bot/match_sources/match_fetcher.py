@@ -494,11 +494,19 @@ async def _run_liquipedia_shadow(
         return None
 
 
-async def _fetch_from_source(source: ConcreteSourceName, limit: int) -> list[MatchNormalized]:
+async def _fetch_from_source(
+    source: ConcreteSourceName,
+    limit: int,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> list[MatchNormalized]:
     if source == "pandascore":
         from .sources import pandascore_source
 
-        return await pandascore_source.fetch_finished_matches(limit=limit)
+        return await pandascore_source.fetch_finished_matches(limit=limit, start=start, end=end)
+    if start is not None or end is not None:
+        raise ValueError("Liquipedia does not support a bounded historical match query")
     from .sources import liquipedia_source
 
     return await liquipedia_source.fetch_finished_matches(limit=limit)
@@ -527,9 +535,17 @@ async def _choose_source(
     source: SourceName,
     limit: int,
     require_fresh: bool = True,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> tuple[str, list[MatchNormalized]]:
+    async def fetch(candidate: ConcreteSourceName) -> list[MatchNormalized]:
+        if start is None and end is None:
+            return await _fetch_from_source(candidate, limit)
+        return await _fetch_from_source(candidate, limit, start=start, end=end)
+
     if source in {"pandascore", "liquipedia"}:
-        matches = await _fetch_from_source(source, limit)
+        matches = await fetch(source)
         logger.info("source=%s fetched=%s", source, len(matches))
         usable, reason = _source_is_usable(source, matches, require_fresh=require_fresh)
         if not usable and (require_fresh or reason != "empty"):
@@ -538,7 +554,7 @@ async def _choose_source(
 
     primary_error: str | None = None
     try:
-        matches = await _fetch_from_source("pandascore", limit)
+        matches = await fetch("pandascore")
         logger.info("source=pandascore fetched=%s", len(matches))
         usable, reason = _source_is_usable("pandascore", matches, require_fresh=require_fresh)
         if usable:
@@ -715,18 +731,28 @@ async def get_new_finished_matches(
     check_processed: bool = True,
     rejected_matches: list[MatchNormalized] | None = None,
     shadow_diagnostics: dict[str, int] | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
 ) -> list[MatchNormalized]:
     selected_source = source or source_config.MATCH_SOURCE
     if selected_source not in {"auto", "pandascore", "liquipedia"}:
         raise ValueError("--source must be auto, pandascore, or liquipedia")
 
-    logger.info("match_fetcher start source=%s limit=%s dry_run=%s", selected_source, limit, dry_run)
+    if (start is None) != (end is None):
+        raise ValueError("historical match query requires both start and end")
+    if start is not None and end is not None and end <= start:
+        raise ValueError("historical match query has invalid range")
+    if (start is not None or end is not None) and selected_source != "pandascore":
+        raise ValueError("historical match query requires PandaScore")
+    logger.info("match_fetcher start source=%s limit=%s dry_run=%s historical=%s", selected_source, limit, dry_run, start is not None)
     fetch_limit = min(max(limit * 3, limit), 100)
-    require_fresh = not (dry_run and source_config.ALLOW_STALE_IN_DRY_RUN)
+    require_fresh = start is None and not (dry_run and source_config.ALLOW_STALE_IN_DRY_RUN)
     used_source, fetched = await _choose_source(
         selected_source,
         fetch_limit,
         require_fresh=require_fresh,
+        start=start,
+        end=end,
     )
     if used_source == "pandascore":
         shadow_due = bool(source_config.ENABLE_LIQUIPEDIA_SHADOW and source_config.LIQUIPEDIA_API_KEY)
