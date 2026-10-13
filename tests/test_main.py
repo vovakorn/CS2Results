@@ -1850,6 +1850,30 @@ def test_unknown_source_is_rejected_before_fetch(monkeypatch):
     assert called is False
 
 
+def test_tournament_recovery_uses_approved_profile_final_day_window(monkeypatch):
+    captured = {}
+
+    async def fake_get_new_finished_matches(**kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
+
+    response = main.handler({
+        "job": "tournament_recovery",
+        "recovery_profile_key": "esl-pro-league-season-24-2026",
+        "dry_run": True,
+    }, None)
+    body = json.loads(response["body"])
+
+    assert response["statusCode"] == 200
+    assert captured["source"] == "pandascore"
+    assert captured["start"].isoformat() == "2026-10-11T00:00:00+03:00"
+    assert captured["end"].isoformat() == "2026-10-12T00:00:00+03:00"
+    assert body["job"] == "tournament_recovery"
+    assert body["recovery_profile_key"] == "esl-pro-league-season-24-2026"
+
+
 def test_schedule_is_formatted_in_moscow_time():
     local_now = main.datetime.fromisoformat("2026-07-30T10:00:00+03:00")
 
