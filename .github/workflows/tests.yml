@@ -46,3 +46,24 @@ jobs:
 
       - name: Build platform-independent function archive
         run: scripts/build_function_zip.sh
+
+  vrs_reels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+      - name: Install isolated VRS dependencies
+        working-directory: video/vrs-major-race/cloud
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test source boundaries, animation and private artifact delivery
+        working-directory: video/vrs-major-race/cloud
+        run: node --test ../timeline.test.mjs ../data.test.mjs handler.test.mjs
+      - name: Build isolated Linux function
+        run: python3 scripts/build_vrs_major_function.py
+      - name: Render and decode full Americas probe in the packaged Linux runtime
+        run: node video/vrs-major-race/cloud/probe.mjs

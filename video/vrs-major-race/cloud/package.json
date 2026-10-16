@@ -1,0 +1,8 @@
+{
+  "name": "cs2-vrs-major-cloud",
+  "private": true,
+  "type": "module",
+  "scripts": {"test":"node --test ../*.test.mjs *.test.mjs"},
+  "dependencies": {"@napi-rs/canvas":"0.1.100","@aws-sdk/client-s3":"3.1152.0"},
+  "devDependencies": {"esbuild":"0.28.2"}
+}
