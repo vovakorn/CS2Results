@@ -1,0 +1,19 @@
+{
+  "label": "Road to Major: original tactical orchestral theme, 133.33 BPM",
+  "variant": "cs2-theme",
+  "reference": {
+    "artist": "Valve Studio Orchestra",
+    "track": "Counter-Strike 2",
+    "url": "https://store.steampowered.com/app/2678630/CounterStrike_2_Soundtrack/",
+    "usage": "Mood and instrumentation reference; original melody and arrangement; no reference recording used"
+  },
+  "tempo": 133.333333,
+  "duration": 32.4,
+  "rate": 48000,
+  "channels": 2,
+  "source": "Original score rendered with macOS General MIDI orchestral samples; original synthesized drums and bass; no CS2 audio samples",
+  "arrangement": "Low string ostinato, French horn theme, brass accents, marching snare, electronic bass; reveal build at 27.0s and final D chord at 30.6s",
+  "sha256": "26cb14efdd88ae891715b88718ec0becc8cb6636d990d5db45fb246fcc25843f",
+  "loudnessTargetLufs": -14,
+  "truePeakTargetDb": -2
+}

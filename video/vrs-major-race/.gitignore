@@ -1,0 +1,5 @@
+node_modules/
+public/
+bundle/
+__pycache__/
+*.pyc
