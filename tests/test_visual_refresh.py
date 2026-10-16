@@ -74,8 +74,9 @@ def test_mixed_tournament_page_keeps_channel_palette():
 
 
 def test_context_replaces_illustration_and_retains_later_available_event_logo(monkeypatch):
-    first = event_match().model_copy(update={"source_refs": None})
-    second = event_match(1).model_copy(update={"source_refs": None, "tournament_logo_url": "preview://event"})
+    first = event_match().model_copy(update={"source_refs": None,
+        "tournament_name": "Unknown Cup", "competition_key": "Unknown Cup"})
+    second = first.model_copy(update={"match_id": "1", "tournament_logo_url": "preview://event"})
     assert m._schedule_tournament_header([first, second])[1] == "preview://event"
     loaded = []
     monkeypatch.setattr(m, "fetch_team_logo",

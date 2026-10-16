@@ -184,25 +184,23 @@ def _draw_day_intro(image, draw, fixtures, count, tz, accent, logo_deadline):
 
 
 def _resolve_reel_visuals(matches, logo_deadline=None):
-    """Resolve exact event IDs once; local marks precede bounded provider URLs."""
+    """Resolve visual groups once; editorial profiles are optional."""
     grouped, keys, profiles = {}, {}, {}
     for match in matches:
         try:
             profile = event_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH)
         except (OSError, ValueError):
             profile = None
-        # Without an exact profile, a shared city/competition label is not enough
-        # to borrow another event's logo.
-        key = (f"event:{profile.key}" if profile else
-               ("source", match.tournament_name, match.competition_key))
+        key = tournament_visuals.visual_group_key(match, profile)
         grouped.setdefault(key, []).append(match)
         keys[match.match_id] = key
         profiles[key] = profile
     visuals = {}
     for key, fixtures in grouped.items():
         profile = profiles[key]
-        branding = profile.branding if profile else None
-        name = (media_cards._schedule_tournament_header(fixtures)[0] if profile
+        branding = (profile.branding if profile else
+                    tournament_visuals.branding_for_matches(fixtures, TOURNAMENT_PREVIEW_PROFILES_PATH))
+        name = (media_cards._schedule_tournament_header(fixtures)[0] if branding
                 else fixtures[0].tournament_name)
         logo = tournament_visuals.event_logo(branding, media_cards.ASSET_DIR) if branding else None
         if logo is None:
@@ -218,7 +216,9 @@ def _resolve_reel_visuals(matches, logo_deadline=None):
                 if logo is not None:
                     break
         visuals[key] = ReelTournamentVisual(name, branding, logo)
-    shared = next(iter(visuals.values())) if len(visuals) == 1 and all(profiles.values()) else None
+    shared = next(iter(visuals.values())) if len(visuals) == 1 else None
+    if shared is not None and shared.branding is None:
+        shared = None
     return ReelVisualContext(shared, {match_id: visuals[key] for match_id, key in keys.items()})
 
 
@@ -291,11 +291,16 @@ def _ellipsis(draw: ImageDraw.ImageDraw, value: str, font: ImageFont.FreeTypeFon
 
 
 def _base(visual=None) -> Image.Image:
-    image = Image.new("RGBA", REEL_SIZE, (*NAVY, 255))
+    if visual and visual.branding and visual.branding.background:
+        from .tournament_theme_patterns import preview_background
+        image = preview_background(REEL_SIZE, visual.branding, frame=False, header=False)
+    else:
+        image = Image.new("RGBA", REEL_SIZE, (*NAVY, 255))
+        draw = ImageDraw.Draw(image, "RGBA")
+        for y in range(REEL_SIZE[1]):
+            blend = y / REEL_SIZE[1]
+            draw.line((0, y, REEL_SIZE[0], y), fill=(7 + int(7 * blend), 17 + int(13 * blend), 32 + int(18 * blend), 255))
     draw = ImageDraw.Draw(image, "RGBA")
-    for y in range(REEL_SIZE[1]):
-        blend = y / REEL_SIZE[1]
-        draw.line((0, y, REEL_SIZE[0], y), fill=(7 + int(7 * blend), 17 + int(13 * blend), 32 + int(18 * blend), 255))
     accent = visual.accent if visual else CYAN
     if visual:
         tournament_visuals.add_event_glow(image, accent)
