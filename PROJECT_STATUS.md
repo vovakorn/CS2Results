@@ -1,27 +1,47 @@
 # CS2 Results Bot — production-состояние
 
-Обновлено: 12 октября 2026 года; оптимизации в main через PR #152.
-Production-deploy не выполнен из-за недоступности API Yandex Cloud.
-Последний подтверждённый production-снимок — релиз 6 октября, проверенный 9 октября.
+Обновлено: 16 октября 2026 года; отдельная VRS Major-функция выпущена.
+Основной бот остаётся на релизе 6 октября, повторно проверенном 16 октября.
+Изменения PR #152 в основную функцию ещё не развёрнуты.
 
 Этот файл содержит подробный operational snapshot. Для обычной задачи достаточно
 `PROJECT_CONTEXT.md`; этот документ нужен для релиза, инфраструктуры, диагностики
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## VRS Major Reels — подготовка релиза, 16 октября 2026
+## VRS Major Reels — production-релиз, 16 октября 2026
 
-Локально: 916 Python-тестов и 19 Node-тестов прошли; pip check,
-Python/Node dependency audit и diff check успешны. Полный переносимый Americas
-декодирован: 1 944 кадра, 60 fps; пик AAC −1,3 dB; детектор не обнаружил
-пропаданий линий, движущихся логотипов или таблицы. Linux CI и cloud smoke
-выполняются следующими этапами.
-
-Отдельная приватная Node.js-функция для истории Liquipedia и трёх региональных
-Reel подготовлена к PR/CI/candidate/promote. Production ещё не подтверждён.
-Основной Python-бот остаётся на `d4e1h9gp5jfu1d733gbb`; preflight 16 октября
-подтвердил доступность Cloud Functions, закреплённые ссылки Lockbox и восемь
-сохранённых таймеров. В этом релизе они не меняются. [Эксплуатация](docs/vrs-major-reels.md).
+- [PR #154](https://github.com/vovakorn/CS2Results/pull/154), release Git
+  `702bacf18058011ba084d39b548cb166a7316a4d`. Отдельная приватная функция
+  `cs2-vrs-major-reels` / `d4e8n07roso4762pf1h4`, runtime Node.js 22,
+  1024 MB, 600 s, concurrency 1. Production и candidate:
+  `d4eq6vn8mn1kmb724c9o`. Это первый релиз функции; предыдущей версии для
+  rollback нет, при неуспехе smoke production-тег удаляется.
+- Локально прошли 916 Python-тестов, 19 Node-тестов, pip check,
+  Python/Node dependency audit и diff check. CI Python 3.11/3.12 и Linux
+  `vrs_reels` успешен; последний собрал пакет и полностью проверил Americas.
+  Linux-архив — 50 267 804 байта, SHA-256
+  `079c3f81a96642340d20ba312cc36365393d15e1a09971143d45648fe66be182`.
+- Candidate полностью создал Europe / Americas / Asia из одного сохранённого
+  ответа Liquipedia. Все MP4, данные, подписи, previews и manifest сохранены
+  приватно; скачанные видео совпали по SHA-256. Декодированы 5 832 кадра,
+  1080 × 1920 / 60 fps / 32,4 s, пик AAC −0,7 dB. Пиксельная проверка
+  каждого ролика не обнаружила пропаданий линий, логотипов или таблицы;
+  previews всех регионов просмотрены. Облачный рендер занял 127 / 107 / 90 s.
+- Production-тег проверен; live-source smoke вернул HTTP 200, `dry_run=true`.
+  Чтение startup-логов через Cloud Functions и Logging возвращало `Unavailable`.
+  Пользователь явно разрешил исключение только для этого релиза после проверки
+  трёх роликов; отсутствие ошибок в недоступных журналах не подтверждается.
+  Последний client-request-id: `7148e9c3-3fb5-400b-9617-b85a3af28477`.
+- Основной бот остался на `d4e1h9gp5jfu1d733gbb`; восемь таймеров и IAM
+  сохранены. Новых таймеров и социальных публикаций нет. Только три pinned
+  Lockbox references, без Telegram/Meta credentials. Последний рейтинг API —
+  5 октября, 15 дат от 22 июня: Europe 23, Americas 12, Asia 9 (646 наблюдений).
+- Release manifest: `dist/vrs-releases/d4eq6vn8mn1kmb724c9o.json`,
+  статус `promoted`. Проверка хранения:
+  `dist/vrs-releases/d4eq6vn8mn1kmb724c9o-validation/validation.json`.
+  Приватный архив источника и каждый результат адресуются по контрольным суммам.
+  [Эксплуатация и ограничения](docs/vrs-major-reels.md).
 
 ## Снижение расходов — 9 октября 2026
 
