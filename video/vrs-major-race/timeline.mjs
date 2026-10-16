@@ -33,7 +33,9 @@ const prepare = (data) => {
   if (prepared.has(data)) return prepared.get(data);
   const first = Date.parse(`${data.snapshots[0].date}T00:00:00Z`);
   const days = data.snapshots.map((s) => (Date.parse(`${s.date}T00:00:00Z`)-first)/86400000);
-  const ranks = data.snapshots.map((s) => positions(s,data.names));
+  const rankMax = data.rankMode==='absolute' ? Math.max(...data.snapshots.flatMap(s=>s.rows.map(r=>r.rank))) : data.names.length;
+  const ranks = data.snapshots.map((s) => data.rankMode==='absolute' ?
+    Object.fromEntries(data.names.map(name=>[name,s.rows.find(r=>key(r.name)===key(name))?.rank??rankMax+1])) : positions(s,data.names));
   const rows = data.snapshots.map((s) => new Map(s.rows.map((r)=>[key(r.name),r])));
   const row = (index,name) => rows[index]?.get(key(name));
   const cores = {};
@@ -45,7 +47,7 @@ const prepare = (data) => {
       return `${name}:${segment}`;
     });
   }
-  const result = {days,ranks,row,cores};
+  const result = {days,ranks,row,cores,rankMax};
   prepared.set(data,result);
   return result;
 };
@@ -78,7 +80,7 @@ export const badgePositions = (endpoints, separation, progress) => {
 };
 
 export const geometry = (data, seconds) => {
-  const {days,ranks,row,cores} = prepare(data);
+  const {days,ranks,row,cores,rankMax} = prepare(data);
   const step=stepSeconds(data);
   const progress = Math.min(data.snapshots.length-1,Math.max(0,(seconds-HOLD)/step));
   const i = Math.min(data.snapshots.length-1,Math.floor(progress+1e-8));
@@ -90,7 +92,8 @@ export const geometry = (data, seconds) => {
   const left = Math.max(-7,day-35)*(1-zoom);
   const span = 42*(1-zoom)+days.at(-1)*zoom;
   const x = (d) => 112+544*(d-left)/span;
-  const y = (position) => 444+(position-1)*1130/Math.max(1,data.names.length-1);
+  const y = (position) => 444+(position-1)*1130/Math.max(1,rankMax-1);
+  const rowY = (position) => 444+(position-1)*1130/Math.max(1,data.names.length-1);
   const animatedRanks = Object.fromEntries(data.names.map((name)=>[name,
     ranks[i][name]+(ranks[after][name]-ranks[i][name])*eased]));
   const endpoints = [];
@@ -112,7 +115,7 @@ export const geometry = (data, seconds) => {
   const labelMix = i===0?1:smooth((seconds-HOLD-step*i)/.22);
   const ticks = days.map((_,index)=>index).filter((index)=>index%3===0 || index===days.length-1);
   const tickOpacity = (d) => smooth((x(d)-88)/24)*smooth((680-x(d))/24);
-  return {i,fraction,after,days,day,left,span,x,y,ranks,animatedRanks,row,endpoints,offsets,ticks,tickOpacity,labelMix};
+  return {i,fraction,after,days,day,left,span,x,y,rowY,rankMax,ranks,animatedRanks,row,endpoints,offsets,ticks,tickOpacity,labelMix};
 };
 
 // Exact cubic subcurves retain the same shape as the visible end advances.

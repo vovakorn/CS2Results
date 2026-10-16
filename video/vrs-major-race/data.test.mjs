@@ -33,3 +33,11 @@ test('fetch preserves split UTF-8 and rejects upstream errors without exposing t
  assert.equal((await fetchHistory({apiKey:'secret',through:'2026-10-16',fetchImpl})).result[0].name,'Тест');
  await assert.rejects(fetchHistory({apiKey:'secret',through:'2026-10-16',fetchImpl:async()=>({ok:false})}),e=>!e.message.includes('secret'));
 });
+test('monthly fetch bounds cross-year dates instead of using a fixed 2026 start',async()=>{
+ const result=await fetchHistory({apiKey:'secret',from:'2026-12-24',through:'2027-01-31',fetchImpl:async url=>{
+  assert.match(url.searchParams.get('conditions'),/date::>2026-12-23/);
+  assert.match(url.searchParams.get('conditions'),/date::<2027-02-01/);
+  return {ok:true,body:(async function*(){yield Buffer.from('{"result":[]}');})()};
+ }});
+ assert.deepEqual(result.result,[]);
+});

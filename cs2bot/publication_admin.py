@@ -32,6 +32,7 @@ PUBLICATION_TYPES: dict[str, tuple[str, tuple[str, ...]]] = {
     "tournament_standings": ("Итоги турнира", ("telegram", "instagram", "threads")),
     "tournament_vrs_standings": ("Изменения VRS", ("telegram", "instagram", "threads")),
     "schedule_reel": ("Reel расписания", ("instagram",)),
+    "monthly_vrs_reel": ("VRS по итогам месяца", ("instagram",)),
 }
 
 
