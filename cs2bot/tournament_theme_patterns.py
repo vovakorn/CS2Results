@@ -1,4 +1,4 @@
-"""Deterministic subdued motifs for the approved tournament-preview themes."""
+"""Deterministic subdued motifs shared by tournament cards and Reel scenes."""
 from __future__ import annotations
 
 import math
@@ -16,7 +16,7 @@ def panel_color(branding, fallback):
     return tuple(round(component * .5 + 23 * .5) for component in color(branding.background))
 
 
-def preview_background(size, branding):
+def preview_background(size, branding, *, frame=True, header=True):
     """Scale the approved 600x480 atlas artwork beneath the full-size layout."""
     from . import media_cards as media
 
@@ -78,8 +78,10 @@ def preview_background(size, branding):
     ImageDraw.Draw(glow).ellipse((-45, 100, 70, 235), fill=(*secondary, 20))
     image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(25)).resize(size, Image.Resampling.LANCZOS))
     draw = ImageDraw.Draw(image, "RGBA")
-    draw.rounded_rectangle((34, 34, size[0] - 34, size[1] - 34), radius=42,
-                           outline=(*secondary, 60), width=2)
-    for x0, x1 in media._header_accent_segments(size[0]):
-        draw.line((x0, 90, x1, 90), fill=(*accent, 220), width=8)
+    if frame:
+        draw.rounded_rectangle((34, 34, size[0] - 34, size[1] - 34), radius=42,
+                               outline=(*secondary, 60), width=2)
+    if header:
+        for x0, x1 in media._header_accent_segments(size[0]):
+            draw.line((x0, 90, x1, 90), fill=(*accent, 220), width=8)
     return image

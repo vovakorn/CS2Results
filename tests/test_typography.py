@@ -137,7 +137,8 @@ def test_chronology_uses_instants_when_iso_offsets_differ():
 
 @pytest.mark.parametrize("template", ["schedule", "result", "digest", "radar", "standings", "vrs",
                                       "context", "final", "reel_intro", "reel_matches", "reel_outro"])
-def test_every_template_has_a_centered_emblem_and_readable_name_below_it(monkeypatch, template):
+@pytest.mark.parametrize("branded", [False, True])
+def test_every_template_has_a_centered_emblem_and_correct_header(monkeypatch, template, branded):
     texts, logos = [], []
     original_text = ImageDraw.ImageDraw.text
     original_logo = m._draw_channel_logo
@@ -150,56 +151,75 @@ def test_every_template_has_a_centered_emblem_and_readable_name_below_it(monkeyp
         return original_logo(canvas, draw, center, diameter)
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     monkeypatch.setattr(m, "_draw_channel_logo", capture_logo)
+    name = "BLAST Open Porto 2026" if branded else "Unknown Cup 2026"
+    fixtures = [upcoming(i, tournament_name=name, competition_key=name) for i in range(4)]
+    results = [result(i, tournament_name=name) for i in range(4)]
+    from cs2bot.tournament_visuals import branding_for_match
+    branding = branding_for_match(fixtures[0])
     if template == "schedule":
-        m.render_schedule_card([upcoming(i) for i in range(4)], NOW, "Europe/Moscow")
+        m.render_schedule_card(fixtures, NOW, "Europe/Moscow")
     elif template == "result":
-        m.render_result_card(result())
+        m.render_result_card(results[0])
     elif template == "digest":
-        m.render_results_card([result(i) for i in range(4)], NOW)
+        m.render_results_card(results, NOW)
     elif template == "radar":
         m.render_tournament_radar_cards(TournamentRadar(tournament_id="test", next_matches=[upcoming()]),
                                         "BLAST Open Porto 2026", "Europe/Moscow")
     elif template == "standings":
-        m.render_tournament_standings_cards("BLAST Open Porto 2026", [TournamentPlacement(
-            placement=str(i+1), team_name="Team Spirit", prize_usd=500000) for i in range(8)])
+        m.render_tournament_standings_cards(name, [TournamentPlacement(
+            placement=str(i+1), team_name="Team Spirit", prize_usd=500000) for i in range(8)], branding=branding)
     elif template == "vrs":
-        m.render_tournament_vrs_cards("BLAST Open Porto 2026", [TournamentVRSImpact(
+        m.render_tournament_vrs_cards(name, [TournamentVRSImpact(
             placement=str(i+1), team_name="Team Spirit", team_id=str(i), before_points=1000,
             after_points=1020, before_rank=i+2, after_rank=i+1, points_delta=20, rank_delta=1,
-            source="Valve", before_version="before", after_version="after") for i in range(8)])
+            source="Valve", before_version="before", after_version="after") for i in range(8)], branding=branding)
     elif template == "context":
-        m.render_schedule_context_covers([upcoming()], NOW)
+        m.render_schedule_context_covers(fixtures[:1], NOW)
     elif template == "final":
-        m.render_final_card(result(source="liquipedia", is_final=True, final_identity_confirmed=True,
+        m.render_final_card(result(tournament_name=name, source="liquipedia", is_final=True, final_identity_confirmed=True,
             winner_prize_usd=500000, maps=[MapResult(name=n, score1=a, score2=b)
                 for n,a,b in [("Mirage",13,9),("Nuke",9,13),("Ancient",13,8)]]))
     else:
         index = {"reel_intro":0, "reel_matches":1, "reel_outro":2}[template]
-        r.render_scene(r.storyboard([upcoming(i) for i in range(4)])[index], NOW, 4)
+        r.render_scene(r.storyboard(fixtures)[index], NOW, 4)
     assert len(logos) == 1
     (center_x, center_y), diameter = logos[0]
     assert center_x == 540
     brands = [(box,size) for text,box,size in texts if text == "CS2 RESULTS"]
-    assert len(brands) == 1
-    box, size = brands[0]
-    assert size >= 38 and (box[0]+box[2])/2 == 540
-    assert box[1] > center_y + diameter/2 + 5
+    compact = branded and template != "radar" and not template.startswith("reel")
+    if compact:
+        assert not brands and diameter >= 64
+        titles = [box for text, box, _ in texts if text == name.upper()]
+        assert titles and all(box[1] > center_y + diameter/2 + 5 for box in titles)
+    else:
+        assert len(brands) == 1
+        box, size = brands[0]
+        assert size >= 38 and (box[0]+box[2])/2 == 540
+        assert box[1] > center_y + diameter/2 + 5
     assert all(0 <= b[0] <= b[2] <= 1080 and 0 <= b[1] <= b[3] <= (1920 if template.startswith("reel") else 1080)
                for _, b, _ in texts)
 
 
-def test_missing_tournament_logo_keeps_tournament_text_centered(monkeypatch):
+@pytest.mark.parametrize("name,branded", [("Unknown Cup 2026", False),
+                                         ("Thunderpick World Championship 2026", True)])
+def test_missing_tournament_logo_keeps_title_in_the_correct_header(monkeypatch, name, branded):
     labels = []
     original = ImageDraw.ImageDraw.text
     def capture(draw, xy, text, *args, **kwargs):
-        if text == "BLAST OPEN PORTO 2026":
+        if text == name.upper():
             labels.append(draw.textbbox(xy, text, font=kwargs["font"]))
         return original(draw, xy, text, *args, **kwargs)
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
     monkeypatch.setattr(m, "_draw_tournament_logo", lambda *args: False)
-    m.render_schedule_card([upcoming(tournament_logo_url="https://cdn.pandascore.co/images/league/image/1/x.png")],
+    monkeypatch.setattr(m, "fetch_team_logo", lambda *args, **kwargs: None)
+    m.render_schedule_card([upcoming(tournament_name=name, competition_key=name,
+        tournament_logo_url="https://cdn.pandascore.co/images/league/image/1/x.png")],
                             NOW, "Europe/Moscow")
-    assert len(labels) == 1 and (labels[0][0] + labels[0][2])/2 == 540
+    assert len(labels) == 1
+    if branded:
+        assert labels[0][0] == 70
+    else:
+        assert (labels[0][0] + labels[0][2])/2 == 540
 
 
 @pytest.mark.parametrize("template", ["schedule", "result", "digest", "radar"])

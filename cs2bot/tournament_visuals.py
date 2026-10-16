@@ -1,17 +1,40 @@
-"""Local tournament visuals shared by announcements, finals and standings."""
+"""Shared visuals, independent of editorial approval and delivery identity."""
 from PIL import Image, ImageDraw, ImageFilter
 
 
 def branding_for_match(match, profiles_path=None):
-    """Resolve a brand only through the exact registered tournament identity."""
+    """Prefer exact profiles, then reviewed visual aliases without enabling jobs."""
     from .match_sources.config import TOURNAMENT_PREVIEW_PROFILES_PATH
     from .tournament_identity import event_for_match
 
     try:
         profile = event_for_match(match, profiles_path or TOURNAMENT_PREVIEW_PROFILES_PATH)
-    except (OSError, ValueError):
+    except ValueError:
+        # Conflicting or invalid profiles must not be hidden by an alias.
         return None
-    return profile.branding if profile is not None else None
+    except OSError:
+        profile = None
+    if profile is not None:
+        return profile.branding
+    from .tournament_branding import branding_for_tournament
+    return branding_for_tournament(match.tournament_name,
+        competition_key=getattr(match, "competition_key", None),
+        parent=getattr(match, "tournament_parent", None))
+
+
+def visual_group_key(match, profile=None):
+    """Group a visual page, never replace the canonical publication identity."""
+    if profile is not None:
+        return ("event", profile.key)
+    source = getattr(match, "source", "pandascore")
+    refs = getattr(match, "source_refs", None)
+    if getattr(refs, "serie_id", None):
+        return (source, "serie", refs.serie_id)
+    if getattr(match, "tournament_parent", None):
+        return (source, "parent", match.tournament_parent)
+    if getattr(refs, "tournament_id", None):
+        return (source, "tournament", refs.tournament_id)
+    return (source, "label", match.tournament_name, getattr(match, "competition_key", None))
 
 
 def accent_color(branding):
@@ -20,19 +43,25 @@ def accent_color(branding):
 
 
 def branding_for_matches(matches, profiles_path=None):
-    """Brand only a complete page belonging to one exactly registered event."""
+    """Brand a homogeneous page; a shared theme alone never joins events."""
     from .match_sources.config import TOURNAMENT_PREVIEW_PROFILES_PATH
     from .tournament_identity import event_for_match
     try:
         profiles = [event_for_match(match, profiles_path or TOURNAMENT_PREVIEW_PROFILES_PATH)
                     for match in matches]
-    except (OSError, ValueError):
+    except ValueError:
         return None
-    if not profiles or any(profile is None for profile in profiles):
+    except OSError:
+        profiles = [None] * len(matches)
+    if not profiles:
         return None
-    if len({profile.key for profile in profiles}) != 1:
+    if len({visual_group_key(match, profile) for match, profile in zip(matches, profiles)}) != 1:
         return None
-    return profiles[0].branding
+    brands = [profile.branding if profile else branding_for_match(match, profiles_path)
+              for match, profile in zip(matches, profiles)]
+    if any(brand is None for brand in brands) or any(brand != brands[0] for brand in brands):
+        return None
+    return brands[0]
 
 
 def event_logo(branding, asset_dir):

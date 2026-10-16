@@ -1260,6 +1260,9 @@ def _fixture_canvas(branding, size):
     from .tournament_visuals import accent_color, add_event_glow
     if branding is None:
         return _background(size, header_accent_y=90).convert("RGBA")
+    if branding.background:
+        from .tournament_theme_patterns import preview_background
+        return preview_background(size, branding)
     accent = accent_color(branding)
     canvas = _background(size, header_accent_colors=(accent, accent)).convert("RGBA")
     add_event_glow(canvas, accent)
@@ -1437,18 +1440,16 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     if not can_render_final_card(match):
         raise MediaCardError("Final card requires confirmed final maps and winner payout")
 
-    from .tournament_visuals import accent_color, add_event_glow
+    from .tournament_visuals import accent_color
 
     branding = branding if branding is not None else _final_event_branding(match)
     accent = accent_color(branding) if branding is not None else FINAL_GOLD
-    canvas = _background(
+    canvas = _fixture_canvas(branding, RESULT_CARD_SIZE) if branding is not None else _background(
         RESULT_CARD_SIZE,
         header_accent_y=90,
         header_accent_colors=(accent, accent),
         header_foil=branding is None,
     ).convert("RGBA")
-    if branding is not None:
-        add_event_glow(canvas, accent)
     width = RESULT_CARD_SIZE[0]
     row_height = {3: 112, 4: 84, 5: 68}[len(match.maps)]
     table = (190, 510, 890, 510 + row_height * len(match.maps))
@@ -1738,14 +1739,12 @@ def _draw_standings_metal_text(
 
 def _render_tournament_standings_page(tournament_name, placements, *, source_label, page_number,
                                       page_count, branding=None):
-    from .tournament_visuals import accent_color, add_event_glow
+    from .tournament_visuals import accent_color
 
     accent = accent_color(branding) if branding is not None else AMBER
-    canvas = _background(RESULT_CARD_SIZE, header_accent_y=90,
-                          header_accent_colors=(accent, accent) if branding is not None
-                          else (CYAN, AMBER)).convert("RGBA")
-    if branding is not None:
-        add_event_glow(canvas, accent)
+    canvas = (_fixture_canvas(branding, RESULT_CARD_SIZE) if branding is not None else
+              _background(RESULT_CARD_SIZE, header_accent_y=90,
+                          header_accent_colors=(CYAN, AMBER)).convert("RGBA"))
     draw = ImageDraw.Draw(canvas, "RGBA")
     if branding is None:
         _card_header(canvas, draw, "ИТОГИ ТУРНИРА", tournament_name)

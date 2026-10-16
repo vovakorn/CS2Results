@@ -240,6 +240,7 @@ def test_final_card_renders_when_team_logos_are_unavailable(monkeypatch):
 
 def test_final_card_uses_one_gold_foil_header_accent(monkeypatch):
     match = _result().model_copy(update={
+        "tournament_name": "Unknown Cup",
         "is_final": True,
         "winner_prize_usd": 500_000,
         "maps": [
@@ -360,7 +361,7 @@ def test_tournament_standings_use_the_source_label_on_every_page(drawn_text):
 def test_result_card_channel_logo_is_inside_header(monkeypatch):
     drawn = []
     monkeypatch.setattr(media_cards, "_draw_channel_logo", lambda c, d, center, diameter: drawn.append((center, diameter)))
-    media_cards.render_result_card(_result())
+    media_cards.render_result_card(_result().model_copy(update={"tournament_name": "Unknown Cup"}))
     assert len(drawn) == 1
     (x, y), diameter = drawn[0]
     assert x == 540 and diameter >= 80 and 0 <= x - diameter/2 < x + diameter/2 <= 1080 and y + diameter/2 < 144
@@ -430,7 +431,7 @@ def test_schedule_card_is_valid_square_png():
 def test_schedule_card_identifies_format_and_channel(drawn_text):
     media_cards.render_schedule_card([_upcoming()], media_cards.datetime.now(), "Europe/Moscow")
     values = [v for _, v, _, _ in drawn_text]
-    assert "МАТЧИ CS2 СЕГОДНЯ" in values and "@CS2_RESULTS" in values
+    assert "МАТЧИ СЕГОДНЯ" in values and "@CS2_RESULTS" in values
 
 
 @pytest.mark.parametrize("variant", ["bracket", "next_match"])
@@ -1022,8 +1023,8 @@ def test_schedule_match_event_label_falls_back_to_tournament_name():
 def test_schedule_header_has_clear_type_event_date_hierarchy(drawn_text):
     media_cards.render_schedule_card([_upcoming()], media_cards.datetime.fromisoformat("2026-07-31T10:00:00+03:00"), "Europe/Moscow")
     values = {v: (xy, font) for xy, v, font, _ in drawn_text}
-    assert all(v in values for v in ["МАТЧИ CS2 СЕГОДНЯ", "BLAST BOUNTY 2026", "31 ИЮЛЯ · BO3"])
-    assert values["МАТЧИ CS2 СЕГОДНЯ"][0][1] < values["BLAST BOUNTY 2026"][0][1] < values["31 ИЮЛЯ · BO3"][0][1]
+    assert all(v in values for v in ["МАТЧИ СЕГОДНЯ", "BLAST BOUNTY 2026", "31 ИЮЛЯ · BO3"])
+    assert values["МАТЧИ СЕГОДНЯ"][0][1] < values["BLAST BOUNTY 2026"][0][1] < values["31 ИЮЛЯ · BO3"][0][1]
 
 
 @pytest.mark.parametrize("match_count", [1, 4, 10])
@@ -1079,7 +1080,8 @@ def test_schedule_draws_official_tournament_logo_in_header(monkeypatch):
         logos.append((center, diameter, logo_url))
 
     match = _upcoming().model_copy(
-        update={"tournament_logo_url": "https://cdn.pandascore.co/images/serie/image/2/iem.png"}
+        update={"tournament_logo_url": "https://cdn.pandascore.co/images/serie/image/2/iem.png",
+                "tournament_name": "Unknown Cup", "competition_key": "Unknown Cup"}
     )
     monkeypatch.setattr(media_cards, "_draw_tournament_logo", capture_logo)
     media_cards.render_schedule_card(
@@ -1093,7 +1095,9 @@ def test_schedule_draws_official_tournament_logo_in_header(monkeypatch):
 def test_schedule_channel_logo_is_inside_header(monkeypatch):
     drawn = []
     monkeypatch.setattr(media_cards, "_draw_channel_logo", lambda c, d, center, diameter: drawn.append((center, diameter)))
-    media_cards.render_schedule_card([_upcoming()], media_cards.datetime.now(), "Europe/Moscow")
+    media_cards.render_schedule_card([_upcoming().model_copy(update={
+        "tournament_name": "Unknown Cup", "competition_key": "Unknown Cup"})],
+        media_cards.datetime.now(), "Europe/Moscow")
     assert len(drawn) == 1
     (x, y), diameter = drawn[0]
     assert x == 540 and diameter >= 80 and 0 <= x - diameter/2 < x + diameter/2 <= 1080 and y + diameter/2 < 144
