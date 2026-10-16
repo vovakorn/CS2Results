@@ -41,7 +41,8 @@ def test_single_exact_event_brands_every_scene_without_network(monkeypatch, kind
 
 def test_mixed_or_unconfirmed_event_keeps_neutral_shared_header():
     matches = fixtures(5)
-    matches[-1] = matches[-1].model_copy(update={"source_refs": None})
+    matches[-1] = matches[-1].model_copy(update={"source_refs": None,
+        "tournament_name": "Unknown Cup", "competition_key": "Unknown Cup"})
     scene = r.storyboard(matches)[1]
     visuals = r._resolve_reel_visuals(matches)
     assert visuals.shared is None

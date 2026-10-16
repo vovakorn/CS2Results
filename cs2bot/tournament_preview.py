@@ -113,7 +113,7 @@ class PreviewProfile(BaseModel):
             raise ValueError("playoffs must follow the initial stage")
         self.stages.sort(key=lambda stage: stage.start)
         from .tournament_branding import resolve_branding
-        self.branding = resolve_branding(self.branding, event_key=self.key)
+        self.branding = resolve_branding(self.branding, event_key=self.key, parent=self.liquipedia_page)
         return self
 
     @field_validator("pandascore_tournament_ids", mode="before")
@@ -180,7 +180,7 @@ class TournamentPreview(BaseModel):
             if not self.start <= local_date <= self.end:
                 raise ValueError("first match outside tournament dates")
         from .tournament_branding import resolve_branding
-        self.branding = resolve_branding(self.branding, event_key=self.key)
+        self.branding = resolve_branding(self.branding, event_key=self.key, tournament_name=self.name)
         return self
 
 

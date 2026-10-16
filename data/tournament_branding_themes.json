@@ -310,5 +310,100 @@
     "firesports": "fire",
     "perfect-world": "neutral",
     "esports-foundation": "neutral"
-  }
+  },
+  "match_rules": [
+    {
+      "theme_key": "iem-beijing", "scope": "event",
+      "names": ["IEM Beijing 2026", "Intel Extreme Masters Beijing 2026"],
+      "paths": ["Intel Extreme Masters/2026/Beijing"]
+    },
+    {
+      "theme_key": "pgl-major", "scope": "event", "allow_major": true,
+      "names": ["PGL Singapore Major 2026", "PGL Major Singapore 2026"],
+      "paths": ["PGL/2026/Singapore Major", "PGL/2026/Singapore"]
+    },
+    {
+      "theme_key": "pw-major", "scope": "event", "allow_major": true,
+      "names": ["Perfect World Shanghai Major 2027", "Shanghai Major 2027"],
+      "paths": ["Perfect World/Major/2027/Shanghai"]
+    },
+    {
+      "theme_key": "epl", "scope": "series",
+      "names": ["ESL Pro League"], "paths": ["ESL/Pro League"]
+    },
+    {
+      "theme_key": "iem-base", "scope": "series",
+      "names": ["IEM", "Intel Extreme Masters"], "paths": ["Intel Extreme Masters"]
+    },
+    {
+      "theme_key": "blast-rivals", "scope": "series",
+      "names": ["BLAST Rivals", "BLAST Premier Rivals"],
+      "paths": ["BLAST/Rivals", "BLAST/Premier/Rivals"]
+    },
+    {
+      "theme_key": "blast-open", "scope": "series",
+      "names": ["BLAST Open", "BLAST Premier Open"],
+      "paths": ["BLAST/Open", "BLAST/Premier/Open"]
+    },
+    {
+      "theme_key": "blast-bounty", "scope": "series",
+      "names": ["BLAST Bounty", "BLAST Premier Bounty"],
+      "paths": ["BLAST/Bounty", "BLAST/Premier/Bounty"]
+    },
+    {
+      "theme_key": "thunderpick", "scope": "series",
+      "names": ["Thunderpick World Championship"], "paths": ["Thunderpick/World Championship"]
+    },
+    {
+      "theme_key": "fissure", "scope": "series",
+      "names": ["FISSURE Playground"], "paths": ["FISSURE/Playground"]
+    },
+    {
+      "theme_key": "starseries", "scope": "series",
+      "names": ["StarSeries", "StarLadder StarSeries", "StarLadder i League StarSeries"],
+      "paths": ["StarLadder/StarSeries", "StarLadder/StarSeries i League"]
+    },
+    {
+      "theme_key": "cac", "scope": "series",
+      "names": ["CAC", "CS Asia Championships", "Perfect World CS Asia Championships"],
+      "paths": ["CS Asia Championships"]
+    },
+    {
+      "theme_key": "ewc", "scope": "series",
+      "names": ["Esports World Cup"], "paths": ["Esports World Cup"]
+    },
+    {
+      "theme_key": "enc", "scope": "series",
+      "names": ["Esports Nations Cup"], "paths": ["Esports Nations Cup"]
+    },
+    {
+      "theme_key": "pgl", "scope": "organizer",
+      "names": ["PGL"], "paths": ["PGL"]
+    },
+    {
+      "theme_key": "fire", "scope": "organizer",
+      "names": ["FiReSPORTS", "FiReMAJOR"], "paths": ["FiReSPORTS", "FiReMAJOR"]
+    },
+    {
+      "theme_key": "blast-base", "scope": "organizer",
+      "names": ["BLAST"], "paths": ["BLAST"]
+    },
+    {
+      "theme_key": "thunderpick", "scope": "organizer",
+      "names": ["Thunderpick"], "paths": ["Thunderpick"]
+    },
+    {
+      "theme_key": "fissure", "scope": "organizer",
+      "names": ["FISSURE"], "paths": ["FISSURE"]
+    },
+    {
+      "theme_key": "starseries", "scope": "organizer",
+      "names": ["StarLadder"], "paths": ["StarLadder"]
+    },
+    {
+      "theme_key": "neutral", "scope": "organizer", "allow_major": true,
+      "names": ["ESL", "Perfect World", "Esports Foundation"],
+      "paths": ["ESL", "Perfect World", "Esports Foundation"]
+    }
+  ]
 }

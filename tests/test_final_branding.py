@@ -35,7 +35,9 @@ def test_brand_uses_exact_event_profile_and_unknown_event_keeps_gold():
     profile = load_profiles(TOURNAMENT_PREVIEW_PROFILES_PATH)[0]
     match = final().model_copy(update={"tournament_parent": profile.liquipedia_page})
     assert media_cards._final_event_branding(match) == profile.branding
-    assert media_cards._final_event_branding(final()) is None
+    assert media_cards._final_event_branding(final()).theme_key == "pgl"
+    unknown = final().model_copy(update={"tournament_name": "Unknown Cup", "tournament_parent": "Unknown/Cup"})
+    assert media_cards._final_event_branding(unknown) is None
 
 
 def test_missing_logo_keeps_brand_and_render_usable():
