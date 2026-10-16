@@ -1,0 +1,15 @@
+import {bundle} from '@remotion/bundler';
+import {renderStill,selectComposition} from '@remotion/renderer';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+const here=path.dirname(fileURLToPath(import.meta.url));
+const regions=JSON.parse(await fs.readFile(path.join(here,'public/regional-data.json'),'utf8'));
+const data=regions.find(r=>r.regionSlug===(process.argv[2]||'americas'));
+if(!data)throw Error('Unknown region');
+const browserExecutable='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const serveUrl=await bundle({entryPoint:path.join(here,'index.jsx'),publicDir:path.join(here,'public'),outDir:path.join(here,'bundle')});
+const composition=await selectComposition({serveUrl,id:`Vrs-${data.regionSlug}`,browserExecutable,inputProps:{data}});
+const output=path.resolve(here,`../../output/vrs-major-race-2026-10-12/regional-reels/${data.regionSlug}/remotion-preview.png`);
+await renderStill({composition,serveUrl,browserExecutable,inputProps:{data},frame:Math.round(17.1*composition.fps),output,imageFormat:'png'});
+console.log(output);

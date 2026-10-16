@@ -1,0 +1,71 @@
+{
+  "names": {
+    "team spirit 2022": "Spirit",
+    "team vitality 2023": "Vitality",
+    "mouz 2021": "MOUZ",
+    "g2 esports 2019": "G2",
+    "team falcons 2022": "Falcons",
+    "fut esports": "FUT",
+    "aurora gaming 2025": "Aurora",
+    "astralis 2020": "Astralis",
+    "betboom team 2024": "BETBOOM",
+    "b8": "B8",
+    "nemiga gaming 2021": "Nemiga",
+    "heroic sep 2024": "HEROIC",
+    "luminosity gaming 2018": "Luminosity",
+    "monte 2022": "Monte",
+    "ninjas in pyjamas 2021": "Ninjas in Pyjamas",
+    "ic esports 2026": "Inner Circle",
+    "3dmax 2024": "3DMAX",
+    "magic": "magic",
+    "alliance 2024": "Alliance",
+    "faze clan 2026": "FaZe",
+    "big 2020": "BIG",
+    "gamerlegion 2026": "GamerLegion",
+    "natus vincere 2021": "Natus Vincere",
+    "parivision": "PARIVISION",
+    "legacy 2023": "Legacy",
+    "furia 2025": "FURIA",
+    "mibr": "MIBR",
+    "9z team 2024": "9z",
+    "team liquid 2024": "Liquid",
+    "m80 orig": "M80",
+    "dendele cs 2026": "DENDELE",
+    "sharks esports 2026": "Sharks",
+    "nrg 2024": "NRG",
+    "imperial esports 2025": "Imperial",
+    "pain gaming 2023": "paiN",
+    "fluxo w7m": "Fluxo",
+    "wildcard 2024": "Wildcard",
+    "tyloo 2016": "TYLOO",
+    "bc.game esports nov 2025": "BC.Game",
+    "the mongolz 2024 03": "The MongolZ",
+    "lynn vision gaming 2024": "Lynn Vision",
+    "5star esports orig": "5star",
+    "flyquest 2021": "FlyQuest",
+    "chinggis warriors": "Chinggis Warriors",
+    "depo 2025": "DEPO",
+    "thunderdownunder 2026": "THUNDER dOWNUNDER"
+  },
+  "aliases": {
+    "Monte": "Luminosity",
+    "Sharks": "DENDELE"
+  },
+  "regions": {
+    "EU": [
+      "europe",
+      "EUROPE",
+      18
+    ],
+    "AM": [
+      "americas",
+      "AMERICAS",
+      9
+    ],
+    "AS": [
+      "asia",
+      "ASIA",
+      5
+    ]
+  }
+}
