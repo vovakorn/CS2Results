@@ -46,6 +46,8 @@ jobs:
 
       - name: Build platform-independent function archive
         run: scripts/build_function_zip.sh
+      - name: Build isolated monthly VRS publisher archive
+        run: python scripts/build_monthly_vrs_function.py
 
   vrs_reels:
     runs-on: ubuntu-latest
@@ -62,8 +64,10 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test source boundaries, animation and private artifact delivery
         working-directory: video/vrs-major-race/cloud
-        run: node --test ../timeline.test.mjs ../data.test.mjs handler.test.mjs
+        run: node --test ../timeline.test.mjs ../data.test.mjs ../monthly.test.mjs handler.test.mjs
       - name: Build isolated Linux function
         run: python3 scripts/build_vrs_major_function.py
       - name: Render and decode full Americas probe in the packaged Linux runtime
         run: node video/vrs-major-race/cloud/probe.mjs
+      - name: Render and decode the monthly world edition in the packaged Linux runtime
+        run: node video/vrs-major-race/cloud/probe.mjs build/vrs-major-function/handler.mjs monthly

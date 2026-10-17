@@ -6,6 +6,7 @@ import {gunzipSync} from 'node:zlib';
 import {S3Client,PutObjectCommand,GetObjectCommand,HeadObjectCommand} from '@aws-sdk/client-s3';
 import {prepareRegions,fetchHistory,captionFor,CAMPAIGN,START,MAX_SOURCE_BYTES,isoDate} from '../data.mjs';
 import {renderVideo,sha256} from './render-core.mjs';
+import {prepareMonthlyWorld,monthlyPeriod,monthlyCaptionFor,MONTHLY_PREFIX} from '../monthly.mjs';
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 export const PREFIX=`vrs-major/${CAMPAIGN}/`;
@@ -20,14 +21,14 @@ export function s3Store(env,clientOverride){
  const Bucket=env.OBJECT_STORAGE_BUCKET;
  return {
   async get(Key){
-   if(!Key.startsWith(`${PREFIX}sources/`))throw Error('Invalid storage scope');
+   if(!Key.startsWith(`${PREFIX}sources/`)&&!/^vrs-monthly\/20\d{2}-(0[1-9]|1[0-2])\/sources\/[a-f0-9]{64}\.json$/.test(Key))throw Error('Invalid storage scope');
    const result=await client.send(new GetObjectCommand({Bucket,Key}));
    const chunks=[];let length=0;
    for await(const chunk of result.Body){length+=chunk.length;if(length>MAX_SOURCE_BYTES)throw Error('Stored source too large');chunks.push(chunk);}
    return Buffer.concat(chunks);
   },
   async put(Key,Body,ContentType){
-   if(!Key.startsWith(PREFIX))throw Error('Invalid storage scope');
+   if(!Key.startsWith(PREFIX)&&!/^vrs-monthly\/20\d{2}-(0[1-9]|1[0-2])\/(sources|renders)\//.test(Key))throw Error('Invalid storage scope');
    const digest=sha256(Body);
    try{await client.send(new PutObjectCommand({Bucket,Key,Body,ContentType,IfNoneMatch:'*',Metadata:{sha256:digest}}));}
    catch(error){
@@ -45,43 +46,47 @@ export function createHandler({env=process.env,now=()=>new Date(),fetcher=fetchH
   let stage='request';let directory;
   try{
    const event=typeof input?.body==='string'?JSON.parse(input.body):input;
-   if(!event||!['capture','render'].includes(event.job)||
+   if(!event||!['capture','render','monthly'].includes(event.job)||
       (event.dry_run!==undefined&&typeof event.dry_run!=='boolean')||
       (event.render_probe!==undefined&&typeof event.render_probe!=='boolean'))throw Error('Invalid request');
    const dry=event.dry_run!==false,probe=event.render_probe===true;
-   const today=now().toISOString().slice(0,10),through=event.through||today;
-   if(!isoDate(through)||through<START||through>today)throw Error('Invalid requested period');
+   const today=now().toISOString().slice(0,10),monthly=event.job==='monthly';
+   const period=monthly?monthlyPeriod(event.month,today):null;
+   const prefix=monthly?`${MONTHLY_PREFIX}${period.month}/`:PREFIX;
+   const through=monthly?period.end:event.through||today;
+   if(!isoDate(through)||(!monthly&&through<START)||through>today)throw Error('Invalid requested period');
    if(event.job==='render'&&!['europe','americas','asia'].includes(event.region))throw Error('A valid region is required');
-   if(probe&&(!dry||event.job!=='render'||event.source_key))throw Error('Probe must be a render dry run');
-   if(event.source_key&&!new RegExp(`^${PREFIX}sources/[a-f0-9]{64}\\.json$`).test(event.source_key))throw Error('Invalid source key');
+   if(monthly&&(event.region!==undefined&&event.region!=='world'||event.through!==undefined))throw Error('Monthly period and world scope are fixed');
+   if(probe&&(!dry||!['render','monthly'].includes(event.job)||event.source_key))throw Error('Probe must be a render dry run');
+   if(event.source_key&&!new RegExp(`^${prefix}sources/[a-f0-9]{64}\\.json$`).test(event.source_key))throw Error('Invalid source key');
    stage='source';let raw,sourceBytes,store;
    if(probe){raw=JSON.parse(gunzipSync(await fs.readFile(fixture)));sourceBytes=Buffer.from(JSON.stringify(raw));}
    else if(event.source_key){store=storeFactory(env);sourceBytes=await store.get(event.source_key);raw=JSON.parse(sourceBytes);}
-   else{raw=await fetcher({apiKey:env.LIQUIPEDIA_API_KEY,through});sourceBytes=Buffer.from(JSON.stringify(raw));}
+   else{raw=await fetcher({apiKey:env.LIQUIPEDIA_API_KEY,through,...(monthly?{from:period.from}:{})});sourceBytes=Buffer.from(JSON.stringify(raw));}
    if(sourceBytes.length>MAX_SOURCE_BYTES)throw Error('Source exceeds limit');
    const inputSha256=sha256(sourceBytes);
    if(event.source_key&&!event.source_key.endsWith(`${inputSha256}.json`))throw Error('Source checksum mismatch');
-   stage='prepare';const regions=prepareRegions(raw,{collectedOn:today,through,inputSha256});
-   const selected=regions.find(r=>r.regionSlug===event.region);
-   const result={job:event.job,dry_run:dry,campaign:CAMPAIGN,through,regions:regions.map(summary)};
+   stage='prepare';const regions=monthly?[prepareMonthlyWorld(raw,{month:period.month,collectedOn:today,inputSha256})]:prepareRegions(raw,{collectedOn:today,through,inputSha256});
+   const selected=monthly?regions[0]:regions.find(r=>r.regionSlug===event.region);
+   const result={job:event.job,dry_run:dry,...(monthly?{month:period.month,caption:monthlyCaptionFor(selected)}:{campaign:CAMPAIGN}),through,regions:regions.map(summary)};
    if(dry&&!probe)return {statusCode:200,body:JSON.stringify(result)};
-   const sourceKey=`${PREFIX}sources/${inputSha256}.json`;
+   const sourceKey=`${prefix}sources/${inputSha256}.json`;
    if(!dry){store??=storeFactory(env);stage='persist_source';await store.put(sourceKey,sourceBytes,'application/json');result.sourceKey=sourceKey;}
-   if(event.job==='render'){
+   if(event.job==='render'||monthly){
     stage='render';directory=await fs.mkdtemp(path.join(os.tmpdir(),'vrs-major-'));
     const started=Date.now();
     const media=await renderer(selected,directory,{ffmpeg:env.VRS_FFMPEG_PATH||path.join(here,'bin/ffmpeg'),assetsDir});
     result.render={...media,file:undefined,preview:undefined,seconds:Math.round((Date.now()-started)/10)/100};
     if(!dry){
-     stage='persist_render';const prefix=`${PREFIX}renders/${event.region}/${inputSha256}/${media.sha256}`;
-     await store.put(`${prefix}/reel.mp4`,await fs.readFile(media.file),'video/mp4');
+     stage='persist_render';const renderPrefix=`${prefix}renders/${selected.regionSlug}/${inputSha256}/${media.sha256}`;
+     await store.put(`${renderPrefix}/reel.mp4`,await fs.readFile(media.file),'video/mp4');
      const preview=await fs.readFile(media.preview),data=JSON.stringify(selected);
-     const previewKey=`${prefix}/preview-${sha256(preview)}.png`,dataKey=`${prefix}/data-${sha256(data)}.json`;
+     const previewKey=`${renderPrefix}/preview-${sha256(preview)}.png`,dataKey=`${renderPrefix}/data-${sha256(data)}.json`;
      await store.put(previewKey,preview,'image/png');await store.put(dataKey,data,'application/json');
-     const caption=captionFor(selected),captionKey=`${prefix}/caption-${sha256(caption)}.txt`;
+     const caption=monthly?monthlyCaptionFor(selected):captionFor(selected),captionKey=`${renderPrefix}/caption-${sha256(caption)}.txt`;
      await store.put(captionKey,caption,'text/plain; charset=utf-8');
-     result.artifacts={videoKey:`${prefix}/reel.mp4`,previewKey,dataKey,captionKey};
-     const manifest=JSON.stringify({...result,sourceKey}),manifestKey=`${prefix}/manifest-${sha256(manifest)}.json`;
+     result.artifacts={videoKey:`${renderPrefix}/reel.mp4`,previewKey,dataKey,captionKey};
+     const manifest=JSON.stringify({...result,sourceKey}),manifestKey=`${renderPrefix}/manifest-${sha256(manifest)}.json`;
      await store.put(manifestKey,manifest,'application/json');result.artifacts.manifestKey=manifestKey;
     }
    }
