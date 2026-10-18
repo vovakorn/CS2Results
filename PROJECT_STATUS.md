@@ -24,7 +24,9 @@ production и сверки фактического состояния. Теку
   До выпуска статистики нет; опрос раз в 15 минут ограничивает точность.
 - Итоговая локальная проверка: **362 passed** (filters, match_fetcher,
   pandascore_source, storage, main, config, match_contract, final_branding).
-  Полный набор до объединения main: **1033 passed** за 191,57 s. Production/таймеры не менялись.
+  Полный набор до объединения main: **1033 passed** за 191,57 s.
+  После объединения актуальной main: **385 passed**, включая месячный VRS и
+  админскую политику публикаций. Production/таймеры не менялись.
 
 - Production dry-run подтвердил наличие результатов `1741365` (FURIA 2:0 Aurora)
   и `1741366` (Falcons 1:2 BetBoom): tier A, LAN/локация отсутствуют,
