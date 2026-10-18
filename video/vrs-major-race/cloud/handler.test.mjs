@@ -42,3 +42,23 @@ test('immutable objects use private conditional writes; a conflicting object fai
  const conflict=s3Store(env,{send:async command=>{if(command.constructor.name==='PutObjectCommand')throw {$metadata:{httpStatusCode:412}};return {Metadata:{sha256:'different'}};}});
  await assert.rejects(conflict.put(`${PREFIX}sources/${'b'.repeat(64)}.json`,'{}','application/json'));
 });
+test('monthly dry run is one world ranking with a closed month and no side effects',async()=>{
+ const handle=createHandler({...options,storeFactory:()=>{throw Error('Unexpected storage');},renderer:()=>{throw Error('Unexpected encoding');}});
+ const response=await handle({job:'monthly',month:'2026-09'});assert.equal(response.statusCode,200);
+ const body=JSON.parse(response.body);assert.equal(body.month,'2026-09');assert.equal(body.regions.length,1);
+ assert.equal(body.regions[0].region,'world');assert.equal(body.regions[0].teams,20);
+ assert.match(body.caption,/по итогам сентября 2026 года/);
+ for(const event of [{job:'monthly',month:'2026-10'},{job:'monthly',month:'2026-09',region:'europe'},
+  {job:'monthly',month:'2026-09',through:'2026-10-01'},
+  {job:'monthly',month:'2026-09',source_key:`${PREFIX}sources/${'a'.repeat(64)}.json`}])assert.equal((await handle(event)).statusCode,400);
+});
+test('monthly artifacts and captions stay scoped to their own month',async()=>{
+ const writes=[];
+ const handle=createHandler({...options,storeFactory:()=>({put:async(...a)=>writes.push(a)}),renderer:async(data,dir)=>{
+  assert.equal(data.rankMode,'absolute');await fs.writeFile(`${dir}/video.mp4`,'test');await fs.writeFile(`${dir}/preview.png`,'png');
+  return {file:`${dir}/video.mp4`,preview:`${dir}/preview.png`,sha256:'b'.repeat(64),frames:1944};
+ }});
+ const response=await handle({job:'monthly',month:'2026-09',dry_run:false});assert.equal(response.statusCode,200);
+ assert.equal(writes.length,6);assert.ok(writes.every(([key])=>key.startsWith('vrs-monthly/2026-09/')));
+ assert.match(JSON.parse(response.body).caption,/сентября 2026/);
+});

@@ -18,7 +18,7 @@ import imageio_ffmpeg
 HERE=Path(__file__).resolve().parent
 BASE=HERE.parents[1]/'output/vrs-major-race-2026-10-12/regional-reels'
 parser=argparse.ArgumentParser()
-parser.add_argument('--region',choices=['europe','americas','asia'])
+parser.add_argument('--region',choices=['europe','americas','asia','world'])
 parser.add_argument('--suffix',help='Video variant; defaults to the current regional manifest')
 parser.add_argument('--video',type=Path,help='Explicit exported MP4, with --data and --region')
 parser.add_argument('--data',type=Path,help='Regional data JSON corresponding to --video')

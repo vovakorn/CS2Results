@@ -14,15 +14,19 @@ export function captionFor(data){
   `В выборке все, кто находился в пределах региональной квоты на одной из дат, и два ближайших преследователя на последней дате. `+
   `Это история рейтинга, не подтверждённые приглашения.\n\nИсточник: LiquipediaDB vrs_ranking_live. Получено ${data.collectedOn}.\nCS2 Results · @cs2results\n#CS2 #VRS #Major #SingaporeMajor`;
 }
-export const isoDate=value=>typeof value==='string'&&/^2026-\d{2}-\d{2}$/.test(value)&&new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)===value;
+export const isoDate=value=>{
+ if(typeof value!=='string'||!/^20\d{2}-\d{2}-\d{2}$/.test(value))return false;
+ const time=Date.parse(`${value}T00:00:00Z`);
+ return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===value;
+};
 
-export function prepareRegions(raw,{collectedOn,through,inputSha256}={}){
+export function rankingRecords(raw,{from=START,through}={}){
  const records=[...(raw.result||[])].sort((a,b)=>a.date.localeCompare(b.date));
  if(records.length<2||records.length>40)fail('Expected 2..40 complete dated snapshots');
  const seen=new Set();
  for(const snap of records){
   const date=snap.date?.slice(0,10);
-  if(!isoDate(date)||date<START||(through&&date>through)||seen.has(date)||snap.type!=='vrs_ranking_live')fail('Invalid snapshot date/type');
+  if(!isoDate(date)||date<from||(through&&date>through)||seen.has(date)||snap.type!=='vrs_ranking_live')fail('Invalid snapshot date/type');
   seen.add(date);
   if(typeof snap.extradata==='string')snap.extradata=JSON.parse(snap.extradata);
   const rows=Object.values(snap.extradata||{});
@@ -30,6 +34,11 @@ export function prepareRegions(raw,{collectedOn,through,inputSha256}={}){
   if(new Set(rows.map(r=>r.place)).size!==rows.length)fail('Ambiguous global ranks');
   for(const row of rows)if(!Number.isInteger(row.place)||row.place<1||!Number.isFinite(row.points)||row.points<=0||!row.opponent?.template)fail('Invalid ranking row');
  }
+ return records;
+}
+
+export function prepareRegions(raw,{collectedOn,through,inputSha256}={}){
+ const records=rankingRecords(raw,{through});
  const results=[];
  for(const [code,[slug,title,quota]] of Object.entries(identities.regions)){
   const complete=records.map(s=>Object.values(s.extradata).filter(r=>r.opponent.extradata?.region===code).sort((a,b)=>a.place-b.place).map((r,i)=>[i+1,r]));
@@ -67,14 +76,14 @@ export function prepareRegions(raw,{collectedOn,through,inputSha256}={}){
  return results;
 }
 
-export async function fetchHistory({apiKey,through,fetchImpl=fetch}){
+export async function fetchHistory({apiKey,through,from=START,fetchImpl=fetch}){
  if(!apiKey)fail('Liquipedia credentials are unavailable');
- if(!isoDate(through)||through<START)fail('Invalid through date');
+ if(!isoDate(through)||!isoDate(from)||through<from)fail('Invalid history period');
  const result=[];let bytes=0;
  for(let offset=0;offset<1000;offset+=100){
   const url=new URL('https://api.liquipedia.net/api/v3/datapoint');
   url.search=new URLSearchParams({wiki:'counterstrike',limit:'100',offset:String(offset),query:'date,type,extradata',
-   conditions:`[[type::vrs_ranking_live]] AND [[date::>2026-06-21]] AND [[date::<${new Date(Date.parse(through)+86400000).toISOString().slice(0,10)}]]`,order:'date asc'});
+   conditions:`[[type::vrs_ranking_live]] AND [[date::>${new Date(Date.parse(from)-86400000).toISOString().slice(0,10)}]] AND [[date::<${new Date(Date.parse(through)+86400000).toISOString().slice(0,10)}]]`,order:'date asc'});
   const response=await fetchImpl(url,{headers:{Authorization:`Apikey ${apiKey}`,Accept:'application/json','User-Agent':'CS2ResultsBot/1.0 (VRS history)'},redirect:'error',signal:AbortSignal.timeout(20000)});
   if(!response.ok)fail('Liquipedia request failed');
   const chunks=[];

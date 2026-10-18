@@ -5,6 +5,13 @@
 и CPU Canvas-рендер региона. Она не входит в `cs2bot.main` и не выполняет
 социальную доставку. [Поток и эксплуатация](vrs-major-reels.md).
 
+Для месячного мирового выпуска в production работают `job=monthly` в Node-рендере
+и отдельный Python worker `cs2bot.monthly_vrs_reels.handler` с timeout 600 s.
+Worker вызывает рендер по private IAM/`production`, сохраняет первый MP4 receipt
+и Meta container, затем проводит claim-protected доставку. Основной бот не
+занимается длинным рендером. Отдельный месячный timer вызывает worker по тегу
+`production`. [Период, таймер и состояния](monthly-vrs-reels.md).
+
 Документ описывает устойчивые границы системы. Поля моделей, правила fallback и
 ключи дедупликации подробно зафиксированы в `data-contract.md`; параметры запуска
 и deploy — в `../README.md` и `yandex-cloud-deploy.md`.

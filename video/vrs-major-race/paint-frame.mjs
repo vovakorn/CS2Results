@@ -58,19 +58,21 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
  circle(b,151,176,66,'#05090e','#efba6666');
  b.save();b.beginPath();b.arc(151,176,65,0,Math.PI*2);b.clip();imageFit(b,projectLogo,85,110,132,132);b.restore();
  text(b,246,119,25,'CS2 RESULTS');text(b,960,122,21,'@CS2RESULTS',MUTED,'right');
- text(b,244,169,52,'ДОРОГА К MAJOR',WHITE,'left',true);
- text(b,247,236,20,'COLOGNE → SINGAPORE · 2026','#bdc7cd');
- text(b,247,279,20,`${data.regionLabel} · ${data.names.length} КОМАНД`,'#c3d4dd');
+ text(b,244,169,data.headline?42:52,data.headline||'ДОРОГА К MAJOR',WHITE,'left',true);
+ text(b,247,236,20,data.subtitle||'COLOGNE → SINGAPORE · 2026','#bdc7cd');
+ text(b,247,279,20,data.cohortLabel||`${data.regionLabel} · ${data.names.length} КОМАНД`,'#c3d4dd');
  text(b,247,322,17,data.sourceLabel,MUTED);
  line(b,84,367,966,367,'#c0c8d740');
- for(const [x,label,align] of [[56,'ПОЗ.','left'],[111,`СРЕДИ ${data.names.length} КОМАНД`,'left'],[720,'ОЧКИ VRS','left'],[960,'#РЕГ','right']])text(b,x,405,18,label,MUTED,align);
+ for(const [x,label,align] of [[56,'ПОЗ.','left'],[111,data.rankMode==='absolute'?'МИРОВОЕ МЕСТО':`СРЕДИ ${data.names.length} КОМАНД`,'left'],[720,'ОЧКИ VRS','left'],[960,data.rankMode==='absolute'?'#МИР':'#РЕГ','right']])text(b,x,405,18,label,MUTED,align);
  b.save();b.globalAlpha=.12;
  circle(b,438,998,220,null,'#a8b5c0',3);circle(b,438,998,160,null,'#a8b5c0',2);
  line(b,180,998,690,998,'#a8b5c0',2);line(b,438,738,438,1254,'#a8b5c0',2);b.restore();
  b.save();b.globalAlpha=.055;b.textAlign='left';b.font='86px "VRS Russo"';b.fillStyle='#abb9c7';b.fillText('VRS',295,1029);b.restore();
- for(let index=0;index<data.names.length;index++){
-  line(b,108,initial.y(index+1),672,initial.y(index+1),'#39556a4d');
-  text(b,91,initial.y(index+1)-14,28,index+1,'#b8c4cd','right');
+ const gridStep=Math.max(5,Math.ceil(initial.rankMax/50)*5);
+ const grid=data.rankMode==='absolute'?[...new Set([1,...Array.from({length:Math.floor(initial.rankMax/gridStep)},(_,i)=>(i+1)*gridStep),initial.rankMax])]:data.names.map((_,i)=>i+1);
+ for(const rank of grid){
+  line(b,108,initial.y(rank),672,initial.y(rank),'#39556a4d');
+  text(b,91,initial.y(rank)-14,28,rank,'#b8c4cd','right');
  }
  function table(index){
   if(tables.has(index))return tables.get(index);
@@ -79,7 +81,7 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
   const g=geometry(data,0);
   const ordered=[...data.names].sort((a,b)=>g.ranks[index][a]-g.ranks[index][b]);
   ordered.forEach((name,slot)=>{
-   const row=g.row(index,name),y=g.y(slot+1)-418,display=row?.displayName||name;
+   const row=g.row(index,name),y=g.rowY(slot+1)-418,display=row?.displayName||name;
    const title=({'Natus Vincere':'NAVI','BETBOOM':'BetBoom','Ninjas in Pyjamas':'NIP',
     'Chinggis Warriors':'Chinggis W.','THUNDER dOWNUNDER':'THUNDER'})[display]||display;
    badge(c,name,[{name:row?.logoName||name,alpha:1}],25,y,30);
