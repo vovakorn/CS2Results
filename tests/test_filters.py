@@ -89,11 +89,52 @@ def test_iem_is_tier1_lan():
     assert is_tier1_lan(_match(tournament_name="IEM Cologne 2026")) == (True, None)
 
 
-def test_tier1_autopilot_is_shadow_only_and_respects_exclusions():
+def test_tier1_autopilot_respects_exclusions():
     assert tier1_autopilot_decision(_match(tournament_tier="s")) == (True, "pandascore_tier_s")
     assert tier1_autopilot_decision(
         _match(tournament_tier="s", tournament_name="IEM Closed Qualifier")
     ) == (False, "excluded_tournament")
+
+
+@pytest.mark.parametrize("tier", ["s", "a"])
+def test_pandascore_schedule_tiers_pass_results_without_venue(tier):
+    match = _match(
+        tournament_name="Thunderpick World Championship — 2026 — Playoffs",
+        tournament_tier=tier, location=None, is_lan=None, prize_pool_usd=None,
+    )
+    assert tier1_autopilot_decision(match)[0] is True
+    assert is_tier1_lan(match) == (True, None)
+
+
+@pytest.mark.parametrize("tier", ["b", "c", "d", None])
+def test_other_tiers_without_venue_still_rejected(tier):
+    assert is_tier1_lan(_match(
+        tournament_name="Regional Finals", tournament_tier=tier, location=None,
+    )) == (False, "lan_unconfirmed")
+
+
+@pytest.mark.parametrize("overrides,reason", [
+    ({"tournament_name": "Thunderpick Closed Qualifier"}, "excluded_tournament"),
+    ({"tournament_name": "Thunderpick Showmatch"}, "excluded_tournament"),
+    ({"team1_name": "NAVI Academy"}, "excluded_team"),
+    ({"team1_name": "NAVI Junior"}, "excluded_team"),
+    ({"team1_name": "NAVI Youth"}, "excluded_team"),
+    ({"is_lan": False}, "explicitly_not_lan"),
+    ({"location": "Online"}, "online_location"),
+    ({"tournament_name": "Regional Online Stage"}, "online_tournament"),
+])
+def test_pandascore_tier_a_does_not_override_explicit_exclusions(overrides, reason):
+    data = dict(tournament_name="Thunderpick World Championship 2026",
+                tournament_tier="a", location=None)
+    data.update(overrides)
+    assert is_tier1_lan(_match(**data)) == (False, reason)
+
+
+def test_liquipedia_tier_a_still_requires_lan_evidence():
+    assert is_tier1_lan(_match(
+        source="liquipedia", tournament_name="Regional Finals",
+        tournament_tier="a", location=None,
+    )) == (False, "lan_unconfirmed")
 
 
 def test_tier1_event_without_lan_evidence_is_rejected():

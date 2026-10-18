@@ -9,6 +9,27 @@ from cs2bot.match_sources.models import SourceUnavailableError
 from cs2bot.match_sources.sources import pandascore_source
 
 
+@pytest.mark.parametrize("label,bo,expected", [
+    ("Grand Final: NAVI vs FaZe", 3, True),
+    ("Final: NAVI vs FaZe", 3, True),
+    ("Grand Final", 3, True),
+    ("Semi-final: NAVI vs FaZe", 3, False),
+    ("Quarterfinal: NAVI vs FaZe", 3, False),
+    ("Upper Bracket Final: NAVI vs FaZe", 3, False),
+    ("Lower Final: NAVI vs FaZe", 3, False),
+    ("Group Finals", 3, False),
+    (None, 3, False),
+    (None, 5, True),
+])
+def test_final_candidate_hint_uses_match_label_not_playoff_stage(label, bo, expected):
+    item = _sample_match()
+    item.update(name=label, number_of_games=bo)
+    match = pandascore_source._normalize_item(item)
+    assert match.final_candidate_hint is expected
+    assert match.is_final is False
+    assert match.final_identity_confirmed is False
+
+
 def _sample_match():
     return {
         "id": 12345,
