@@ -1,7 +1,19 @@
 # Мировой VRS: Reel по итогам месяца
 
-Локальная реализация от 16 октября 2026. Автопубликация ещё не развёрнута.
+PR #156 слит 17 октября 2026; production и автопубликация включены 18 октября.
+Первый плановый выпуск — **1 ноября в 12:00 МСК за октябрь**, если источник
+пройдёт проверки. Первая реальная месячная публикация ещё не подтверждена.
+Полные проверки: [production-состояние](../PROJECT_STATUS.md).
 Пользователь выбрал **один мировой Reel**, а не три региональных.
+
+Текущий runtime: рендер `d4e8n07roso4762pf1h4` / production
+`d4e6u0tiersucqk7pb3k`, publisher `d4es8uk4gjgioi5n7lek` / production
+`d4en67h3m9s23og9ccnu`; ACTIVE timer `a1sor39q8jmdl2vvleie` вызывает
+publisher по `production`. CI (1 006 Python / 26 Node), полный облачный Reel,
+приватное сохранение и сквозные source/owner-policy dry-run прошли.
+Yandex Cloud вернул `Unavailable` при чтении startup-логов обеих функций;
+пользователь 18 октября разрешил исключение только для этого релиза.
+Ошибки, видимые только в журналах, остаются непроверенными.
 
 ## Содержание
 
@@ -95,8 +107,8 @@ VRS_FFMPEG_PATH=/absolute/path/to/ffmpeg node video/vrs-major-race/cloud/preview
 
 1. Полные тесты, PR/CI/merge. Linux CI собирает и полностью декодирует
    прежний Americas и новый месячный мировой Reel из упакованного handler.
-2. Обновить Node-рендер через его candidate/smoke/promote-процесс. До этого
-   текущий production не поддерживает новый `job=monthly`.
+2. Обновить Node-рендер через его candidate/smoke/promote-процесс до
+   проверки publisher, если меняется контракт `job=monthly`.
 3. `XRAY_ENABLED=1 python scripts/build_monthly_vrs_function.py` — отдельный
    пакет Python worker с закреплённым Xray. Не выкладывать его в основной бот.
 4. Создать приватный candidate нового worker, используя текущий service account,

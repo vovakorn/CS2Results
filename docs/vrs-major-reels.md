@@ -4,10 +4,11 @@
 LiquipediaDB и по запросу создаёт один из трёх региональных роликов.
 Она работает отдельно от основной Python-функции бота и социальных публикаций.
 
-Новый `job=monthly` создаёт один мировой Reel за закрытый месяц; его подпись,
+С 18 октября production-рендер `d4e6u0tiersucqk7pb3k` поддерживает также
+`job=monthly`: один мировой Reel за закрытый месяц. Его подпись,
 отдельный publisher и месячный timer описаны в [контракте месячных Reels](monthly-vrs-reels.md).
 
-## Подтверждённый релиз — 16 октября 2026
+## Первый подтверждённый релиз — 16 октября 2026
 
 [PR #154](https://github.com/vovakorn/CS2Results/pull/154), Git `702bacf18058`.
 Function ID `d4e8n07roso4762pf1h4`, production `d4eq6vn8mn1kmb724c9o`.
