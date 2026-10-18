@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal, cast
 
@@ -231,6 +232,7 @@ def _normalize_item(item: dict[str, Any]) -> MatchNormalized | None:
             normalized_opponents[1][1],
         ),
         tournament_tier=_tournament_tier(item.get("tournament")),
+        final_candidate_hint=_is_final_candidate(item),
         team1_name=normalized_opponents[0][0],
         team2_name=normalized_opponents[1][0],
         team1_logo_url=normalized_opponents[0][2],
@@ -335,6 +337,13 @@ def _normalize_raw_upcoming(data: Any) -> list[UpcomingMatchNormalized]:
         if match:
             matches.append(match)
     return matches
+
+
+def _is_final_candidate(item: dict[str, Any]) -> bool:
+    # A hint delays delivery; it never confirms a champion or unlocks final art.
+    label = str(item.get("name") or "").casefold().strip()
+    explicit_final = re.match(r"^(?:grand[ -]?final|final)(?:\s*:|\s*$)", label)
+    return bool(explicit_final) or _optional_int(item.get("number_of_games")) == 5
 
 
 def _headers(token: str) -> dict[str, str]:

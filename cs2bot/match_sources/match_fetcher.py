@@ -11,7 +11,9 @@ from typing import Literal
 
 from . import config as source_config
 from .filters import is_tier1_lan, is_valid_match
+from .final_wait import list_waits, observe_primary, observe_resolution
 from .models import MatchNormalized, SourceUnavailableError
+from .storage import StorageUnavailableError
 from .storage import (
     claim_liquipedia_shadow_hour,
     clear_pending_liquipedia_final,
@@ -29,7 +31,8 @@ logger = logging.getLogger(__name__)
 
 
 SHADOW_MATCH_TIME_WINDOW = timedelta(hours=12)
-LIQUIPEDIA_FINAL_WAIT_SECONDS = 10 * 60
+# Both source arrival orders use the same configurable preparation window.
+LIQUIPEDIA_FINAL_WAIT_SECONDS = source_config.FINAL_CARD_WAIT_SECONDS
 FINAL_STAGE_TOKENS = {
     "final", "finals", "grand", "semi", "semifinal", "semifinals", "quarterfinal",
     "quarterfinals", "playoff", "playoffs", "group", "groups", "stage", "results",
@@ -61,9 +64,8 @@ def _score_by_team(match: MatchNormalized) -> dict[str, int | None]:
     }
 
 
-def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
-    """Accept a fully sourced final card or a final with a complete standings table."""
-    complete_result_card = (
+def _has_complete_final_card(match: MatchNormalized) -> bool:
+    return (
         match.source == "liquipedia"
         and match.is_final
         and match.final_identity_confirmed
@@ -71,6 +73,10 @@ def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
         and 3 <= len(match.maps) <= 5
         and all(item.score1 is not None and item.score2 is not None for item in match.maps)
     )
+
+
+def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
+    """Accept a fully sourced final card or a final with a complete standings table."""
     complete_standings = (
         match.source == "liquipedia"
         and match.is_final
@@ -79,7 +85,7 @@ def _is_eligible_liquipedia_final(match: MatchNormalized) -> bool:
         and 2 <= len(match.tournament_placements) <= 64
         and all(item.prize_usd is not None for item in match.tournament_placements)
     )
-    return complete_result_card or complete_standings
+    return _has_complete_final_card(match) or complete_standings
 
 
 def _same_match(left: MatchNormalized, right: MatchNormalized) -> bool:
@@ -295,6 +301,54 @@ def _replace_with_liquipedia_finals(
     return merged
 
 
+async def _wait_for_liquipedia_final_cards(
+    primary_matches: list[MatchNormalized],
+    liquipedia_matches: list[MatchNormalized],
+    confirmed_finals: list[MatchNormalized],
+    *, now: datetime, dry_run: bool,
+) -> list[MatchNormalized]:
+    waits = await list_waits(now=now, max_age_hours=source_config.MAX_SOURCE_STALENESS_HOURS,
+                             dry_run=dry_run)
+    by_uid = {match.match_uid: match for match in primary_matches}
+    # Saved matches survive source pagination/limit changes during the grace period.
+    for wait in waits:
+        if is_match_fresh(wait.match, now=now):
+            by_uid.setdefault(wait.match.match_uid, wait.match)
+    result = []
+    resolved = []
+    waiting_uids = {wait.match.match_uid for wait in waits}
+    for primary in by_uid.values():
+        hinted = primary.match_uid in waiting_uids or primary.final_candidate_hint or any(
+            (match.final_candidate_hint or match.final_identity_confirmed)
+            and _same_final_match(primary, match)
+            for match in [*liquipedia_matches, *confirmed_finals]
+        )
+        if not hinted or not is_valid_match(primary)[0] or not is_tier1_lan(primary)[0]:
+            result.append(primary)
+            continue
+        wait = await observe_primary(primary, now=now, dry_run=dry_run)
+        age_seconds = max(0, (now - wait.first_seen_at).total_seconds())
+        ready = any(_same_final_match(primary, final) and _has_complete_final_card(final)
+                    for final in confirmed_finals)
+        if ready or age_seconds >= source_config.FINAL_CARD_WAIT_SECONDS:
+            outcome = "liquipedia_ready" if ready else "timeout_regular_result"
+            if not dry_run:
+                try:
+                    await observe_resolution(wait, now=now, outcome=outcome, ready=ready)
+                except StorageUnavailableError:
+                    # Measurement errors must not reset the durable wait or stop delivery.
+                    logger.warning("event=final_format_observation_failed match_uid=%s", primary.match_uid)
+            logger.info("event=final_format_wait_resolved match_uid=%s outcome=%s observed_delay_seconds=%s",
+                        primary.match_uid, outcome, int(age_seconds))
+            # Previously held results take priority over newer source-page entries.
+            resolved.append((wait.first_seen_at, primary))
+        else:
+            logger.info("event=final_format_waiting match_uid=%s first_seen_at=%s elapsed_seconds=%s wait_seconds=%s",
+                        primary.match_uid, wait.first_seen_at.isoformat(), int(age_seconds),
+                        source_config.FINAL_CARD_WAIT_SECONDS)
+    return [match for _, match in sorted(resolved, key=lambda item: item[0])] + result
+
+
 async def _apply_liquipedia_final_card_selection(
     primary_matches: list[MatchNormalized],
     limit: int,
@@ -315,12 +369,19 @@ async def _apply_liquipedia_final_card_selection(
         if require_fresh:
             matches = [match for match in matches if is_match_fresh(match)]
         finals, _ = confirm_liquipedia_final_candidates(matches)
-        selected = _replace_with_liquipedia_finals(primary_matches, finals)
+        primaries = await _wait_for_liquipedia_final_cards(
+            primary_matches, matches, finals,
+            now=now or datetime.now(timezone.utc), dry_run=dry_run,
+        )
+        selected = _replace_with_liquipedia_finals(primaries, finals)
         for final in finals:
             primary_match = next(
-                (match for match in primary_matches if _same_final_match(match, final)), None
+                (match for match in [*primary_matches, *primaries] if _same_final_match(match, final)), None
             )
             if primary_match:
+                if not any(_same_final_match(match, final) for match in primaries):
+                    # The primary result is still waiting for complete card data.
+                    continue
                 if final.final_bridge_uid and not dry_run:
                     await clear_pending_liquipedia_final(final.final_bridge_uid)
                 logger.info(
@@ -367,9 +428,14 @@ async def _apply_liquipedia_final_card_selection(
                     LIQUIPEDIA_FINAL_WAIT_SECONDS,
                 )
         return selected
+    except StorageUnavailableError:
+        # Without durable first-seen state, a possible final must not leak early.
+        raise
     except Exception as exc:
         logger.warning("event=liquipedia_final_card_skipped error_type=%s", type(exc).__name__)
-        return primary_matches
+        return await _wait_for_liquipedia_final_cards(
+            primary_matches, [], [], now=now or datetime.now(timezone.utc), dry_run=dry_run,
+        )
 
 
 def compare_source_matches(
@@ -801,13 +867,13 @@ async def get_new_finished_matches(
             )
         if shadow_diagnostics is not None and comparison is not None:
             shadow_diagnostics.update(comparison)
-        if final_cards_enabled and shared_matches is not None:
+        if final_cards_enabled:
             fetched = await _apply_liquipedia_final_card_selection(
                 fetched,
                 fetch_limit,
                 require_fresh=require_fresh,
                 dry_run=dry_run,
-                liquipedia_matches=shared_matches,
+                liquipedia_matches=shared_matches if shared_matches is not None else [],
             )
     elif used_source == "liquipedia":
         confirmed, _ = confirm_liquipedia_final_candidates(fetched)

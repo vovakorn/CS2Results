@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
 import pytest
+from cs2bot.match_sources import final_wait
 
 from cs2bot.match_sources.models import MatchNormalized, VRSRankingSnapshot, VRSTeamSnapshot
 from cs2bot.match_sources.storage import (
@@ -417,6 +418,67 @@ def _match():
 def test_is_processed_false_when_object_missing():
     s3 = FakeS3()
     assert asyncio.run(is_processed("pandascore_2378481", client=s3, bucket="bucket")) is False
+
+
+def test_final_format_observation_survives_restarts_and_dry_run_never_writes():
+    s3 = FakeS3()
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    match = _match()
+    preview = asyncio.run(final_wait.observe_primary(match, now=now, dry_run=True, client=s3, bucket="bucket"))
+    assert preview.first_seen_at == now
+    assert s3.objects == {}
+    first = asyncio.run(final_wait.observe_primary(match, now=now, client=s3, bucket="bucket"))
+    second = asyncio.run(final_wait.observe_primary(match, now=now + timedelta(minutes=15), client=s3, bucket="bucket"))
+    assert first.first_seen_at == second.first_seen_at == now
+    replayed = asyncio.run(final_wait.list_waits(now=now + timedelta(minutes=20), max_age_hours=48,
+                                               client=s3, bucket="bucket"))
+    assert replayed == [first]
+
+
+def test_final_format_observation_preserves_concurrent_first_writer():
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    match = _match()
+    earlier = final_wait.FinalWait(match=match, first_seen_at=now - timedelta(minutes=2))
+
+    class RacingS3(FakeS3):
+        def put_object(self, **kwargs):
+            if kwargs.get("IfNoneMatch") == "*" and kwargs["Key"] not in self.objects:
+                super().put_object(**{**kwargs, "Body": earlier.model_dump_json().encode()})
+            return super().put_object(**kwargs)
+
+    result = asyncio.run(final_wait.observe_primary(match, now=now, client=RacingS3(), bucket="bucket"))
+    assert result.first_seen_at == earlier.first_seen_at
+
+
+def test_final_format_resolution_saves_first_ready_and_timeout_independently():
+    s3 = FakeS3()
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    wait = final_wait.FinalWait(match=_match(), first_seen_at=now)
+    for minutes, ready in [(20, False), (30, True), (45, True)]:
+        asyncio.run(final_wait.observe_resolution(wait, now=now + timedelta(minutes=minutes),
+                    outcome="ready" if ready else "timeout", ready=ready, client=s3, bucket="bucket"))
+    records = [json.loads(value["Body"]) for value in s3.objects.values()]
+    assert len(records) == 2
+    assert sorted(value["observed_delay_seconds"] for value in records) == [1200, 1800]
+
+
+def test_final_wait_expired_cleanup_is_disabled_in_dry_run():
+    s3 = FakeS3()
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    asyncio.run(final_wait.observe_primary(_match(), now=now - timedelta(hours=73), client=s3, bucket="bucket"))
+    assert asyncio.run(final_wait.list_waits(now=now, max_age_hours=48, dry_run=True, client=s3, bucket="bucket")) == []
+    assert len(s3.objects) == 1
+    assert asyncio.run(final_wait.list_waits(now=now, max_age_hours=48, client=s3, bucket="bucket")) == []
+    assert s3.objects == {}
+
+
+def test_final_wait_corrupt_state_fails_closed():
+    s3 = FakeS3()
+    now = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+    key = f"{final_wait.PREFIX}{_match().match_uid}.json"
+    s3.put_object(Bucket="bucket", Key=key, Body=b"broken", ContentType="application/json")
+    with pytest.raises(StorageUnavailableError):
+        asyncio.run(final_wait.observe_primary(_match(), now=now, client=s3, bucket="bucket"))
 
 
 def test_logo_cache_round_trips_png_by_source_url():
