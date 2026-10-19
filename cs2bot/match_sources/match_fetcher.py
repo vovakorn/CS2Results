@@ -259,6 +259,13 @@ def _replace_with_liquipedia_finals(
             )
             updates = {}
             updates["canonical_uid_override"] = primary.match_uid
+            updates["editorial_admission_uid"] = (
+                primary.match_uid
+                if primary.source == "pandascore"
+                and is_valid_match(primary)[0]
+                and is_tier1_lan(primary)[0]
+                else None
+            )
             updates["competition_key"] = primary.competition_key or final.competition_key
             updates["competition_key_aliases"] = list(
                 dict.fromkeys(
