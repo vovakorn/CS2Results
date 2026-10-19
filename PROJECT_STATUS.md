@@ -1,7 +1,8 @@
 # CS2 Results Bot — production-состояние
 
 Обновлено: 19 октября 2026 года. По Cloud Functions API основной production —
-`d4eaa9eep3p8f15bul9g` от 16 октября. Ниже сохранены исторические проверки
+`d4enh0ie8i9np2ig0r6m`, переключён 19 октября в 07:29:50 МСК;
+rollback — `d4eaa9eep3p8f15bul9g`. Ниже сохранены исторические проверки
 подготовки релизов; их прежние версии не заменяют эту текущую проверку.
 
 Ежемесячный мировой VRS Reel выпущен; его автопубликация включена.
@@ -11,7 +12,7 @@
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## VRS и рендер Threads — кандидат, 19 октября 2026
+## VRS и рендер Threads — production, 19 октября 2026
 
 - Telegram VRS различает неопределённый ответ и определённый отказ: первый
   блокирует повтор и текстовый fallback, второй сохраняет безопасный retry.
@@ -41,16 +42,27 @@ production и сверки фактического состояния. Теку
   256 MB, timeout 120 s, service account, 30 env vars и 7 Lockbox references.
   Функция приватна; семь main timers вызывают `production`, радар PAUSED;
   всего девять timers. Значения секретов не читались.
-- Candidate smoke остановлен на `log_read_failed`: Cloud Functions и независимый
+- Первоначальный candidate smoke остановлен на `log_read_failed`: Cloud Functions и независимый
   Logging API вернули `Unavailable`. Request IDs:
   `0381671c-f54c-4ae8-8ef4-752ca582cdab`,
   `9dea9cab-aa62-475d-9d72-89e23c740954`.
-  Startup-ошибки остаются непроверенными; исключения прежних релизов не применены.
-  Manifest: `dist/releases/d4enh0ie8i9np2ig0r6m.json`, `candidate_failed`.
-  Production остаётся `d4eaa9eep3p8f15bul9g`; promote ожидает восстановления
-  логов либо отдельного разрешения на исключение именно для этого кандидата.
+  Пользователь явно разрешил разовое исключение для этого кандидата при
+  продвижении и после него. Startup-ошибки остаются непроверенными; исключение
+  не распространяется на следующие релизы. Исходный `log_read_failed` сохранён
+  в manifest вместе с approval, scope и хешами исходного/разового release runner.
+- В 07:29:50 МСК production переключён на `d4enh0ie8i9np2ig0r6m`,
+  rollback закреплён на `d4eaa9eep3p8f15bul9g`. Стандартный production dry-run
+  и дополнительный `results/auto` dry-run вернули HTTP 200, `dry_run=true`;
+  источник вернул один матч. Контрольные запуски не отправляли сообщения.
+  Config, private IAM, семь main timers и общее число девять timers сверены
+  после переключения; упакованный `cs2bot/main.py` совпал с release Git.
+- Manifest: `dist/releases/d4enh0ie8i9np2ig0r6m.json`, `promoted`;
+  `checks.production_smoke.error=log_read_failed`, `startup_logs_checked=false`.
+  Проверка production: `dist/delivery-reliability-production-verification.json`.
+  Штатный release-скрипт не изменён; разовый runner допустил только недоступное
+  чтение логов этой версии. Остальные gates и автоматический rollback сохранены.
 
-## Результаты Thunderpick — локальное исправление, 18 октября 2026
+## Результаты Thunderpick — production, 19 октября 2026
 
 - Дополнительно подготовлено ожидание полного финального набора Liquipedia
   для PandaScore-кандидатов: окно 20 минут, раннее снятие при готовности,
@@ -82,7 +94,8 @@ production и сверки фактического состояния. Теку
   история автоматических запусков не подтверждена.
 - Исправление подготовлено в отдельной рабочей копии от production Git
   `8911a35494b9`; незавершённые изменения основной копии сохранены.
-  PR, merge, deploy и исторические публикации не выполнялись.
+  PR #157 слит, исправления вошли в общий production Git `82dd630051be`
+  с PR #158 19 октября. Исторические публикации в ходе релиза не выполнялись.
 
 ## Ежемесячный мировой VRS Reel — production, 18 октября 2026
 
