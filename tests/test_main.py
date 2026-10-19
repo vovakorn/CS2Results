@@ -2990,6 +2990,21 @@ def test_digest_skips_publication_when_no_tier1_results(monkeypatch):
     assert body["matches_selected"] == 0
 
 
+def test_digest_includes_thunderpick_tier_a_without_venue(monkeypatch):
+    async def fake_fetch(limit, start=None, end=None):
+        return [_match().model_copy(update={
+            "tournament_name": "Thunderpick World Championship — 2026 — Playoffs",
+            "tournament_tier": "a", "location": None, "is_lan": None,
+            "prize_pool_usd": None, "is_tier1_lan": False,
+        })]
+
+    monkeypatch.setattr(main, "fetch_pandascore_finished_matches", fake_fetch)
+    response = main.handler({"job": "digest", "dry_run": True}, None)
+    body = json.loads(response["body"])
+    assert response["statusCode"] == 200
+    assert body["matches_selected"] == 1
+
+
 def test_digest_uses_spoiler_results_card_when_media_cards_enabled(monkeypatch):
     sent_photos = []
     sent_text = []

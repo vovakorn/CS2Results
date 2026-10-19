@@ -94,7 +94,7 @@ def detect_operator(tournament_name: str) -> str | None:
 
 
 def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
-    """Select Tier-1 results, including narrowly configured online event phases.
+    """Select Tier-1 results, accepting PandaScore S/A without venue metadata.
 
     The function name is retained for compatibility with existing normalized
     records and storage state.
@@ -119,6 +119,17 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     if tier1_confirmed and _matches_trusted_phase(
         match.tournament_name,
         TRUSTED_ONLINE_TIER1_TOURNAMENT_PHASE_PATTERNS,
+    ):
+        return True, None
+
+    # The schedule already trusts the provider's S/A classification. Missing
+    # venue fields must not silently remove those results or the daily digest.
+    # Explicit online evidence still requires a configured online-stage rule.
+    if (
+        match.source == "pandascore"
+        and tier1_autopilot_decision(match)[0]
+        and not any(marker in location_lower for marker in ONLINE_LOCATION_MARKERS)
+        and not any(marker in tournament_lower for marker in ONLINE_LOCATION_MARKERS)
     ):
         return True, None
 
@@ -185,7 +196,7 @@ def is_featured_upcoming(match: UpcomingMatchNormalized) -> tuple[bool, str | No
 def tier1_autopilot_decision(
     match: MatchNormalized | UpcomingMatchNormalized,
 ) -> tuple[bool, str]:
-    """Return the tier decision used by schedule selection and result diagnostics."""
+    """Return the tier decision used by schedule and result selection."""
     if _contains_pattern(match.tournament_name, TOURNAMENT_EXCLUSION_PATTERNS):
         return False, "excluded_tournament"
     if _contains_pattern(
