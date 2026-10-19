@@ -1177,6 +1177,7 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
                 cards = render_tournament_vrs_cards(
                     pending.match.tournament_name, impacts, impacts[0].source,
                     branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH),
+                    tournament_logo_url=pending.match.tournament_logo_url,
                 )
             except Exception as exc:
                 log_event(logger, logging.WARNING, "vrs_card_fallback",
@@ -1290,6 +1291,7 @@ def _deliver_tournament_standings(
                     match.tournament_name,
                     match.tournament_placements,
                     branding=branding_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH),
+                    tournament_logo_url=match.tournament_logo_url,
                 )
             except Exception as exc:
                 log_event(
@@ -2064,7 +2066,8 @@ def _deliver_social_tournament_standings(
         if claim is None:
             return "duplicate"
         cards = render_tournament_standings_cards(match.tournament_name, match.tournament_placements,
-            branding=branding_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH))
+            branding=branding_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH),
+            tournament_logo_url=match.tournament_logo_url)
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         if platform == "threads":
             _publish_threads_chain(
@@ -2165,7 +2168,8 @@ def _deliver_social_tournament_vrs(
         if claim is None:
             return "duplicate"
         cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source,
-            branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH))
+            branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH),
+            tournament_logo_url=pending.match.tournament_logo_url)
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         if platform == "threads":
             _publish_threads_chain(

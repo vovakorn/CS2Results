@@ -79,10 +79,27 @@ def normalize_snapshot(payload: Any, *, source: str, fetched_at: str | None = No
     return VRSRankingSnapshot(source=source, version=version, effective_at=effective_at, fetched_at=fetched, teams=teams)
 
 
+# Reviewed Liquipedia labels -> official Valve live/global names. Exact keys only:
+# never strip academy/youth suffixes or infer roster identity from these aliases.
+_VALVE_TEAM_NAME_ALIASES = {
+    "betboom team": "betboom",
+    "aurora gaming": "aurora",
+    "team falcons": "falcons",
+    "9z team": "9z",
+}
+
+
+def _team_name_key(name: str, source: str) -> str:
+    key = name.casefold()
+    if source == "Valve VRS live/global":
+        return _VALVE_TEAM_NAME_ALIASES.get(key, key)
+    return key
+
+
 def _unique_teams_by_name(snapshot: VRSRankingSnapshot) -> dict[str, VRSTeamSnapshot | None]:
     result: dict[str, VRSTeamSnapshot | None] = {}
     for team in snapshot.teams:
-        key = team.team_name.casefold()
+        key = _team_name_key(team.team_name, snapshot.source)
         result[key] = None if key in result else team
     return result
 
@@ -101,7 +118,7 @@ def calculate_impacts(
     after_by_name = _unique_teams_by_name(after)
     impacts: list[TournamentVRSImpact] = []
     for placement in placements:
-        key = placement.team_name.casefold()
+        key = _team_name_key(placement.team_name, before.source)
         old, new = before_by_name.get(key), after_by_name.get(key)
         if (key in before_by_name and old is None) or (key in after_by_name and new is None):
             raise VRSDataError(f"VRS identity is ambiguous for {placement.team_name}")

@@ -1,8 +1,8 @@
 # CS2 Results Bot — production-состояние
 
 Обновлено: 19 октября 2026 года. По Cloud Functions API основной production —
-`d4enh0ie8i9np2ig0r6m`, переключён 19 октября в 07:29:50 МСК;
-rollback — `d4eaa9eep3p8f15bul9g`. Ниже сохранены исторические проверки
+`d4emqj8ha4il74rbp2s1`, Git `39506b132d8f`, переключён 19 октября
+в 09:41:51 МСК; rollback — `d4enh0ie8i9np2ig0r6m`. Ниже сохранены исторические проверки
 подготовки релизов; их прежние версии не заменяют эту текущую проверку.
 
 Ежемесячный мировой VRS Reel выпущен; его автопубликация включена.
@@ -12,7 +12,7 @@ rollback — `d4eaa9eep3p8f15bul9g`. Ниже сохранены историч�
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## Допуск финала после смены источника — локально, 19 октября 2026
+## Допуск финала после смены источника — production, 19 октября 2026
 
 - Production auto dry-run подтвердил: финал Thunderpick FURIA 3:2 BetBoom
   (`1741367`) заменяется Liquipedia `oyckLEjvba_R02-M001`, затем отклоняется
@@ -39,9 +39,120 @@ production и сверки фактического состояния. Теку
   и один сбой теста startup-gate во время обновления Git HEAD при объединении
   документации. В артефактах сбой произошёл после сборки, до cloud calls;
   изолированный повтор при стабильном HEAD прошёл (**1 passed**). Код менять
-  не потребовалось. Обязательный полный CI запускается на неизменной ветке.
-- Исправление остаётся локальным: PR, merge, deploy и допубликация финала
-  не выполнялись. Текущий production не изменён.
+  не потребовалось. Полный CI на стабильной ветке: **1 098 passed**
+  на Python 3.11 и Python 3.12; Linux VRS, pip check и audit успешны.
+- PR [#159](https://github.com/vovakorn/CS2Results/pull/159) слит:
+  Git `39506b132d8f434fcff9f626b904b8eaac9f6c06`.
+  Кандидат `d4emqj8ha4il74rbp2s1` ACTIVE; SHA-256 архива
+  `0ca9aea794f578f1f8306574e7930a6f811f5438624c7c2b8eb6812fa29c98f3`.
+  Конфигурация совпадает с production. Обычный candidate smoke: HTTP 200,
+  `dry_run=true`; startup log API вернул `Unavailable`, manifest сохраняет
+  исходную ошибку `candidate_failed` / `log_read_failed` до исключения.
+- Дополнительный candidate auto dry-run без обхода фильтров вернул настоящий
+  Liquipedia-финал `oyckLEjvba_R02-M001`, BetBoom 2:3 FURIA,
+  `is_tier1_lan=true`, `filter_reason=null`. Публикаций этим запуском не было.
+  Production auto dry-run после переключения также вернул этот финал с
+  `is_tier1_lan=true`, `filter_reason=null`, HTTP 200 и `dry_run=true`.
+- Пользователь отдельно разрешил разовый пропуск чтения startup-логов этого
+  кандидата и production smoke: «Да, разрешаю для этого релиза».
+  Локальный adapter привязан к candidate, предыдущей версии, Git и SHA-256
+  архива; восемь сценариев проверили, что HTTP/dry-run/startup/tag failures и
+  другая версия не обходят gate. Скрипт репозитория и архив не менялись.
+- Promote завершён в **09:41:51 МСК**, manifest `status=promoted`.
+  Candidate и production smoke: HTTP 200, `dry_run=true`. Оба сохранили
+  `error=log_read_failed`, `startup_error_detected=null` и отдельную запись
+  разрешения: отсутствие ошибок в непрочитанных журналах не подтверждено.
+  Manifest: `dist/releases/d4emqj8ha4il74rbp2s1.json`.
+- Повторное чтение тегов подтвердило production `d4emqj8ha4il74rbp2s1`,
+  rollback `d4enh0ie8i9np2ig0r6m`. Сравнение всех environment/secret references,
+  ресурсов и runtime-настроек с исходным production успешно; все девять
+  timer definitions/status сохранены, семь основных таймеров вызывают
+  `production`. Секретные payload не читались.
+- Ручных или тестовых публикаций не было; claims/markers/outbox вручную
+  не менялись. Dry-run подтверждает отбор финала, но не доставку сообщения.
+  Актуальные артефакты проверки сохранены рядом с manifest.
+
+## Проверка публикаций Thunderpick — 19 октября 2026
+
+- После разрешения пользователя «Публикуй везде» прочитаны фактические
+  per-channel processed markers и claims: все шесть claims имеют `status=sent`.
+  Счёт финала FURIA 3:2 BetBoom уже отправлен как обычный PandaScore-результат:
+  Telegram 08:44:23, Instagram 08:44:41, Threads 08:45:07 МСК.
+  Это не подтверждение отдельной расширенной финальной карточки Liquipedia;
+  существующий результат автоматически не заменяется из-за дедупликации.
+- Отдельные итоги турнира с местами и призовыми автоматически доставлены после
+  релиза: Telegram 09:44:13, Instagram 09:44:29, Threads 09:44:51 МСК.
+  Подтверждены content claims и processed markers
+  `content_tournament-standings-v1_{channel}_Thunderpick_World_Championship_2026`.
+  Данные: восемь команд, FURIA $500 000, BetBoom $250 000; источник Liquipedia.
+  Повторные внешние отправки и изменения markers/claims не выполнялись.
+- В полном списке `vrs-snapshots/` есть только EPL `before/initial.json`;
+  Thunderpick baseline отсутствует как для `22133`, так и для
+  `Thunderpick/World_Championship/2026`. Поэтому VRS-итог Thunderpick в текущем
+  автоматическом пути не выйдет даже при появлении нового after snapshot.
+  Исторический baseline не восстанавливался; поздний снимок не выдаётся за before.
+- Проверки операционного состояния не меняли код. Новые тесты не требуются.
+
+## Сопоставление VRS-команд и логотипы — согласованный релиз, 19 октября 2026
+
+- Добавлены ровно четыре case-insensitive точных соответствия для источника
+  `Valve VRS live/global`: BetBoom Team → BETBOOM, Aurora Gaming → Aurora,
+  Team Falcons → Falcons, 9z Team → 9z. Одинаковая нормализация применяется
+  к таблице участников и обеим версиям рейтинга; итоговые подписи Liquipedia
+  и исходные снимки не меняются.
+- Коллизия названий после алиасов блокирует расчёт как ambiguous даже при
+  наличии точной строки. Идентификатор команды должен совпадать в before/after;
+  алиасы не разрешают смену ID/состава, fuzzy, академии или другого провайдера.
+- 24 новых регрессионных сценария: до изменения 12 failed / 12 passed,
+  после исправления **52 passed** вместе с прежними VRS и summary-logo tests.
+  На реальном восстановленном baseline найдены все восемь участников,
+  включая четыре прежде отсутствовавших точных имени. After не выдумывался.
+- В тот же релиз включено подготовленное ранее исправление логотипа призовых
+  и VRS для Telegram, Instagram и Threads. Пользователь: «После этого заливай».
+  Полный локальный набор: **1 129 passed** за 195,22 s; pip check успешен.
+  Выпуск выполняется одним PR/CI/candidate/promote циклом; финальное состояние
+  будет дополнено после облачных проверок. Предыдущее разовое исключение
+  startup-логов не переносится на новый кандидат.
+
+## Восстановление VRS и логотип итогов Thunderpick — 19 октября 2026
+
+- Причина отсутствующего baseline подтверждена по коду и реестру: запись
+  выполняется перед доставкой анонса для одобренного preview profile. В реестре
+  нет Thunderpick; visual theme не создаёт анонс или baseline, радар его больше
+  не сохраняет. Обычные расписание и результаты baseline не создают.
+- Пользователь разрешил восстановление и публикацию изменений. Официальный
+  `live/2026/standings_global_2026_10_05.md` загружен из Git blob Valve, SHA
+  `2aa2805394fbc68f36a5752a5b16026f2ab2fed5` проверен по байтам.
+  Нормализованы все 380 записей без изменения названий, очков или мест.
+  Время восстановления не выдано за захват до турнира: `effective_at`
+  5 октября, `fetched_at` — фактическое время 19 октября.
+- Сохранён и проверен чтением новый ключ
+  `vrs-snapshots/22133/before/standings_global_2026_10_05.md_2aa2805394fbc68f36a5752a5b16026f2ab2fed5.json`.
+  Существующий baseline не перезаписывался. Provenance:
+  `recovery/vrs/thunderpick-2026/baseline-restored-2026-10-19.json`.
+- В официальных `live/2026`, `invitation/2026` и истории `live/2026`
+  последняя версия — 5 октября, commit
+  `eec4853d7bcf0f1f7efe7f0d901234bef7e98b75`, 5 октября 16:36 UTC.
+  Снимка после финала 18 октября 21:31 UTC нет: расчёт/публикация VRS
+  не выполнялись, VRS processed markers отсутствуют. Идентичные снимки
+  не сравнивались как разные; неофициальный рейтинг не подставлялся.
+- Дополнительная проверка baseline выявила неполное точное сопоставление:
+  Liquipedia `BetBoom Team`, `Aurora Gaming`, `Team Falcons`, `9z Team`
+  против Valve `BETBOOM`, `Aurora`, `Falcons`, `9z`. Текущий calculate_impacts
+  потребует явного проверенного сопоставления; fuzzy/непроверенные алиасы
+  не добавлялись, официальный baseline не переписывался под Liquipedia.
+- Логотип `tournament_logo_url` присутствует в сохранённом финале и доступен
+  в media cache. У Thunderpick visual theme нет локального logo_asset;
+  standings/VRS renderers не принимали source-logo fallback. Локально добавлен
+  необязательный аргумент и передача во всех delivery paths трёх платформ.
+  Приоритет профильного ассета и fallback при недоступности сохранены.
+- **282 passed**: summary-logo regressions, media_cards, main, delivery reliability.
+  Проверены призовые/VRS на 2, 4 и 10 строках, длинные названия, недоступный
+  логотип и видимость контрастного логотипа на каждой странице 1080×1080.
+  Реальная таблица восьми команд с исходным cached logo отрендерена и
+  просмотрена: `dist/previews/thunderpick-standings-logo/1.png`.
+  Исправление логотипа локальное; PR/deploy/замена опубликованных постов
+  в этой задаче не выполнялись. Облачные claims и processed markers сохранены.
 
 ## VRS и рендер Threads — production, 19 октября 2026
 
