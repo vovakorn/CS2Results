@@ -122,12 +122,20 @@ def is_tier1_lan(match: MatchNormalized) -> tuple[bool, str | None]:
     ):
         return True, None
 
-    # The schedule already trusts the provider's S/A classification. Missing
-    # venue fields must not silently remove those results or the daily digest.
-    # Explicit online evidence still requires a configured online-stage rule.
+    # A confirmed replacement retains the checked primary's editorial admission,
+    # not the meaning of Liquipedia's own tier. The transient proof must identify
+    # the very same canonical match. Hard exclusions above still take priority.
+    inherited_admission = (
+        match.source == "liquipedia"
+        and match.is_final
+        and match.final_identity_confirmed
+        and match.editorial_admission_uid is not None
+        and match.editorial_admission_uid == match.canonical_uid_override
+    )
+    # Missing venue metadata does not remove PandaScore S/A or their confirmed
+    # final replacements. Explicit online evidence still needs an online rule.
     if (
-        match.source == "pandascore"
-        and tier1_autopilot_decision(match)[0]
+        ((match.source == "pandascore" and tier1_autopilot_decision(match)[0]) or inherited_admission)
         and not any(marker in location_lower for marker in ONLINE_LOCATION_MARKERS)
         and not any(marker in tournament_lower for marker in ONLINE_LOCATION_MARKERS)
     ):

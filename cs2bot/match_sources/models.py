@@ -119,6 +119,10 @@ class MatchNormalized(BaseModel):
     final_identity_confirmed: bool = False
     competition_key_aliases: list[str] = Field(default_factory=list, max_length=8)
     canonical_uid_override: str | None = Field(default=None, max_length=100)
+    # In-memory proof for a checked PandaScore -> Liquipedia final replacement.
+    # Only the resulting is_tier1_lan decision is persisted in the normal outbox;
+    # excluding this field keeps payloads readable by the previous runtime.
+    editorial_admission_uid: str | None = Field(default=None, max_length=100, exclude=True, repr=False)
     vrs_baseline_id: str | None = Field(default=None, max_length=500)
     tournament_parent: str | None = Field(default=None, max_length=500)
     tournament_placements_complete: bool = False
