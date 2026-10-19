@@ -108,6 +108,7 @@ from .match_sources.storage import (
     delete_result_delivery,
     enqueue_result_delivery,
     is_channel_processed,
+    is_processed,
     is_telegram_media_degraded,
     list_pending_result_deliveries,
     mark_channel_processed,
@@ -1139,26 +1140,50 @@ def _hold_unconfirmed_final_outbox(pending: PendingDelivery) -> bool:
 
 
 def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], channel_name: str) -> str:
+    """Deliver VRS with the same fail-closed protocol as tournament standings."""
     if _hold_unconfirmed_final_outbox(pending):
         return "held"
     if not _delivery_is_current(pending.channel_id, "tournament_vrs_standings", pending.generation):
         return "held"
-    impacts = pending.vrs_impacts
-    if not can_render_tournament_vrs(impacts):
-        asyncio.run(delete_result_delivery(pending))
-        log_event(logger, logging.WARNING, "vrs_outbox_discarded", match_uid=pending.match.match_uid, reason="incomplete_data")
-        return "duplicate"
-    content_uid = f"tournament-vrs-v1:{pending.channel_id}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
-    claim = asyncio.run(claim_content_delivery(content_uid))
-    if claim is None:
-        asyncio.run(delete_result_delivery(pending))
-        return "duplicate"
+    claim = None
     confirmed = False
+    attempting = False
     try:
-        text = format_tournament_vrs(pending.match.tournament_name, impacts)
-        cards = render_tournament_vrs_cards(pending.match.tournament_name, impacts, impacts[0].source,
-            branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH)) if TELEGRAM_MEDIA_CARDS else []
+        impacts = pending.vrs_impacts
+        if not can_render_tournament_vrs(impacts):
+            asyncio.run(delete_result_delivery(pending))
+            log_event(logger, logging.WARNING, "vrs_outbox_discarded",
+                      match_uid=pending.match.match_uid, reason="incomplete_data")
+            return "duplicate"
+        content_uid = f"tournament-vrs-v1:{pending.channel_id}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
+        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_vrs_standings")):
+            asyncio.run(delete_result_delivery(pending))
+            return "reconciled"
+        claim = asyncio.run(claim_content_delivery(content_uid))
+        if claim is None:
+            if asyncio.run(reconcile_content_delivery(content_uid, "tournament_vrs_standings")):
+                asyncio.run(delete_result_delivery(pending))
+                return "reconciled"
+            if asyncio.run(is_processed(f"content_{safe_storage_part(content_uid)}")):
+                asyncio.run(delete_result_delivery(pending))
+            # A busy/blocked claim is not proof of a completed publication.
+            return "duplicate"
+        text = _truncate_telegram_html(
+            format_tournament_vrs(pending.match.tournament_name, impacts), MAX_TELEGRAM_MESSAGE_LENGTH,
+        )
+        cards: list[bytes] = []
+        if TELEGRAM_MEDIA_CARDS:
+            try:
+                cards = render_tournament_vrs_cards(
+                    pending.match.tournament_name, impacts, impacts[0].source,
+                    branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH),
+                )
+            except Exception as exc:
+                log_event(logger, logging.WARNING, "vrs_card_fallback",
+                          match_uid=pending.match.match_uid, error_type=type(exc).__name__,
+                          error=_safe_error_message(exc))
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
+        attempting = True
         if cards:
             try:
                 if len(cards) > 1:
@@ -1174,13 +1199,28 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
         else:
             send_to_telegram(channel["chat_id"], text)
         confirmed = True
-        asyncio.run(mark_delivery_claim_sent(claim))
+        claim = asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_content_processed(content_uid, "tournament_vrs_standings"))
         asyncio.run(delete_result_delivery(pending))
         log_event(logger, logging.INFO, "vrs_delivery_succeeded", channel=channel_name, match_uid=pending.match.match_uid)
         return "sent"
-    except (TelegramDeliveryError, StorageUnavailableError) as exc:
-        if not confirmed:
+    except TelegramDeliveryUncertainError as exc:
+        _retain_uncertain_delivery_claim(claim)
+        try:
+            asyncio.run(delete_result_delivery(pending))
+        except Exception as cleanup_exc:
+            log_event(logger, logging.ERROR, "vrs_uncertain_outbox_cleanup_failed",
+                      match_uid=pending.match.match_uid, error_type=type(cleanup_exc).__name__)
+        _notify_admin(
+            "vrs_delivery_uncertain",
+            f"Telegram не подтвердил публикацию VRS турнира {pending.match.tournament_name} "
+            f"в канал {channel_name}; повтор отключён.",
+        )
+        log_event(logger, logging.ERROR, "vrs_delivery_uncertain", channel=channel_name,
+                  match_uid=pending.match.match_uid, error_type=type(exc).__name__)
+        return "uncertain"
+    except Exception as exc:
+        if claim is not None and not confirmed and (not attempting or isinstance(exc, TelegramDeliveryError)):
             try:
                 asyncio.run(release_delivery_claim(claim))
             except Exception:
@@ -2858,17 +2898,26 @@ def _handle_content_job(
     threads_sent = 0
     threads_duplicates = 0
     threads_failures = 0
+    threads_render_failures = 0
     if threads_enabled and not dry_run:
         groups = _group_threads_content(job, selected, day_key)
         for tournament_key, members in groups.items():
-            if job == "schedule":
-                cards = render_schedule_cards(members, local_now, DISPLAY_TIMEZONE)
-                caption = f"Расписание турнира: {members[0].tournament_name}"
-            elif job == "digest":
-                cards = render_results_cards(members, local_now)
-                caption = f"Результаты турнира: {members[0].tournament_name}"
-            else:
-                cards, caption = social_media_cards, text
+            try:
+                if job == "schedule":
+                    cards = render_schedule_cards(members, local_now, DISPLAY_TIMEZONE)
+                    caption = f"Расписание турнира: {members[0].tournament_name}"
+                elif job == "digest":
+                    cards = render_results_cards(members, local_now)
+                    caption = f"Результаты турнира: {members[0].tournament_name}"
+                else:
+                    cards, caption = social_media_cards, text
+            except Exception as exc:
+                threads_failures += 1
+                threads_render_failures += 1
+                log_event(logger, logging.ERROR, "threads_content_card_render_failed", job=job,
+                          tournament_key=tournament_key, error_type=type(exc).__name__,
+                          error=_safe_error_message(exc))
+                continue
             s, d, f = _deliver_threads_content(
                 job=job, day_key=day_key, cards=cards, caption=caption,
                 context=None, test_run_id=test_run_id, tournament_key=tournament_key,
@@ -2878,6 +2927,12 @@ def _handle_content_job(
             threads_duplicates += d
             threads_failures += f
 
+    if threads_render_failures:
+        _notify_admin(
+            "threads_content_card_render_failed",
+            f"Threads: не удалось подготовить карточки выпуска «{job}» "
+            f"для турниров: {threads_render_failures}. Остальные турниры обработаны.",
+        )
     if failures:
         _notify_admin("delivery_failed", f"Не доставлен выпуск «{job}»: ошибок {failures}.")
     body = {
