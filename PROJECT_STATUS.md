@@ -11,7 +11,7 @@
 production и сверки фактического состояния. Текущий commit всегда проверяется
 через Git и здесь не дублируется.
 
-## VRS и рендер Threads — подготовка релиза, 19 октября 2026
+## VRS и рендер Threads — кандидат, 19 октября 2026
 
 - Telegram VRS различает неопределённый ответ и определённый отказ: первый
   блокирует повтор и текстовый fallback, второй сохраняет безопасный retry.
@@ -29,8 +29,26 @@ production и сверки фактического состояния. Теку
 - Релиз согласован 19 октября. В worktree `delivery-reliability` объединена
   актуальная main `2f2b7bcc617a` с PR #157; конфликты были только в документации.
   Полный набор Python 3.12: **1 070 passed** за 181,70 s; `pip check` и проверка
-  форматирования diff успешны. До PR/CI и candidate/promote production сохранён;
-  публикаций в ходе проверки не было.
+  форматирования diff успешны. PR #158 слит: Git
+  `82dd630051be5e41c6bd8713d5dff748829a8d8b`. CI Python 3.11/3.12 подтвердил
+  1 070 тестов на каждой версии, dependency audit без известных уязвимостей,
+  сборки архивов; 26 Node-тестов и оба полных VRS decode-probe прошли.
+- Кандидат `d4enh0ie8i9np2ig0r6m` создан из чистого merged main. Архив SHA-256:
+  `bfcae6df2195f381807776ad67f3eb65a287a1b6cd6a7860dc761be24c827829`.
+  Стандартный import-metrics dry-run и дополнительный `results/auto` dry-run
+  вернули HTTP 200, `dry_run=true`; источник вернул один матч. Публикаций не было.
+- Конфигурация кандидата совпала с production: Python 3.12, handler,
+  256 MB, timeout 120 s, service account, 30 env vars и 7 Lockbox references.
+  Функция приватна; семь main timers вызывают `production`, радар PAUSED;
+  всего девять timers. Значения секретов не читались.
+- Candidate smoke остановлен на `log_read_failed`: Cloud Functions и независимый
+  Logging API вернули `Unavailable`. Request IDs:
+  `0381671c-f54c-4ae8-8ef4-752ca582cdab`,
+  `9dea9cab-aa62-475d-9d72-89e23c740954`.
+  Startup-ошибки остаются непроверенными; исключения прежних релизов не применены.
+  Manifest: `dist/releases/d4enh0ie8i9np2ig0r6m.json`, `candidate_failed`.
+  Production остаётся `d4eaa9eep3p8f15bul9g`; promote ожидает восстановления
+  логов либо отдельного разрешения на исключение именно для этого кандидата.
 
 ## Результаты Thunderpick — локальное исправление, 18 октября 2026
 
