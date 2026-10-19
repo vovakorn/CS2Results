@@ -1,8 +1,8 @@
 # CS2 Results Bot — production-состояние
 
 Обновлено: 19 октября 2026 года. По Cloud Functions API основной production —
-`d4enh0ie8i9np2ig0r6m`, Git `82dd630051be` (PR #158), rollback
-`d4eaa9eep3p8f15bul9g`. Ниже сохранены исторические проверки
+`d4enh0ie8i9np2ig0r6m`, переключён 19 октября в 07:29:50 МСК;
+rollback — `d4eaa9eep3p8f15bul9g`. Ниже сохранены исторические проверки
 подготовки релизов; их прежние версии не заменяют эту текущую проверку.
 
 Ежемесячный мировой VRS Reel выпущен; его автопубликация включена.
@@ -39,7 +39,7 @@ production и сверки фактического состояния. Теку
 - Исправление остаётся локальным: PR, merge, deploy и допубликация финала
   не выполнялись. Текущий production не изменён.
 
-## VRS и рендер Threads — подготовка релиза, 19 октября 2026
+## VRS и рендер Threads — production, 19 октября 2026
 
 - Telegram VRS различает неопределённый ответ и определённый отказ: первый
   блокирует повтор и текстовый fallback, второй сохраняет безопасный retry.
@@ -57,10 +57,39 @@ production и сверки фактического состояния. Теку
 - Релиз согласован 19 октября. В worktree `delivery-reliability` объединена
   актуальная main `2f2b7bcc617a` с PR #157; конфликты были только в документации.
   Полный набор Python 3.12: **1 070 passed** за 181,70 s; `pip check` и проверка
-  форматирования diff успешны. До PR/CI и candidate/promote production сохранён;
-  публикаций в ходе проверки не было.
+  форматирования diff успешны. PR #158 слит: Git
+  `82dd630051be5e41c6bd8713d5dff748829a8d8b`. CI Python 3.11/3.12 подтвердил
+  1 070 тестов на каждой версии, dependency audit без известных уязвимостей,
+  сборки архивов; 26 Node-тестов и оба полных VRS decode-probe прошли.
+- Кандидат `d4enh0ie8i9np2ig0r6m` создан из чистого merged main. Архив SHA-256:
+  `bfcae6df2195f381807776ad67f3eb65a287a1b6cd6a7860dc761be24c827829`.
+  Стандартный import-metrics dry-run и дополнительный `results/auto` dry-run
+  вернули HTTP 200, `dry_run=true`; источник вернул один матч. Публикаций не было.
+- Конфигурация кандидата совпала с production: Python 3.12, handler,
+  256 MB, timeout 120 s, service account, 30 env vars и 7 Lockbox references.
+  Функция приватна; семь main timers вызывают `production`, радар PAUSED;
+  всего девять timers. Значения секретов не читались.
+- Первоначальный candidate smoke остановлен на `log_read_failed`: Cloud Functions и независимый
+  Logging API вернули `Unavailable`. Request IDs:
+  `0381671c-f54c-4ae8-8ef4-752ca582cdab`,
+  `9dea9cab-aa62-475d-9d72-89e23c740954`.
+  Пользователь явно разрешил разовое исключение для этого кандидата при
+  продвижении и после него. Startup-ошибки остаются непроверенными; исключение
+  не распространяется на следующие релизы. Исходный `log_read_failed` сохранён
+  в manifest вместе с approval, scope и хешами исходного/разового release runner.
+- В 07:29:50 МСК production переключён на `d4enh0ie8i9np2ig0r6m`,
+  rollback закреплён на `d4eaa9eep3p8f15bul9g`. Стандартный production dry-run
+  и дополнительный `results/auto` dry-run вернули HTTP 200, `dry_run=true`;
+  источник вернул один матч. Контрольные запуски не отправляли сообщения.
+  Config, private IAM, семь main timers и общее число девять timers сверены
+  после переключения; упакованный `cs2bot/main.py` совпал с release Git.
+- Manifest: `dist/releases/d4enh0ie8i9np2ig0r6m.json`, `promoted`;
+  `checks.production_smoke.error=log_read_failed`, `startup_logs_checked=false`.
+  Проверка production: `dist/delivery-reliability-production-verification.json`.
+  Штатный release-скрипт не изменён; разовый runner допустил только недоступное
+  чтение логов этой версии. Остальные gates и автоматический rollback сохранены.
 
-## Результаты Thunderpick — локальное исправление, 18 октября 2026
+## Результаты Thunderpick — production, 19 октября 2026
 
 - Дополнительно подготовлено ожидание полного финального набора Liquipedia
   для PandaScore-кандидатов: окно 20 минут, раннее снятие при готовности,
@@ -92,7 +121,8 @@ production и сверки фактического состояния. Теку
   история автоматических запусков не подтверждена.
 - Исправление подготовлено в отдельной рабочей копии от production Git
   `8911a35494b9`; незавершённые изменения основной копии сохранены.
-  PR, merge, deploy и исторические публикации не выполнялись.
+  PR #157 слит, исправления вошли в общий production Git `82dd630051be`
+  с PR #158 19 октября. Исторические публикации в ходе релиза не выполнялись.
 
 ## Ежемесячный мировой VRS Reel — production, 18 октября 2026
 
