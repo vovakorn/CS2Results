@@ -1738,7 +1738,7 @@ def _draw_standings_metal_text(
 
 
 def _render_tournament_standings_page(tournament_name, placements, *, source_label, page_number,
-                                      page_count, branding=None):
+                                      page_count, branding=None, tournament_logo_url=None):
     from .tournament_visuals import accent_color
 
     accent = accent_color(branding) if branding is not None else AMBER
@@ -1747,10 +1747,11 @@ def _render_tournament_standings_page(tournament_name, placements, *, source_lab
                           header_accent_colors=(CYAN, AMBER)).convert("RGBA"))
     draw = ImageDraw.Draw(canvas, "RGBA")
     if branding is None:
-        _card_header(canvas, draw, "ИТОГИ ТУРНИРА", tournament_name)
+        _card_header(canvas, draw, "ИТОГИ ТУРНИРА", tournament_name,
+                     tournament_logo_url=tournament_logo_url)
     else:
         _branded_tournament_header(canvas, draw, tournament_name, branding, accent,
-                                   label="ИТОГИ ТУРНИРА")
+                                   label="ИТОГИ ТУРНИРА", fallback_logo_url=tournament_logo_url)
     header_height = 72
     champion_index = next((i for i, item in enumerate(placements) if item.placement == "1"), None)
     sparse = len(placements) < TOURNAMENT_STANDINGS_PER_CARD
@@ -1812,6 +1813,7 @@ def render_tournament_standings_cards(
     source_label: str = "Liquipedia",
     *,
     branding=None,
+    tournament_logo_url: str | None = None,
 ) -> list[bytes]:
     """Render every confirmed placement, splitting long tables into an album."""
     if not tournament_name.strip() or not source_label.strip() or not can_render_tournament_standings(placements):
@@ -1829,6 +1831,7 @@ def render_tournament_standings_cards(
             page_number=index,
             page_count=len(chunks),
             branding=branding,
+            tournament_logo_url=tournament_logo_url,
         )
         for index, chunk in enumerate(chunks, start=1)
     ]
@@ -1911,7 +1914,7 @@ def _draw_rank_transition(draw, center_x, center_y, before, after, color):
 
 
 def _render_tournament_vrs_page(tournament_name, impacts, *, source_label, page_number,
-                                page_count, branding=None):
+                                page_count, branding=None, tournament_logo_url=None):
     from .tournament_visuals import accent_color
     accent = accent_color(branding) if branding else AMBER
     canvas = _fixture_canvas(branding, RESULT_CARD_SIZE)
@@ -1919,7 +1922,8 @@ def _render_tournament_vrs_page(tournament_name, impacts, *, source_label, page_
     before = _vrs_snapshot_date(impacts[0].before_effective_at, impacts[0].before_version)
     after = _vrs_snapshot_date(impacts[0].after_effective_at, impacts[0].after_version)
     _fixture_header(canvas, draw, "VRS ПОСЛЕ ТУРНИРА", tournament_name,
-                    f"ДО {before} · ПОСЛЕ {after}" if before and after else "", branding)
+                    f"ДО {before} · ПОСЛЕ {after}" if before and after else "", branding,
+                    logo_url=tournament_logo_url)
     header_height = 72
     sparse = len(impacts) < TOURNAMENT_VRS_PER_CARD
     if sparse:
@@ -1970,12 +1974,14 @@ def render_tournament_vrs_cards(
     source_label: str = "Official VRS",
     *,
     branding=None,
+    tournament_logo_url: str | None = None,
 ) -> list[bytes]:
     if not tournament_name.strip() or not source_label.strip() or not can_render_tournament_vrs(impacts):
         raise MediaCardError("Tournament VRS requires complete impacts")
     chunks = [impacts[index:index + TOURNAMENT_VRS_PER_CARD] for index in range(0, len(impacts), TOURNAMENT_VRS_PER_CARD)]
     return [_render_tournament_vrs_page(tournament_name, chunk, source_label=source_label,
-                                        page_number=index, page_count=len(chunks), branding=branding)
+                                        page_number=index, page_count=len(chunks), branding=branding,
+                                        tournament_logo_url=tournament_logo_url)
             for index, chunk in enumerate(chunks, start=1)]
 
 
