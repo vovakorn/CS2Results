@@ -289,3 +289,21 @@ def test_planned_event_stays_visible_when_live_api_calendar_is_empty(api, runtim
     assert body["coverage"]["events_checked"] == 0
     assert body["calendar_plan"]["issues"][0]["key"] == "blast-bounty-season-1-2027"
     assert len(alerts) == 1 and body["messages_sent"] == 0 and "send" not in calls
+
+
+@pytest.mark.parametrize("problem", ["dates_conflict", "profile_facts_conflict"])
+def test_automatic_preview_never_ignores_a_known_plan_conflict(api, runtime, tmp_path, problem):
+    r, calls, alerts = runtime
+    row = next(e.model_dump(mode="json") for e in calendar.load_calendar()
+               if e.key == "iem-beijing-2026")
+    if problem == "dates_conflict":
+        row.update(date_status="conflict", alternate_dates=[{
+            "start": "2026-11-03", "end": "2026-11-08", "source_url": "https://example.org/update"}])
+    else:
+        row["prize_pool_usd"] = 1500000
+    path = tmp_path / "changed-plan.json"
+    path.write_text(json.dumps([row]))
+    r.TOURNAMENT_PREVIEW_CALENDAR_PATH = path
+    body = json.loads(job.run_preview_job(None, False, r, now=moment("2026-10-31"))["body"])
+    assert body["previews"][0]["skipped_reason"] == "calendar_" + problem
+    assert body["messages_sent"] == 0 and "send" not in calls and alerts

@@ -92,8 +92,16 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
     if len(profiles) > 8:
         return runtime._error_response(503, "too_many_preview_candidates")
 
+    calendar_blocks = {entry["key"]: entry["status"]
+        for entry in body.get("calendar_plan", {}).get("entries", [])
+        if entry["status"] in {"dates_conflict", "profile_dates_conflict",
+                               "profile_facts_conflict", "exact_dates_missing"}}
     for profile in profiles:
         item = {"key": profile.key}
+        if profile.key in calendar_blocks:
+            item["skipped_reason"] = "calendar_" + calendar_blocks[profile.key]
+            body["previews"].append(item)
+            continue
         try:
             preview = asyncio.run(fetch_tournament_preview(profile, now=now))
             eligible = publication_window(preview, now)

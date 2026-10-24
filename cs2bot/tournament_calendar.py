@@ -112,6 +112,14 @@ def audit_calendar_plan(profiles, now, runtime, *, dry_run):
                         min(stage.start for stage in profile.stages) != entry.start
                         or max(stage.end for stage in profile.stages) != entry.end):
                     reason = "profile_dates_conflict"
+                if reason is None and (
+                        entry.prize_pool_usd is not None
+                        and profile.expected_prize_pool_usd is not None
+                        and entry.prize_pool_usd != profile.expected_prize_pool_usd
+                        or entry.participant_count is not None
+                        and profile.expected_participant_count is not None
+                        and entry.participant_count != profile.expected_participant_count):
+                    reason = "profile_facts_conflict"
         result = {"key": entry.key, "name": entry.name,
                   "start": entry.start.isoformat() if entry.start else None,
                   "end": entry.end.isoformat() if entry.end else None, "month": entry.month,
