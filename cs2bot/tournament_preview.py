@@ -19,11 +19,12 @@ class PreviewUnavailable(ValueError):
 
 class PreviewStage(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    kind: Literal["groups", "swiss", "playoffs"]
+    kind: Literal["groups", "swiss", "swiss_1", "swiss_2", "swiss_3", "playoffs"]
     start: date
     end: date
     format_text: str = Field(min_length=10, max_length=220)
     source_url: HttpUrl
+    schedule_source_url: HttpUrl | None = None
     card_summary: str | None = Field(default=None, min_length=3, max_length=60)
 
     @model_validator(mode="after")
@@ -34,7 +35,8 @@ class PreviewStage(BaseModel):
 
     @property
     def label(self) -> str:
-        return {"groups": "Группы", "swiss": "Swiss", "playoffs": "Плей-офф"}[self.kind]
+        return {"groups": "Группы", "swiss": "Swiss", "swiss_1": "Swiss 1",
+                "swiss_2": "Swiss 2", "swiss_3": "Swiss 3", "playoffs": "Плей-офф"}[self.kind]
 
 
 class PreviewBranding(BaseModel):
@@ -70,10 +72,13 @@ class PreviewProfile(BaseModel):
     pandascore_tournament_ids: list[int] = Field(default_factory=list, max_length=32)
     approved: bool = False
     verified_at: datetime
+    publication_approval_until: datetime | None = None
+    expected_prize_pool_usd: int | None = Field(default=None, gt=0, strict=True)
+    expected_participant_count: int | None = Field(default=None, gt=0, le=128, strict=True)
     story: str | None = Field(default=None, min_length=20, max_length=240)
     short_story: str | None = Field(default=None, min_length=20, max_length=100)
     story_source_url: HttpUrl | None = None
-    stages: list[PreviewStage] = Field(min_length=2, max_length=3)
+    stages: list[PreviewStage] = Field(min_length=2, max_length=4)
     prize_money_usd: int | None = Field(default=None, gt=0, strict=True)
     club_reward_usd: int | None = Field(default=None, ge=0, strict=True)
     prize_split_kind: Literal["players_clubs", "prize_participation"] = "players_clubs"
@@ -96,6 +101,15 @@ class PreviewProfile(BaseModel):
             raise ValueError("duplicate PandaScore stage IDs")
         if self.verified_at.tzinfo is None:
             raise ValueError("verified_at needs a timezone")
+        if self.publication_approval_until is not None:
+            until = self.publication_approval_until
+            start = datetime.combine(min(stage.start for stage in self.stages),
+                                     datetime.min.time(), tzinfo=ZoneInfo("Europe/Moscow"))
+            if (until.tzinfo is None or until <= self.verified_at or until > start
+                    or until - self.verified_at > timedelta(days=60)):
+                raise ValueError("publication approval must expire before the event, within 60 days of review")
+            if self.expected_prize_pool_usd is None or self.expected_participant_count is None:
+                raise ValueError("scheduled approval requires pinned prize pool and participant count")
         if bool(self.story) != bool(self.story_source_url):
             raise ValueError("story requires its source URL")
         if self.short_story and not self.story:
@@ -105,13 +119,21 @@ class PreviewProfile(BaseModel):
         if self.prize_money_usd is not None and self.prize_source_url is None:
             raise ValueError("prize split requires its source URL")
         kinds = [stage.kind for stage in self.stages]
-        if len(kinds) != len(set(kinds)) or "playoffs" not in kinds or not {"groups", "swiss"}.intersection(kinds):
+        if len(kinds) != len(set(kinds)) or "playoffs" not in kinds or not {"groups", "swiss", "swiss_1"}.intersection(kinds):
             raise ValueError("stages need unique kinds, an initial stage and playoffs")
+        numbered_swiss = {"swiss_1", "swiss_2", "swiss_3"}
+        if numbered_swiss.intersection(kinds) and set(kinds) != numbered_swiss | {"playoffs"}:
+            raise ValueError("Major needs all three numbered Swiss stages and playoffs")
         initial = [stage for stage in self.stages if stage.kind != "playoffs"]
         playoffs = next(stage for stage in self.stages if stage.kind == "playoffs")
         if max(stage.end for stage in initial) > playoffs.start:
             raise ValueError("playoffs must follow the initial stage")
         self.stages.sort(key=lambda stage: stage.start)
+        if any(left.end > right.start for left, right in zip(self.stages, self.stages[1:])):
+            raise ValueError("reviewed stages must not overlap")
+        if numbered_swiss.intersection(kinds) and [stage.kind for stage in self.stages] != [
+                "swiss_1", "swiss_2", "swiss_3", "playoffs"]:
+            raise ValueError("Major stages must follow their numbered order")
         from .tournament_branding import resolve_branding
         self.branding = resolve_branding(self.branding, event_key=self.key, parent=self.liquipedia_page)
         return self
@@ -149,7 +171,7 @@ class TournamentPreview(BaseModel):
     story: str
     short_story: str | None = Field(default=None, min_length=20, max_length=100)
     story_source_url: str
-    stages: list[PreviewStage] = Field(min_length=2, max_length=3)
+    stages: list[PreviewStage] = Field(min_length=2, max_length=4)
     passport_source_url: str
     participants_source_url: str | None = None
     verified_at: datetime
@@ -208,7 +230,9 @@ def check_profile(profile: PreviewProfile, now: datetime, *, allow_draft: bool =
     if not profile.approved and not allow_draft:
         raise PreviewUnavailable("profile_not_approved")
     age = now.astimezone(timezone.utc) - profile.verified_at.astimezone(timezone.utc)
-    if age < timedelta(0) or age > timedelta(days=7):
+    expired = (now > profile.publication_approval_until if profile.publication_approval_until is not None
+               else age > timedelta(days=7))
+    if age < timedelta(0) or expired:
         raise PreviewUnavailable("editorial_review_stale")
 
 
@@ -269,6 +293,8 @@ def format_preview_caption(preview: TournamentPreview, *, draft: bool = False) -
     sources = {preview.passport_source_url: "Liquipedia", preview.story_source_url: "История"}
     for stage in preview.stages:
         sources.setdefault(str(stage.source_url), "Регламент")
+        if stage.schedule_source_url:
+            sources.setdefault(str(stage.schedule_source_url), "Календарь")
     if preview.prize_source_url:
         sources.setdefault(preview.prize_source_url, "Призовые")
     lines.extend(["", "Источники: " + " · ".join(_source_link(url, label) for url, label in sources.items())])
@@ -296,7 +322,14 @@ def format_preview_threads_caption(preview: TournamentPreview) -> str:
     if preview.prize_money_usd is not None:
         lines.append(prize_split_text(preview))
     lines.append("Формат:")
-    for stage in preview.stages:
+    stages = preview.stages
+    if ([stage.kind for stage in stages[:3]] == ["swiss_1", "swiss_2", "swiss_3"]
+            and len({stage.format_text for stage in stages[:3]}) == 1):
+        lines.append(f"Swiss 1–3: {stages[0].format_text}")
+        lines.append("; ".join(f"{i}: {date_range(stage.start, stage.end)}"
+                               for i, stage in enumerate(stages[:3], 1)))
+        stages = stages[3:]
+    for stage in stages:
         lines.append(f"{stage.label} {date_range(stage.start, stage.end)}: {stage.format_text}")
     if preview.first_match_at:
         local = preview.first_match_at.astimezone(ZoneInfo("Europe/Moscow"))

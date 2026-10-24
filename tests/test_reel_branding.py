@@ -116,7 +116,10 @@ def test_branded_progress_uses_tournament_accent():
 
 
 def test_different_profiles_keep_their_own_colours_and_neutral_global_header(monkeypatch):
-    profiles = load_profiles(ROOT / "data/tournament_preview_examples.json")
+    profiles = load_profiles(ROOT / "data/tournament_preview_profiles.json")
+    profiles += load_profiles(ROOT / "data/tournament_preview_examples.json")
+    by_key = {profile.key: profile for profile in profiles}
+    profiles = [by_key[key] for key in ("blast-rivals-hong-kong-2026", "pgl-masters-bucharest-2026")]
     matches = fixtures(2)
     monkeypatch.setattr(r, "event_for_match", lambda match, path: profiles[int(match.match_id[-1])])
     visuals = r._resolve_reel_visuals(matches)
