@@ -13,6 +13,8 @@ from .tournament_preview import (
 )
 from .tournament_preview_cards import render_preview_cards
 from .tournament_identity import event_key
+from .preview_coverage import audit_preview_coverage
+from .tournament_calendar import audit_calendar_plan
 
 
 def _deliver(runtime, uid, platform, send, uncertain_error, *, media_card):
@@ -82,6 +84,8 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
         if not profiles:
             return runtime._error_response(400, "preview_profile_unknown")
     else:
+        body["calendar_plan"] = audit_calendar_plan(profiles, now, runtime, dry_run=dry_run)
+        body["coverage"] = audit_preview_coverage(profiles, now, runtime, dry_run=dry_run)
         today = now.astimezone(ZoneInfo("Europe/Moscow")).date()
         profiles = [profile for profile in profiles if profile.approved
                     and (min(stage.start for stage in profile.stages) - today).days in {1, 2}]
@@ -99,6 +103,10 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
             cards = render_preview_cards(preview) if dry_run or runtime.TELEGRAM_MEDIA_CARDS or instagram or threads else []
         except Exception as exc:
             item["skipped_reason"] = str(exc) if isinstance(exc, PreviewUnavailable) else type(exc).__name__
+            if not dry_run:
+                runtime._notify_admin(f"preview_preparation_{profile.key}",
+                    f"Не подготовлен анонс {profile.key}: {item['skipped_reason']}. "
+                    "Проверьте профиль и источники до начала турнира.")
             body["previews"].append(item)
             continue
         item.update({"eligible": eligible, "card_count": len(cards), "warnings": preview.warnings})

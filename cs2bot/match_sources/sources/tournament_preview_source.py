@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -181,10 +182,17 @@ async def fetch_tournament_preview(profile: PreviewProfile, *, now: datetime | N
     if not isinstance(name, str) or not name.strip():
         raise PreviewUnavailable("tournament_name_missing")
     start, end = _date(row.get("startdate")), _date(row.get("enddate"))
+    if (start != min(stage.start for stage in profile.stages)
+            or end != max(stage.end for stage in profile.stages)):
+        raise PreviewUnavailable("reviewed_tournament_dates_conflict")
     pool = _integer(row.get("prizepool"), "prize_pool_missing_or_invalid")
     places = _locations(row.get("locations"), profile.venue_scope)
     count = (_integer(row["participantsnumber"], "participant_count_invalid", 128)
              if row.get("participantsnumber") not in (None, "", 0, "0") else None)
+    if profile.expected_prize_pool_usd is not None and pool != profile.expected_prize_pool_usd:
+        raise PreviewUnavailable("reviewed_prize_pool_conflict")
+    if profile.expected_participant_count is not None and count != profile.expected_participant_count:
+        raise PreviewUnavailable("reviewed_participant_count_conflict")
     teams, first, warnings = [], None, (["editorial_draft"] if not profile.approved else [])
     if profile.pandascore_serie_id:
         try:
@@ -221,3 +229,56 @@ async def fetch_tournament_preview(profile: PreviewProfile, *, now: datetime | N
         verified_at=profile.verified_at, fetched_at=now, warnings=warnings,
         branding=profile.branding,
     )
+
+
+CALENDAR_QUERY = "pagename,name,startdate,enddate,prizepool,liquipediatier,liquipediatiertype,type,status"
+CALENDAR_PAGE_SIZE = 100
+CALENDAR_MAX_PAGES = 5
+
+
+async def fetch_preview_calendar(now: datetime) -> list[dict]:
+    """Audit today and the next seven Moscow dates, including unscheduled events."""
+    today = now.astimezone(ZoneInfo("Europe/Moscow")).date()
+    conditions = (
+        f"[[startdate::>{today - timedelta(days=1)}]] AND "
+        f"[[startdate::<{today + timedelta(days=8)}]] AND "
+        "([[liquipediatier::1]] OR [[liquipediatier::2]]) AND [[type::Offline]] AND "
+        "[[liquipediatiertype::!Qualifier]] AND [[status::]]"
+    )
+    events = {}
+    for page in range(CALENDAR_MAX_PAGES):
+        data = await _liquipedia_json("/tournament", {
+            "conditions": conditions, "query": CALENDAR_QUERY, "limit": CALENDAR_PAGE_SIZE,
+            "offset": page * CALENDAR_PAGE_SIZE, "order": "startdate asc, pagename asc",
+        })
+        rows = data.get("result") if isinstance(data, dict) else None
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise PreviewUnavailable("preview_calendar_invalid")
+        for row in rows:
+            if not {"liquipediatier", "type"}.issubset(row):
+                raise PreviewUnavailable("preview_calendar_invalid")
+            if (str(row.get("liquipediatier", "")) not in {"1", "2"}
+                    or str(row.get("type", "")).casefold() != "offline"
+                    or str(row.get("liquipediatiertype") or "").strip().casefold()
+                    in {"qualifier", "showmatch", "points"}
+                    or str(row.get("status") or "").strip()):
+                continue
+            start, end = _date(row.get("startdate")), _date(row.get("enddate"))
+            if not today <= start <= today + timedelta(days=7):
+                continue
+            pool = _integer(row.get("prizepool"), "preview_calendar_prize_invalid")
+            if pool < config.TIER1_PRIZE_POOL_THRESHOLD_USD:
+                continue
+            name, page_name = row.get("name"), row.get("pagename")
+            if (not isinstance(name, str) or not name.strip() or len(name) > 300
+                    or not isinstance(page_name, str) or not page_name.strip()
+                    or len(page_name) > 300 or end < start):
+                raise PreviewUnavailable("preview_calendar_invalid")
+            event = {"pagename": page_name, "name": name, "start": start.isoformat(),
+                     "end": end.isoformat(), "source_url": liquipedia_url(page_name)}
+            if page_name in events and events[page_name] != event:
+                raise PreviewUnavailable("preview_calendar_conflict")
+            events[page_name] = event
+        if len(rows) < CALENDAR_PAGE_SIZE:
+            return sorted(events.values(), key=lambda event: (event["start"], event["pagename"]))
+    raise PreviewUnavailable("preview_calendar_pagination_incomplete")
