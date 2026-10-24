@@ -95,7 +95,7 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
     calendar_blocks = {entry["key"]: entry["status"]
         for entry in body.get("calendar_plan", {}).get("entries", [])
         if entry["status"] in {"dates_conflict", "profile_dates_conflict",
-                               "profile_facts_conflict", "exact_dates_missing"}}
+                               "profile_facts_conflict", "exact_dates_missing", "started"}}
     for profile in profiles:
         item = {"key": profile.key}
         if profile.key in calendar_blocks:

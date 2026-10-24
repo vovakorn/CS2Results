@@ -72,9 +72,10 @@ def test_each_registered_event_reaches_delivery_on_both_allowed_days(
 
 @pytest.mark.parametrize("key,first,last,start", WINDOWS)
 def test_start_day_is_never_a_late_announcement(api, runtime, key, first, last, start):
-    r, calls, _ = runtime
+    r, calls, alerts = runtime
     body = json.loads(job.run_preview_job(None, False, r, now=moment(start))["body"])
     assert body["messages_sent"] == 0 and body["previews"] == [] and "send" not in calls
+    assert body["coverage"]["status"] == "ok" and alerts == []
 
 
 @pytest.mark.parametrize("key,first,last,start", WINDOWS)
@@ -166,14 +167,19 @@ def test_missing_pgl_profile_is_visible_even_when_it_is_liquipedia_a_tier(api, r
     assert any("PGL Masters Bucharest" in message for code, message in alerts)
 
 
-def test_calendar_outage_does_not_block_ready_announcement(api, runtime, monkeypatch):
+def test_calendar_outage_does_not_block_ready_announcement(api, runtime, monkeypatch, caplog):
+    detail = "arbitrary exception text must not be exposed"
     async def failed(*args):
-        raise RuntimeError("arbitrary exception text must not be exposed")
+        raise RuntimeError(detail)
     monkeypatch.setattr(coverage, "fetch_preview_calendar", failed)
     r, calls, alerts = runtime
     body = json.loads(job.run_preview_job(None, False, r, now=moment("2026-10-31"))["body"])
     assert body["coverage"] == {"status": "unavailable", "reason": "RuntimeError", "issues": []}
     assert body["messages_sent"] == 1 and calls.count("send") == 1 and len(alerts) == 1
+    assert any(record.exc_info for record in caplog.records
+               if record.name == "cs2bot.preview_coverage")
+    assert all("arbitrary exception text" not in message for _, message in alerts)
+    assert "arbitrary exception text" not in caplog.text
 
 
 def test_preparation_failure_is_alerted_but_dry_run_is_read_only(api, runtime):
@@ -194,15 +200,45 @@ def test_preparation_failure_is_alerted_but_dry_run_is_read_only(api, runtime):
 ])
 def test_live_calendar_excludes_ineligible_events(api, changes):
     api[:] = [{**api[0], "startdate": "2026-10-24", **changes}]
-    assert asyncio.run(source.fetch_preview_calendar(moment("2026-10-22"))) == []
+    scan = asyncio.run(source.fetch_preview_calendar(moment("2026-10-22")))
+    assert scan.events == [] and scan.row_issues == []
 
 
 @pytest.mark.parametrize("field", ["type", "liquipediatier"])
 def test_invalid_calendar_never_claims_healthy_coverage(api, field):
     api[:] = [{**api[0], "startdate": "2026-10-24"}]
     del api[0][field]
-    with pytest.raises(PreviewUnavailable, match="preview_calendar_invalid"):
-        asyncio.run(source.fetch_preview_calendar(moment("2026-10-22")))
+    scan = asyncio.run(source.fetch_preview_calendar(moment("2026-10-22")))
+    assert scan.events == [] and scan.row_issues[0]["reason"] == "preview_calendar_invalid"
+
+
+@pytest.mark.parametrize("field,value", [("prizepool", None), ("prizepool", "TBA"),
+                                        ("enddate", None), ("enddate", "TBA")])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_incomplete_calendar_row_preserves_other_events_and_reports_partial_coverage(
+        api, runtime, field, value, dry_run):
+    r, calls, alerts = runtime
+    good = {**api[0], "startdate": "2026-10-24", "pagename": "PGL/2026/Masters",
+            "name": "PGL Masters Bucharest 2026"}
+    api[:] = [{**good, "pagename": "Incomplete/Event", field: value}, good]
+    body = json.loads(job.run_preview_job(None, dry_run, r, now=moment("2026-10-22"))["body"])
+    assert body["coverage"]["status"] == "partial"
+    assert body["coverage"]["events_checked"] == 1
+    assert len(body["coverage"]["row_issues"]) == 1
+    assert body["coverage"]["issues"][0]["reason"] == "preview_profile_missing"
+    coverage_alerts = [code for code, _ in alerts if code.startswith("preview_coverage_")]
+    assert len(coverage_alerts) == (0 if dry_run else 2)
+    assert calls == [] and body["messages_sent"] == 0
+
+
+def test_start_day_still_reports_missing_profiles_and_date_conflicts(api, runtime):
+    r, _, alerts = runtime
+    api[:] = [{**api[0], "startdate": "2026-10-24"},
+              {**api[0], "startdate": "2026-10-24", "pagename": "PGL/2026/Masters"}]
+    body = json.loads(job.run_preview_job(None, False, r, now=moment("2026-10-24"))["body"])
+    assert {item["reason"] for item in body["coverage"]["issues"]} == {
+        "preview_profile_missing", "preview_profile_dates_conflict"}
+    assert len(alerts) == 2
 
 
 def test_live_calendar_refuses_truncated_pagination(api, monkeypatch):
@@ -307,3 +343,17 @@ def test_automatic_preview_never_ignores_a_known_plan_conflict(api, runtime, tmp
     body = json.loads(job.run_preview_job(None, False, r, now=moment("2026-10-31"))["body"])
     assert body["previews"][0]["skipped_reason"] == "calendar_" + problem
     assert body["messages_sent"] == 0 and "send" not in calls and alerts
+
+
+@pytest.mark.parametrize("start", ["2026-10-30", "2026-10-31"])
+def test_started_calendar_event_blocks_a_future_dated_profile(api, runtime, tmp_path, start):
+    r, calls, _ = runtime
+    row = next(e.model_dump(mode="json") for e in calendar.load_calendar()
+               if e.key == "iem-beijing-2026")
+    row["start"] = start
+    path = tmp_path / "started-plan.json"
+    path.write_text(json.dumps([row]))
+    r.TOURNAMENT_PREVIEW_CALENDAR_PATH = path
+    body = json.loads(job.run_preview_job(None, False, r, now=moment("2026-10-31"))["body"])
+    assert body["previews"][0]["skipped_reason"] == "calendar_started"
+    assert body["messages_sent"] == 0 and "send" not in calls
