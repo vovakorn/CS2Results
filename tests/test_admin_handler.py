@@ -69,3 +69,70 @@ def test_pair_card_reports_confirmed_count_and_held_queue():
     text = admin._pair_detail([record], [pending], policy, "channel", "results")
     assert "За сегодня: 1" in text
     assert "ручная проверка" in text
+
+
+def test_failed_callback_ack_is_attempted_once_and_does_not_block_edit(monkeypatch):
+    monkeypatch.setattr(admin, "TELEGRAM_ADMIN_ENABLED", True)
+    monkeypatch.setattr(admin, "TELEGRAM_ADMIN_USER_ID", "42")
+    monkeypatch.setattr(admin, "TELEGRAM_ADMIN_WEBHOOK_SECRET", "secret")
+    calls = []
+
+    def call(method, payload):
+        calls.append(method)
+        if method == "answerCallbackQuery":
+            raise RuntimeError("expired acknowledgement")
+        return {"ok": True}
+
+    monkeypatch.setattr(admin, "telegram_call", call)
+    assert admin.handler(_event("a:c", callback=True), None)["statusCode"] == 200
+    assert calls == ["answerCallbackQuery", "editMessageText"]
+
+
+def test_no_change_response_is_success_only_for_edit(monkeypatch):
+    import pytest
+    monkeypatch.setattr(admin, "TELEGRAM_TOKEN", "fixture-token")
+    monkeypatch.setattr(admin, "TELEGRAM_PROXY_URL", None)
+
+    class Response:
+        status_code = 400
+        def json(self):
+            return {"ok": False, "error_code": 400,
+                    "description": "Bad Request: message is not modified: specified new message content is the same"}
+
+    monkeypatch.setattr(admin.requests, "post", lambda *args, **kwargs: Response())
+    assert admin.telegram_call("editMessageText", {}) == {"ok": True, "unchanged": True}
+    with pytest.raises(RuntimeError):
+        admin.telegram_call("sendMessage", {})
+
+
+def test_other_api_errors_remain_errors_and_logs_exclude_response_body(monkeypatch, caplog):
+    import pytest
+    monkeypatch.setattr(admin, "TELEGRAM_TOKEN", "fixture-token")
+
+    class Response:
+        status_code = 400
+        def json(self):
+            return {"ok": False, "error_code": 400,
+                    "description": "Bad Request: private-response-value"}
+
+    monkeypatch.setattr(admin.requests, "post", lambda *args, **kwargs: Response())
+    with pytest.raises(RuntimeError):
+        admin.telegram_call("editMessageText", {})
+    assert "telegram_admin_api_rejected method=editMessageText status=400" in caplog.text
+    assert "private-response-value" not in caplog.text
+    assert "fixture-token" not in caplog.text
+
+
+def test_ambiguous_outbound_failure_is_not_retried(monkeypatch):
+    import pytest
+    monkeypatch.setattr(admin, "TELEGRAM_TOKEN", "fixture-token")
+    calls = []
+
+    def post(*args, **kwargs):
+        calls.append(1)
+        raise admin.requests.ReadTimeout("private-response-value")
+
+    monkeypatch.setattr(admin.requests, "post", post)
+    with pytest.raises(RuntimeError, match="telegram admin transport unavailable"):
+        admin.telegram_call("sendMessage", {})
+    assert len(calls) == 1

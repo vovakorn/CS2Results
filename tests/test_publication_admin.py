@@ -65,3 +65,69 @@ def test_periods_use_moscow_boundaries_and_old_generation_needs_manual_review():
     fresh = SimpleNamespace(channel_id="global", content_type="result", generation=1, attempt_count=1)
     assert pending_delivery_status(old, policy) == "manual_review"
     assert pending_delivery_status(fresh, policy) == "retry_safe"
+
+
+def test_journal_reads_pages_deduplicates_keys_and_limits_parallel_requests(monkeypatch):
+    import json
+    from cs2bot import publication_admin as journal
+
+    class PagedS3:
+        def __init__(self):
+            self.reads = []
+            self.pages = []
+        def list_objects_v2(self, **kwargs):
+            token = kwargs.get("ContinuationToken")
+            self.pages.append(token)
+            keys, next_token = {
+                None: (["a", "a", "b"], "second"),
+                "second": (["b", "c"], "third"),
+                "third": (["d", "e"], None),
+            }[token]
+            return {"Contents": [{"Key": key} for key in keys],
+                    "IsTruncated": next_token is not None, "NextContinuationToken": next_token}
+        def get_object(self, **kwargs):
+            key = kwargs["Key"]
+            self.reads.append(key)
+            return {"Body": io.BytesIO(json.dumps({"publication_id": key,
+                                                   "confirmed_at": key}).encode())}
+
+    async def run():
+        s3 = PagedS3()
+        released = asyncio.Event()
+        active = peak = 0
+
+        async def controlled_thread(func, *args, **kwargs):
+            nonlocal active, peak
+            if func.__name__ != "read_item":
+                return func(*args, **kwargs)
+            active += 1
+            peak = max(peak, active)
+            if active == 4:
+                released.set()
+            await released.wait()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                active -= 1
+
+        monkeypatch.setattr(journal.asyncio, "to_thread", controlled_thread)
+        records = await journal.list_publications(client=s3, bucket="bucket", limit=5)
+        assert peak == 4
+        assert s3.pages == [None, "second", "third"]
+        assert sorted(s3.reads) == list("abcde")
+        assert [item["publication_id"] for item in records] == list("edcba")
+
+    asyncio.run(asyncio.wait_for(run(), timeout=5))
+
+
+def test_journal_repeated_page_token_fails_instead_of_looping():
+    import pytest
+    from cs2bot.match_sources.storage import StorageUnavailableError
+
+    class RepeatingS3:
+        def list_objects_v2(self, **kwargs):
+            return {"Contents": [{"Key": "a"}], "IsTruncated": True,
+                    "NextContinuationToken": "same"}
+
+    with pytest.raises(StorageUnavailableError, match="pagination incomplete"):
+        asyncio.run(list_publications(client=RepeatingS3(), bucket="bucket"))
