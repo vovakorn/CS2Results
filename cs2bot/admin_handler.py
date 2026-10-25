@@ -68,12 +68,20 @@ def telegram_call(method: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = requests.post(f"{TELEGRAM_API_URL}/bot{TELEGRAM_TOKEN}/{method}", **options)
     except requests.RequestException:
         raise RuntimeError("telegram admin transport unavailable") from None
-    if response.status_code >= 300: raise RuntimeError("telegram admin response unavailable")
     try:
         data = response.json()
     except requests.JSONDecodeError:
         raise RuntimeError("telegram admin response invalid") from None
-    if not isinstance(data, dict) or data.get("ok") is not True: raise RuntimeError("telegram admin response invalid")
+    # Replayed navigation can render the screen already displayed. Telegram's
+    # exact no-change response confirms the desired state; no retry is needed.
+    if (method == "editMessageText" and response.status_code == 400
+            and isinstance(data, dict) and data.get("error_code") == 400
+            and str(data.get("description", "")).startswith("Bad Request: message is not modified")):
+        return {"ok": True, "unchanged": True}
+    if response.status_code >= 300 or not isinstance(data, dict) or data.get("ok") is not True:
+        # Never log response bodies, URLs, owner data or Telegram descriptions.
+        logger.warning("telegram_admin_api_rejected method=%s status=%s", method, response.status_code)
+        raise RuntimeError("telegram admin response unavailable")
     return data
 
 
@@ -138,11 +146,21 @@ def _render(view: str, policy, *, dest_index: int = 0, type_index: int = 0, peri
     return text, _keyboard(keys)
 
 
+def _answer_callback(callback: dict[str, Any]) -> None:
+    """Attempt the short-lived acknowledgement once, without blocking rendering."""
+    if callback.get("_admin_callback_ack_attempted"):
+        return
+    callback["_admin_callback_ack_attempted"] = True
+    try:
+        telegram_call("answerCallbackQuery", {"callback_query_id": callback["id"]})
+    except Exception:
+        logger.warning("telegram_admin_callback_ack_failed")
+
+
 def _send_or_edit(update: dict[str, Any], text: str, markup: dict[str, Any]) -> None:
     callback = update.get("callback_query")
     if isinstance(callback, dict):
-        if not callback.get("_admin_callback_answered"):
-            telegram_call("answerCallbackQuery", {"callback_query_id": callback["id"]})
+        _answer_callback(callback)
         message = callback.get("message") or {}
         telegram_call("editMessageText", {"chat_id": message["chat"]["id"], "message_id": message["message_id"], "text": text, "parse_mode": "HTML", "reply_markup": markup, "disable_web_page_preview": True})
     else:
@@ -221,13 +239,7 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
     # tap before reading Object Storage or rendering a screen, otherwise a slow
     # storage/API call leaves the owner with a spinner and Telegram retries it.
     if isinstance(callback, dict):
-        try:
-            telegram_call("answerCallbackQuery", {"callback_query_id": callback["id"]})
-            callback["_admin_callback_answered"] = True
-        except Exception:
-            # Keep the callback path usable when only the acknowledgement call
-            # has a transient failure; the following edit can still succeed.
-            logger.warning("telegram_admin_callback_ack_failed")
+        _answer_callback(callback)
     data = callback.get("data", "") if isinstance(callback, dict) else "a:h"
     message = update.get("message") if isinstance(update.get("message"), dict) else None
     if message and message.get("text") != "/admin": return {"statusCode": 200, "body": json.dumps({"ok": True})}

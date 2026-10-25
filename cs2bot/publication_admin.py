@@ -20,6 +20,7 @@ from .match_sources.storage import StorageUnavailableError, _bucket, _client, _i
 POLICY_KEY = "admin/publication-policy-v1.json"
 JOURNAL_PREFIX = "admin/publications/"
 POLICY_VERSION = 1
+JOURNAL_READ_CONCURRENCY = 4
 MOSCOW = ZoneInfo("Europe/Moscow")
 
 PUBLICATION_TYPES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -183,25 +184,52 @@ async def record_publication(
 
 async def list_publications(*, client: Any | None = None, bucket: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
     s3, bucket_name = client or _client(), bucket or _bucket()
-    keys: list[str] = []; token: str | None = None
+    keys: list[str] = []
+    seen_keys: set[str] = set()
+    seen_tokens: set[str] = set()
+    token: str | None = None
     while len(keys) < limit:
         kwargs: dict[str, Any] = {"Bucket": bucket_name, "Prefix": JOURNAL_PREFIX, "MaxKeys": min(1000, limit - len(keys))}
         if token: kwargs["ContinuationToken"] = token
         try: page = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
         except ClientError as exc: raise StorageUnavailableError("publication journal list failed") from exc
-        keys.extend(item["Key"] for item in page.get("Contents", []) if isinstance(item.get("Key"), str))
+        for entry in page.get("Contents", []):
+            key = entry.get("Key")
+            if isinstance(key, str) and key not in seen_keys:
+                keys.append(key)
+                seen_keys.add(key)
+                if len(keys) == limit:
+                    break
+        if not page.get("IsTruncated"):
+            break
         token = page.get("NextContinuationToken")
-        if not page.get("IsTruncated") or not token: break
-    result: dict[str, dict[str, Any]] = {}
-    for key in keys:
-        try: response = await asyncio.to_thread(s3.get_object, Bucket=bucket_name, Key=key)
-        except ClientError: continue
+        if not isinstance(token, str) or not token or token in seen_tokens:
+            raise StorageUnavailableError("publication journal pagination incomplete")
+        seen_tokens.add(token)
+
+    def read_item(key: str) -> dict[str, Any] | None:
+        try: response = s3.get_object(Bucket=bucket_name, Key=key)
+        except ClientError: return None
         body = response["Body"]
         try:
             item = json.loads(body.read())
-            if isinstance(item, dict) and isinstance(item.get("publication_id"), str): result[item["publication_id"]] = item
-        except (ValueError, TypeError, json.JSONDecodeError): pass
-        finally: body.close()
+            if isinstance(item, dict) and isinstance(item.get("publication_id"), str):
+                return item
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+        finally:
+            body.close()
+        return None
+
+    result: dict[str, dict[str, Any]] = {}
+    # Bound simultaneous S3 requests, including streaming body reads. Navigation
+    # must not pay one complete network round trip for every journal record.
+    for offset in range(0, len(keys), JOURNAL_READ_CONCURRENCY):
+        items = await asyncio.gather(*(asyncio.to_thread(read_item, key)
+                                      for key in keys[offset:offset + JOURNAL_READ_CONCURRENCY]))
+        for item in items:
+            if item is not None:
+                result[item["publication_id"]] = item
     return sorted(result.values(), key=lambda item: str(item.get("confirmed_at", "")), reverse=True)
 
 
