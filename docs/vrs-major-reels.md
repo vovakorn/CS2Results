@@ -1,14 +1,15 @@
 # VRS Major Reels
 
-Локально 23 октября подготовлена [safe zone](reels-safe-zone.md) для всех
+25 октября выпущена [safe zone](reels-safe-zone.md) для всех
 трёх регионов и месячного world: новая компоновка, центральная обложка
-и версия render receipt. Эта доработка ещё не выпущена.
+и версия render receipt. Production `d4er62kv5q46lc29a93n`;
+[проверки и разовое исключение startup-логов](reels-safe-zone-release-2026-10-25.md).
 
 Приватная функция `cs2-vrs-major-reels` получает датированные VRS из
 LiquipediaDB и по запросу создаёт один из трёх региональных роликов.
 Она работает отдельно от основной Python-функции бота и социальных публикаций.
 
-С 18 октября production-рендер `d4e6u0tiersucqk7pb3k` поддерживает также
+С 18 октября рендер поддерживает также
 `job=monthly`: один мировой Reel за закрытый месяц. Его подпись,
 отдельный publisher и месячный timer описаны в [контракте месячных Reels](monthly-vrs-reels.md).
 

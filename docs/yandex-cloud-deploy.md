@@ -20,6 +20,13 @@
 [Контракт и изолированный процесс выпуска](monthly-vrs-reels.md),
 [фактические версии и проверки](../PROJECT_STATUS.md).
 
+25 октября согласованно обновлены main, VRS renderer и monthly publisher
+для [safe zone Reels](reels-safe-zone.md). Пользователь дал новое разовое
+исключение по `Unavailable` startup-логам для трёх точных кандидатов;
+исходные ошибки и `startupLogsChecked=false` сохранены. Обычные deploy-скрипты
+не менялись; последующие релизы требуют штатной проверки журналов.
+[Production/rollback, Git, hashes и фактические проверки](reels-safe-zone-release-2026-10-25.md).
+
 ## 1. Bucket состояния
 
 Создайте Object Storage bucket, например:

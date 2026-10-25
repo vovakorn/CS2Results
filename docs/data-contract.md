@@ -12,7 +12,7 @@ Receipt и container сохраняются один раз, UID публика�
 `monthly_vrs_reel` включён в реестр owner policy/журнала.
 [Контракт и защита от дублей](monthly-vrs-reels.md).
 
-Локальная safe-zone итерация 23 октября добавляет к render receipt
+Safe-zone релиз 25 октября добавляет к render receipt
 `layoutVersion=instagram-safe-v1` и `coverOffsetMs=500`. До публичной загрузки
 и создания нового контейнера publisher проверяет оба поля. Старый prepared
 receipt без них не заменяется автоматически и блокирует подготовку;

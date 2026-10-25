@@ -1,7 +1,7 @@
 # Мировой VRS: Reel по итогам месяца
 
-Локально 23 октября подготовлены [safe zone и центральная обложка](reels-safe-zone.md).
-Эта доработка ещё не выпущена. Новые render receipts несут версию компоновки
+25 октября выпущены [safe zone и центральная обложка](reels-safe-zone.md).
+Новые render receipts несут версию компоновки
 и выбранные 500 ms; publisher отклоняет старый prepared receipt без них
 до внешних действий. Pending-контейнеры автоматически не пересоздаются.
 
@@ -12,13 +12,14 @@ PR #156 слит 17 октября 2026; production и автопубликац�
 Пользователь выбрал **один мировой Reel**, а не три региональных.
 
 Текущий runtime: рендер `d4e8n07roso4762pf1h4` / production
-`d4e6u0tiersucqk7pb3k`, publisher `d4es8uk4gjgioi5n7lek` / production
-`d4en67h3m9s23og9ccnu`; ACTIVE timer `a1sor39q8jmdl2vvleie` вызывает
-publisher по `production`. CI (1 006 Python / 26 Node), полный облачный Reel,
-приватное сохранение и сквозные source/owner-policy dry-run прошли.
-Yandex Cloud вернул `Unavailable` при чтении startup-логов обеих функций;
-пользователь 18 октября разрешил исключение только для этого релиза.
-Ошибки, видимые только в журналах, остаются непроверенными.
+`d4er62kv5q46lc29a93n`, publisher `d4es8uk4gjgioi5n7lek` / production
+`d4e4lkpierd7dq7fa7ae`; ACTIVE timer `a1sor39q8jmdl2vvleie` вызывает
+publisher по `production`. CI (1 218 Python / 27 Node), полные облачные
+render-probe и production source/owner-policy dry-run прошли. Yandex Cloud
+вернул `Unavailable` при чтении startup-логов; пользователь 25 октября дал
+новое разовое разрешение для точных версий. Журналы остаются непроверенными.
+Прежние версии удерживаются как rollback; конфигурации и девять таймеров
+сохранены. [Точные проверки и ограничения](reels-safe-zone-release-2026-10-25.md).
 
 ## Содержание
 
