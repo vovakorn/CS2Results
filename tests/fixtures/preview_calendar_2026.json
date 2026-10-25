@@ -1,0 +1,57 @@
+{
+  "checked_on": "2026-10-24",
+  "note": "Public-source-based passport fixtures for offline tests, not captured live LPDB responses. Older LP pages show 25 November for PGL; runtime must reject conflicting dates.",
+  "result": [
+    {
+      "pagename": "Intel_Extreme_Masters/2026/Beijing",
+      "name": "Intel Extreme Masters Beijing 2026",
+      "startdate": "2026-11-02",
+      "enddate": "2026-11-08",
+      "prizepool": "1250000",
+      "participantsnumber": 16,
+      "locations": {
+        "country1": "cn",
+        "city1": "Beijing",
+        "venue1": "Bloomage Biotech·Biohyalux ECM Arena"
+      },
+      "liquipediatier": "1",
+      "liquipediatiertype": "",
+      "type": "Offline",
+      "status": ""
+    },
+    {
+      "pagename": "BLAST/Rivals/2026/Fall",
+      "name": "BLAST Rivals Fall 2026",
+      "startdate": "2026-11-11",
+      "enddate": "2026-11-15",
+      "prizepool": "1000000",
+      "participantsnumber": 8,
+      "locations": {
+        "country1": "hk",
+        "city1": "Chek Lap Kok",
+        "venue1": "AsiaWorld-Expo"
+      },
+      "liquipediatier": "1",
+      "liquipediatiertype": "",
+      "type": "Offline",
+      "status": ""
+    },
+    {
+      "pagename": "PGL/2026/Singapore",
+      "name": "PGL Major Singapore 2026",
+      "startdate": "2026-11-24",
+      "enddate": "2026-12-13",
+      "prizepool": "1250000",
+      "participantsnumber": 32,
+      "locations": {
+        "country1": "sg",
+        "city1": "Kallang",
+        "venue1": "Singapore Indoor Stadium"
+      },
+      "liquipediatier": "1",
+      "liquipediatiertype": "",
+      "type": "Offline",
+      "status": ""
+    }
+  ]
+}

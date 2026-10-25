@@ -86,6 +86,7 @@ Job не принимает произвольные даты и всегда о
 | `ENABLE_VRS` | Начальный снимок перед анонсом и итоговый VRS-альбом; по умолчанию `0`. Ошибка начального снимка блокирует анонс. |
 | `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
 | `ENABLE_TOURNAMENT_PREVIEWS` | Превью в Telegram/Instagram/Threads; `0` по умолчанию. Нужен проверенный профиль. |
+| `TOURNAMENT_PREVIEW_CALENDAR_PATH` | План объявленных турниров и контроль подготовки от D-14; по умолчанию `data/tournament_preview_calendar.json`. Запись не разрешает публикацию. |
 | `TOURNAMENT_PREVIEW_PROFILES_PATH` | JSON профилей и точных связей Liquipedia/PandaScore для общей цепочки Threads/VRS; по умолчанию `data/tournament_preview_profiles.json`. Исторические связи сохраняются. |
 | `ENABLE_LIQUIPEDIA_FALLBACK` | `1` включает Liquipedia fallback в режиме `auto`; безопасное значение по умолчанию — `0`. |
 | `ENABLE_LIQUIPEDIA_SHADOW` | `1` сравнивает завершённые матчи PandaScore и Liquipedia, не меняя источник публикации; production — не чаще одной попытки в UTC-час, dry-run без ограничения и записи маркера. По умолчанию `0`. |

@@ -3,7 +3,10 @@
     "key": "esl-pro-league-season-24-2026",
     "liquipedia_page": "ESL/Pro_League/Season_24",
     "pandascore_serie_id": 11004,
-    "pandascore_tournament_ids": [22017, 22018],
+    "pandascore_tournament_ids": [
+      22017,
+      22018
+    ],
     "approved": true,
     "verified_at": "2026-10-02T12:10:17Z",
     "story": "EPL впервые с 2019 года возвращается на большую арену. В Катовице 16 команд начнут путь к Spodek — перед живой публикой сыграют восемь.",
@@ -36,6 +39,142 @@
         "format_text": "8 команд, на выбывание. BO3, финал BO5; матч за 3-е место BO3.",
         "card_summary": "BO3 · финал BO5",
         "source_url": "https://pro.eslgaming.com/csgo/proleague/"
+      }
+    ]
+  },
+  {
+    "key": "iem-beijing-2026",
+    "liquipedia_page": "Intel_Extreme_Masters/2026/Beijing",
+    "approved": true,
+    "verified_at": "2026-10-24T07:35:58.081Z",
+    "publication_approval_until": "2026-11-01T20:59:59Z",
+    "expected_prize_pool_usd": 1250000,
+    "expected_participant_count": 16,
+    "story": "IEM возвращается в Пекин с новой сценой на 360 градусов. За титул поборются 16 команд.",
+    "short_story": "IEM возвращается в Пекин со сценой на 360°.",
+    "story_source_url": "https://pro.eslgaming.com/tour/cs/beijing/",
+    "prize_money_usd": 300000,
+    "club_reward_usd": 950000,
+    "prize_source_url": "https://pro.eslgaming.com/tour/cs/beijing/",
+    "branding": {
+      "theme_key": "iem-beijing",
+      "headline": "Возвращение IEM в Пекин",
+      "headline_source_url": "https://pro.eslgaming.com/tour/cs/beijing/"
+    },
+    "stages": [
+      {
+        "kind": "groups",
+        "start": "2026-11-02",
+        "end": "2026-11-04",
+        "format_text": "2×8, двойное выбывание, BO3; по 3 команды выходят.",
+        "card_summary": "BO3 · 16 → 6",
+        "source_url": "https://pro.eslgaming.com/tour/cs/beijing/"
+      },
+      {
+        "kind": "playoffs",
+        "start": "2026-11-06",
+        "end": "2026-11-08",
+        "format_text": "6 команд, на выбывание; BO3, финал BO5; за 3-е — BO3.",
+        "card_summary": "BO3 · финал BO5",
+        "source_url": "https://pro.eslgaming.com/tour/cs/beijing/"
+      }
+    ]
+  },
+  {
+    "key": "blast-rivals-hong-kong-2026",
+    "liquipedia_page": "BLAST/Rivals/2026/Fall",
+    "approved": true,
+    "verified_at": "2026-10-24T07:35:58.081Z",
+    "story": "Rivals возвращается в Гонконг после аншлага дебютного турнира на AsiaWorld-Expo.",
+    "story_source_url": "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026",
+    "prize_money_usd": 350000,
+    "club_reward_usd": 650000,
+    "prize_split_kind": "prize_participation",
+    "prize_source_url": "https://assets.blast.tv/rulebook/BLAST_Premier_Handbook_2026.pdf",
+    "venue_scope": "playoffs",
+    "branding": {
+      "accent": "#00FFF2",
+      "logo_asset": "blast-rivals.png",
+      "logo_source_url": "https://cdn.prod.website-files.com/69f99f5d46e5f137d0578e1d/6a01e15e919a171b6a308730_69f9e16a1b74c7fd459b6af1_RV-FW-26_Logo_Rivals_White.png",
+      "headline": "После аншлага — снова в Гонконге",
+      "headline_source_url": "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026"
+    },
+    "stages": [
+      {
+        "kind": "groups",
+        "start": "2026-11-11",
+        "end": "2026-11-12",
+        "format_text": "2×4, GSL, BO3; 6 дальше, победители — в полуфинал.",
+        "card_summary": "GSL · BO3 · 8 → 6",
+        "source_url": "https://assets.blast.tv/rulebook/BLAST_Premier_Handbook_2026.pdf"
+      },
+      {
+        "kind": "playoffs",
+        "start": "2026-11-13",
+        "end": "2026-11-15",
+        "format_text": "6 команд, на выбывание; BO3, финал BO5.",
+        "card_summary": "BO3 · финал BO5",
+        "source_url": "https://blastpremier.com/event/blast-premier-rivals-hong-kong-2026"
+      }
+    ],
+    "publication_approval_until": "2026-11-10T20:59:59Z",
+    "expected_prize_pool_usd": 1000000,
+    "expected_participant_count": 8,
+    "short_story": "Rivals возвращается в Гонконг после аншлага."
+  },
+  {
+    "key": "pgl-major-singapore-2026",
+    "liquipedia_page": "PGL/2026/Singapore",
+    "approved": true,
+    "verified_at": "2026-10-24T07:35:58.081Z",
+    "publication_approval_until": "2026-11-23T20:59:59Z",
+    "expected_prize_pool_usd": 1250000,
+    "expected_participant_count": 32,
+    "story": "PGL проведёт Major в Сингапуре: 32 команды, три Swiss-этапа и финальные дни на Singapore Indoor Stadium.",
+    "short_story": "Сингапур принимает Major.",
+    "story_source_url": "https://www.pglesports.com/cs2/pgl-major-singapore-2026/",
+    "venue_scope": "playoffs",
+    "branding": {
+      "theme_key": "pgl-major",
+      "headline": "Major в Сингапуре",
+      "headline_source_url": "https://www.pglesports.com/cs2/pgl-major-singapore-2026/"
+    },
+    "stages": [
+      {
+        "kind": "swiss_1",
+        "start": "2026-11-24",
+        "end": "2026-11-27",
+        "format_text": "BO1; выход/вылет BO3; 16→8.",
+        "card_summary": "BO1/BO3 · 16 → 8",
+        "source_url": "https://liquipedia.net/counterstrike/PGL/2026/Singapore",
+        "schedule_source_url": "https://www.hltv.org/major/"
+      },
+      {
+        "kind": "swiss_2",
+        "start": "2026-11-28",
+        "end": "2026-12-01",
+        "format_text": "BO1; выход/вылет BO3; 16→8.",
+        "card_summary": "BO1/BO3 · 16 → 8",
+        "source_url": "https://liquipedia.net/counterstrike/PGL/2026/Singapore",
+        "schedule_source_url": "https://www.hltv.org/major/"
+      },
+      {
+        "kind": "swiss_3",
+        "start": "2026-12-02",
+        "end": "2026-12-06",
+        "format_text": "BO1; выход/вылет BO3; 16→8.",
+        "card_summary": "BO1/BO3 · 16 → 8",
+        "source_url": "https://liquipedia.net/counterstrike/PGL/2026/Singapore",
+        "schedule_source_url": "https://www.hltv.org/major/"
+      },
+      {
+        "kind": "playoffs",
+        "start": "2026-12-10",
+        "end": "2026-12-13",
+        "format_text": "8, на выбывание; BO3, финал BO5.",
+        "card_summary": "BO3 · финал BO5",
+        "source_url": "https://liquipedia.net/counterstrike/PGL/2026/Singapore",
+        "schedule_source_url": "https://www.hltv.org/major/"
       }
     ]
   }

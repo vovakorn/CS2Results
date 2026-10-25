@@ -24,6 +24,8 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     profiles = load_profiles(ROOT / "data/tournament_preview_profiles.json")
     profiles += load_profiles(ROOT / "data/tournament_preview_examples.json")
+    by_key = {profile.key: profile for profile in profiles}
+    profiles = [by_key[key] for key in ["esl-pro-league-season-24-2026","blast-rivals-hong-kong-2026","pgl-masters-bucharest-2026"]]
     titles = ["ESL Pro League Season 24", "BLAST Rivals Hong Kong 2026", "PGL Masters Bucharest 2026"]
     names = [("Team Spirit", "FUT Esports"), ("NAVI", "MOUZ"), ("G2 Esports", "FaZe Clan"),
              ("Gaimin Gladiators Academy", "Natus Vincere Junior")]
