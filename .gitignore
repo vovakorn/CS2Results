@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .venv/
 .pytest_cache/
+/video/vrs-major-race/cloud/node_modules
 build/
 dist/
 .env

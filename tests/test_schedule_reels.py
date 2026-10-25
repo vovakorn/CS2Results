@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from PIL import Image
 
-from cs2bot import schedule_reels
+from cs2bot import media_cards, schedule_reels
 from cs2bot.match_sources.models import UpcomingMatchNormalized
 
 
@@ -91,18 +91,18 @@ def test_encoder_failure_is_safe(monkeypatch):
 @pytest.mark.parametrize("kind", ["intro", "matches", "outro"])
 def test_larger_channel_logo_stays_centered_on_lines_in_every_scene(monkeypatch, kind):
     calls = []
-    original = schedule_reels._draw_channel_brand
-    def capture(image, draw, **kwargs):
-        calls.append(kwargs)
-        return original(image, draw, **kwargs)
-    monkeypatch.setattr(schedule_reels, "_draw_channel_brand", capture)
+    original = media_cards._draw_channel_logo
+    def capture(image, draw, center, diameter):
+        calls.append((center, diameter))
+        return original(image, draw, center, diameter)
+    monkeypatch.setattr(media_cards, "_draw_channel_logo", capture)
     scene = next(scene for scene in schedule_reels.storyboard(fixtures(4)) if scene.kind == kind)
     assert schedule_reels.render_scene(scene, NOW, 4).size == (1080, 1920)
     assert len(calls) == 1
-    assert calls[0]["center_y"] == 214
-    assert calls[0]["logo_diameter"] == 144
-    # Include the 5px outer rim and retain space before the channel title.
-    assert 214 + 144 / 2 + 5 < calls[0]["label_center_y"] - 15
+    assert calls == [((500, 330), 144)]
+    # Include the outer rim in the safe area and retain space before the title.
+    assert 330 - 144 / 2 - 5 >= 250
+    assert 330 + 144 / 2 + 5 < 424 - 15
 
 
 def test_esports_beat_is_deterministic_loopable_and_has_headroom(tmp_path):

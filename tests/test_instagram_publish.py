@@ -68,6 +68,7 @@ def test_create_reel_container_keeps_it_out_of_feed(monkeypatch):
     assert instagram_publish.create_reel_container("https://example.test/reel.mp4", "caption", None) == "12345"
     assert seen[0]["media_type"] == "REELS"
     assert seen[0]["share_to_feed"] == "false"
+    assert seen[0]["thumb_offset"] == "500"
     assert seen[0]["video_url"] == "https://example.test/reel.mp4"
 
 

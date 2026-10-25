@@ -41,12 +41,18 @@ for slug in ([args.region] if args.region else ['europe','americas','asia']):
     fps=meta['fps'];count=round(meta['duration']*fps)
     code=f'''import fs from 'node:fs';
 import {{geometry}} from {json.dumps((HERE/'timeline.mjs').as_uri())};
+import {{PLOT,TABLE,COVER_HOLD,COVER_FADE}} from {json.dumps((HERE/'layout.mjs').as_uri())};
 const parsed=JSON.parse(fs.readFileSync({json.dumps(str(data_path))}));
 const data=Array.isArray(parsed)?parsed.find(d=>d.regionSlug==={json.dumps(slug)}):parsed;
 const frames=[];
 for(let i=0;i<{count};i++){{const g=geometry(data,i/{fps});frames.push(g.endpoints.filter(e=>e.alpha>.98&&e.logoLayers.length===1).map(e=>[e.id,g.offsets.get(e.id)/2,e.y/2]));}}
-process.stdout.write(JSON.stringify(frames));'''
-    tracking=json.loads(subprocess.run([node,'--input-type=module','-e',code],check=True,capture_output=True,text=True).stdout)
+process.stdout.write(JSON.stringify({{frames,plot:PLOT,table:TABLE,auditFrom:Math.max(1.8,COVER_HOLD+COVER_FADE)}}));'''
+    layout=json.loads(subprocess.run([node,'--input-type=module','-e',code],check=True,capture_output=True,text=True).stdout)
+    tracking=layout['frames']
+    p,t=layout['plot'],layout['table']
+    plot_roi=(slice(p['top']//2,p['bottom']//2+1),slice(p['left']//2,328))
+    table_roi=(slice(t['top']//2,(t['top']+t['height'])//2),slice(t['left']//2,(t['left']+t['width'])//2))
+    first_audited_frame=math.ceil(layout['auditFrom']*fps)+4
     plot=[];table=[];logos={};decoded=0
     parsed=json.loads(data_path.read_text())
     source=next(r for r in parsed if r['regionSlug']==slug) if isinstance(parsed,list) else parsed
@@ -54,11 +60,11 @@ process.stdout.write(JSON.stringify(frames));'''
     yy,xx=np.mgrid[-8:9,-8:9];circle=xx*xx+yy*yy<=64
     for frame,raw in enumerate(reader):
         im=np.frombuffer(raw,np.uint8).reshape((960,540,3))
-        plot.append(float(np.max(im[215:801,56:337],axis=2).mean()))
+        plot.append(float(np.max(im[plot_roi],axis=2).mean()))
         time=frame/fps
         anchor=min(len(source['snapshots'])-1,max(0,math.floor((time-1.8)/step+1e-8)))
         updating=anchor>0 and time-1.8-step*anchor<.25
-        table.append(float('nan') if updating else float(np.max(im[209:808,342:488],axis=2).mean()))
+        table.append(float('nan') if updating else float(np.max(im[table_roi],axis=2).mean()))
         for identity,x,y in tracking[frame]:
             cx,cy=round(x),round(y)
             crop=im[cy-8:cy+9,cx-8:cx+9]
@@ -68,7 +74,7 @@ process.stdout.write(JSON.stringify(frames));'''
         decoded+=1
     assert decoded==count,(decoded,count)
     flashes=[];table_flashes=[];logo_drops=[]
-    for frame in range(4,count-4):
+    for frame in range(first_audited_frame,count-4):
         local=min(np.mean(plot[frame-3:frame]),np.mean(plot[frame+1:frame+4]))
         dip=local-plot[frame]
         if dip>1.8:flashes.append({'frame':frame,'seconds':round(frame/fps,4),'brightnessDip':round(float(dip),4)})
@@ -77,7 +83,7 @@ process.stdout.write(JSON.stringify(frames));'''
             dip=min(np.mean(window[:3]),np.mean(window[4:]))-window[3]
             if dip>1.8:table_flashes.append({'frame':frame,'seconds':round(frame/fps,4),'brightnessDip':round(float(dip),4)})
     for identity,values in logos.items():
-        for frame in range(4,count-4):
+        for frame in range(first_audited_frame,count-4):
             neighbors=np.r_[values[frame-3:frame],values[frame+1:frame+4]]
             if not np.isfinite(values[frame]) or not np.isfinite(neighbors).all():continue
             baseline=min(np.mean(neighbors[:3]),np.mean(neighbors[3:]))
@@ -86,7 +92,7 @@ process.stdout.write(JSON.stringify(frames));'''
                                    'contrastRatio':round(float(values[frame]/baseline),4)})
     report={'file':path.name,'videoSha256':hashlib.sha256(path.read_bytes()).hexdigest(),'decodedFrames':decoded,'fps':fps,'plotFlashEvents':flashes,
             'logoDropEvents':logo_drops,'tableFlashEvents':table_flashes,'detector':{'plotDipThreshold':1.8,'logoContrastRatioThreshold':.55,
-            'scope':'3 adjacent frames on either side; plot; table outside intended 0.25s data updates; visible unmixed moving logos; decoded pixels at 540x960'}}
+            'scope':'Current safe layout; after the cover/transition; 3 adjacent frames on either side; table outside intended 0.25s data updates; visible unmixed moving logos; decoded pixels at 540x960'}}
     output=path.with_suffix('.pixel-audit.json') if args.video else BASE/slug/f'pixel-audit-{suffix}.json'
     output.write_text(json.dumps(report,ensure_ascii=False,indent=2))
     reports[slug]=report

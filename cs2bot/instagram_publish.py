@@ -318,6 +318,7 @@ def publish_rendered_cards(
 
 def create_reel_container(video_url: str, caption: str, context: Any) -> str:
     """Start Meta's asynchronous processing; this does not publish a post."""
+    from .reel_layout import COVER_OFFSET_MS
     if not isinstance(video_url, str) or not video_url.startswith("https://"):
         raise InstagramPublishError("Instagram Reel URL is invalid")
     access_token, user_id = _instagram_credentials(context)
@@ -329,6 +330,7 @@ def create_reel_container(video_url: str, caption: str, context: Any) -> str:
                 "video_url": video_url,
                 "caption": _caption(caption),
                 "share_to_feed": "false",
+                "thumb_offset": str(COVER_OFFSET_MS),
                 "access_token": access_token,
             },
             proxy,

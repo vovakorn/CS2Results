@@ -1,3 +1,4 @@
+import {PLOT} from './layout.mjs';
 export const FPS = 60;
 export const HOLD = 1.8;
 export const STEP = 1.8;
@@ -73,8 +74,8 @@ export const badgePositions = (endpoints, separation, progress) => {
   }
   const left = Math.min(...placed.map((e)=>e.bx));
   const right = Math.max(...placed.map((e)=>e.bx));
-  const shift = Math.max(0,112-left);
-  if (right+shift>662.001) throw new Error('Badge group does not fit plot');
+  const shift = Math.max(0,PLOT.left-left);
+  if (right+shift>PLOT.right+6.001) throw new Error('Badge group does not fit plot');
   for (const e of placed) offsets.set(e.id,e.bx+shift);
   return offsets;
 };
@@ -91,9 +92,9 @@ export const geometry = (data, seconds) => {
   const zoom = smooth((seconds-HOLD-step*(data.snapshots.length-1))/ZOOM);
   const left = Math.max(-7,day-35)*(1-zoom);
   const span = 42*(1-zoom)+days.at(-1)*zoom;
-  const x = (d) => 112+544*(d-left)/span;
-  const y = (position) => 444+(position-1)*1130/Math.max(1,rankMax-1);
-  const rowY = (position) => 444+(position-1)*1130/Math.max(1,data.names.length-1);
+  const x = (d) => PLOT.left+(PLOT.right-PLOT.left)*(d-left)/span;
+  const y = (position) => PLOT.top+(position-1)*(PLOT.bottom-PLOT.top)/Math.max(1,rankMax-1);
+  const rowY = (position) => PLOT.top+(position-1)*(PLOT.bottom-PLOT.top)/Math.max(1,data.names.length-1);
   const animatedRanks = Object.fromEntries(data.names.map((name)=>[name,
     ranks[i][name]+(ranks[after][name]-ranks[i][name])*eased]));
   const endpoints = [];
@@ -114,7 +115,7 @@ export const geometry = (data, seconds) => {
   const offsets = badgePositions(endpoints,data.names.length>20?47:54,eased);
   const labelMix = i===0?1:smooth((seconds-HOLD-step*i)/.22);
   const ticks = days.map((_,index)=>index).filter((index)=>index%3===0 || index===days.length-1);
-  const tickOpacity = (d) => smooth((x(d)-88)/24)*smooth((680-x(d))/24);
+  const tickOpacity = (d) => smooth((x(d)-116)/24)*smooth((652-x(d))/24);
   return {i,fraction,after,days,day,left,span,x,y,rowY,rankMax,ranks,animatedRanks,row,endpoints,offsets,ticks,tickOpacity,labelMix};
 };
 

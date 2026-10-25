@@ -56,13 +56,13 @@ def test_tile_grids_are_centered_and_clear_of_heading_footer_and_each_other(coun
     boxes = r._intro_team_boxes(count)
     assert len(boxes) == count
     for i, (left, top, right, bottom) in enumerate(boxes):
-        assert 98 <= left < right <= 982
+        assert 80 <= left < right <= 920
         assert 800 <= top < bottom <= 1436
         for other in boxes[i + 1:]:
             assert right <= other[0] or other[2] <= left or bottom <= other[1] or other[3] <= top
     for top in {box[1] for box in boxes}:
         row = [box for box in boxes if box[1] == top]
-        assert row[0][0] + row[-1][2] == 1080
+        assert row[0][0] + row[-1][2] == 1000
 
 
 def test_duplicate_names_merge_available_logos_without_merging_academy_teams():
@@ -139,4 +139,4 @@ def test_intro_content_is_visible_immediately_and_cached_across_frames(monkeypat
         elapsed_before=0, total_seconds=8))
     assert len(calls) == 6 and len(frames) == 18
     assert sum(duration for _, duration in frames) == pytest.approx(1.5)
-    assert frames[0][0].crop((98, 550, 982, 1650)).tobytes() == frames[-1][0].crop((98, 550, 982, 1650)).tobytes()
+    assert frames[0][0].crop((80, 620, 920, 1548)).tobytes() == frames[-1][0].crop((80, 620, 920, 1548)).tobytes()

@@ -17,6 +17,7 @@ from botocore.exceptions import ClientError
 from . import instagram_publish as instagram
 from .match_sources import storage
 from .publication_admin import publication_allowed, record_publication
+from .reel_layout import LAYOUT_VERSION, COVER_OFFSET_MS
 
 MOSCOW = ZoneInfo("Europe/Moscow")
 CONTENT_TYPE = "monthly_vrs_reel"
@@ -120,6 +121,7 @@ def _receipt(receipt: dict[str, Any], month: str) -> dict[str, Any]:
         or not re.fullmatch(re.escape(prefix) + r"sources/[a-f0-9]{64}\.json", result.get("sourceKey", ""))
         or media.get("fullDecode") != "passed" or media.get("frames") != 1944
         or media.get("width") != 1080 or media.get("height") != 1920 or media.get("fps") != 60
+        or media.get("layoutVersion") != LAYOUT_VERSION or media.get("coverOffsetMs") != COVER_OFFSET_MS
         or type(media.get("bytes")) is not int or not 0 < media["bytes"] <= MAX_VIDEO_BYTES
         or not re.fullmatch(r"[a-f0-9]{64}", media.get("sha256", ""))
         or key.split("/")[-2] != media["sha256"]

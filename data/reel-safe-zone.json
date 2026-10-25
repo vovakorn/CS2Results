@@ -1,0 +1,10 @@
+{
+  "version": "instagram-safe-v1",
+  "width": 1080,
+  "height": 1920,
+  "left": 80,
+  "top": 250,
+  "right": 920,
+  "bottom": 1570,
+  "coverOffsetMs": 500
+}
