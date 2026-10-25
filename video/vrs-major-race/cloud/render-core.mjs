@@ -6,6 +6,7 @@ import {once} from 'node:events';
 import {createHash} from 'node:crypto';
 import {createPainter} from '../paint-frame.mjs';
 import {FPS,frameCount} from '../timeline.mjs';
+import {SAFE} from '../layout.mjs';
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 
 async function command(binary,args){
@@ -51,5 +52,6 @@ export async function renderVideo(data,directory,{ffmpeg,assetsDir}){
  const music=JSON.parse(await fs.readFile(path.join(assetsDir,'music-manifest.json'),'utf8'));
  if(sha256(soundtrack)!==music.sha256)throw Error('Soundtrack checksum mismatch');
  return {file,preview:path.join(directory,'preview.png'),sha256:sha256(bytes),bytes:bytes.length,
-  width:1080,height:1920,fps:FPS,frames:decoded,duration:32.4,audioPeakDb:peak,musicSha256:music.sha256,fullDecode:'passed'};
+  width:1080,height:1920,fps:FPS,frames:decoded,duration:32.4,audioPeakDb:peak,musicSha256:music.sha256,fullDecode:'passed',
+  layoutVersion:SAFE.version,coverOffsetMs:SAFE.coverOffsetMs};
 }

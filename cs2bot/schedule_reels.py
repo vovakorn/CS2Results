@@ -22,6 +22,7 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from . import media_cards, tournament_visuals
+from .reel_layout import SAFE_CENTER_X
 from .match_sources.models import UpcomingMatchNormalized
 from .match_sources.config import TOURNAMENT_PREVIEW_PROFILES_PATH
 from .tournament_identity import event_for_match
@@ -36,7 +37,7 @@ from .media_cards import (
     NAVY,
     PANEL,
     WHITE,
-    _draw_channel_brand,
+    _draw_channel_logo,
     _draw_logo,
     _draw_text_block,
     _uses_cyrillic,
@@ -130,12 +131,12 @@ def _intro_team_boxes(count: int) -> tuple[tuple[int, int, int, int], ...]:
         return ()
     columns = 2 if count in (2, 4) else 3
     rows = math.ceil(count / columns)
-    width, height, gap = (420 if columns == 2 else 276), (350 if rows == 1 else 292), 28
-    top = 970 if rows == 1 else 824
+    width, height, gap = (390 if columns == 2 else 250), (320 if rows == 1 else 250), 24
+    top = 930 if rows == 1 else 840
     boxes = []
     for row in range(rows):
         row_count = min(columns, count - row * columns)
-        left = (REEL_SIZE[0] - (row_count * width + (row_count - 1) * gap)) // 2
+        left = SAFE_CENTER_X - (row_count * width + (row_count - 1) * gap) // 2
         for column in range(row_count):
             x, y = left + column * (width + gap), top + row * (height + gap)
             boxes.append((x, y, x + width, y + height))
@@ -143,9 +144,9 @@ def _intro_team_boxes(count: int) -> tuple[tuple[int, int, int, int], ...]:
 
 
 def _draw_day_intro(image, draw, fixtures, count, tz, accent, logo_deadline):
-    _draw_text_block(draw, 540, 640, "ТВОЯ КОМАНДА", 884, 72,
+    _draw_text_block(draw, SAFE_CENTER_X, 668, "ТВОЯ КОМАНДА", 808, 68,
                      min_size=64, display=True, max_lines=1)
-    _draw_text_block(draw, 540, 718, "ИГРАЕТ СЕГОДНЯ?", 884, 72,
+    _draw_text_block(draw, SAFE_CENTER_X, 744, "ИГРАЕТ СЕГОДНЯ?", 808, 68,
                      min_size=64, display=True, max_lines=1, fill=accent)
     teams = _intro_teams(fixtures)
     shown = teams[:MAX_INTRO_TEAMS]
@@ -153,7 +154,7 @@ def _draw_day_intro(image, draw, fixtures, count, tz, accent, logo_deadline):
         draw.rounded_rectangle((x0, y0, x1, y1), radius=24,
                                fill=(*PANEL, 242), outline=(*accent, 105), width=2)
         center = (x0 + x1) // 2
-        diameter = 184 if y1 - y0 > 300 else 144
+        diameter = 164 if y1 - y0 > 300 else 124
         remaining = logo_deadline - time.monotonic() if logo_deadline is not None else None
         url, fallback = team.logo_url, team.fallback_url
         if remaining is not None and remaining < .1:
@@ -165,21 +166,21 @@ def _draw_day_intro(image, draw, fixtures, count, tz, accent, logo_deadline):
                    team.name, url, accent, fallback, download_timeout=timeout, subtle=True)
         draw = ImageDraw.Draw(image, "RGBA")
         _draw_text_block(draw, center, y1 - 62, team.name.upper(), x1 - x0 - 24,
-                         42, min_size=36, display=_uses_cyrillic(team.name), max_lines=2)
+                         38, min_size=30, display=_uses_cyrillic(team.name), max_lines=2)
     hidden = len(teams) - len(shown)
     if hidden:
         noun = "КОМАНД" if 11 <= hidden % 100 <= 14 else (
             "КОМАНДА" if hidden % 10 == 1 else "КОМАНДЫ" if hidden % 10 in (2, 3, 4) else "КОМАНД")
-        _draw_text_block(draw, 540, 1480, f"ЕЩЁ {hidden} {noun}", 884, 32,
+        _draw_text_block(draw, SAFE_CENTER_X, 1416, f"ЕЩЁ {hidden} {noun}", 808, 30,
                          display=True, max_lines=1, fill=MUTED)
     meta = f"{count} {_match_noun(count).upper()}"
     if fixtures:
         earliest = min(fixtures, key=lambda match: datetime.fromisoformat(match.scheduled_at.replace("Z", "+00:00")))
         zone = "МСК" if tz.key == "Europe/Moscow" else tz.key
         meta += f" · СТАРТ В {_schedule_time(earliest, tz)} {zone}"
-    _draw_text_block(draw, 540, 1554, meta, 884, 40,
+    _draw_text_block(draw, SAFE_CENTER_X, 1468, meta, 808, 36,
                      min_size=32, display=True, max_lines=2, fill=accent)
-    _draw_text_block(draw, 540, 1626, "РАСПИСАНИЕ — ДАЛЬШЕ", 884, 28,
+    _draw_text_block(draw, SAFE_CENTER_X, 1520, "РАСПИСАНИЕ — ДАЛЬШЕ", 808, 26,
                      display=True, max_lines=1, fill=MUTED)
 
 
@@ -305,39 +306,39 @@ def _base(visual=None) -> Image.Image:
     if visual:
         tournament_visuals.add_event_glow(image, accent)
         tournament_visuals.add_event_watermark(image, visual.logo, position=(704, 352), size=(290, 290))
-    draw.rounded_rectangle((52, 180, 1028, 1710), radius=54, outline=(*accent, 95), width=3)
-    draw.line((90, 214, 415, 214), fill=(*accent, 230), width=6)
-    draw.line((665, 214, 990, 214), fill=(*(accent if visual else AMBER), 230), width=6)
+    draw.rounded_rectangle((72, 230, 928, 1590), radius=44, outline=(*accent, 95), width=3)
+    draw.line((96, 330, 390, 330), fill=(*accent, 230), width=6)
+    draw.line((610, 330, 904, 330), fill=(*(accent if visual else AMBER), 230), width=6)
     try:
-        _draw_channel_brand(image, draw, center_y=214, logo_diameter=REEL_LOGO_DIAMETER,
-                            label_center_y=310, label_size=44)
+        _draw_channel_logo(image, draw, (SAFE_CENTER_X, 330), REEL_LOGO_DIAMETER)
+        _draw_text_block(draw, SAFE_CENTER_X, 424, "CS2 RESULTS", 808, 38, max_lines=1)
     except MediaCardError as exc:
         raise ScheduleReelError("Bundled channel logo is unavailable") from exc
     if visual and visual.logo is not None:
-        mark = ImageOps.contain(visual.logo, (180, 128))
-        image.alpha_composite(mark, (896 - mark.width // 2, 462 - mark.height // 2))
+        mark = ImageOps.contain(visual.logo, (128, 96))
+        image.alpha_composite(mark, (844 - mark.width // 2, 546 - mark.height // 2))
     return image
 
 
 def _center(draw: ImageDraw.ImageDraw, y: int, text: str, font: ImageFont.FreeTypeFont, fill: tuple[int, ...]) -> None:
     box = draw.textbbox((0, 0), text, font=font)
-    draw.text(((REEL_SIZE[0] - (box[2] - box[0])) / 2, y), text, font=font, fill=fill)
+    draw.text((SAFE_CENTER_X - (box[2] - box[0]) / 2, y), text, font=font, fill=fill)
 
 
 def _heading(draw: ImageDraw.ImageDraw, local_now: datetime, count: int, visual=None) -> None:
     if visual:
-        draw.rounded_rectangle((98, 356, 392, 406), radius=10, fill=visual.accent)
-        _draw_text_block(draw, 245, 381, "МАТЧИ СЕГОДНЯ", 270, 26,
+        draw.rounded_rectangle((96, 454, 360, 496), radius=10, fill=visual.accent)
+        _draw_text_block(draw, 228, 475, "МАТЧИ СЕГОДНЯ", 244, 24,
                          min_size=24, display=True, fill=NAVY, max_lines=1)
-        _draw_text_block(draw, 98, 466, visual.name.upper(), 650 if visual.logo else 884,
-                         44, min_size=32, alignment="left", max_lines=2)
-        _draw_text_block(draw, 98, 528,
+        _draw_text_block(draw, 96, 546, visual.name.upper(), 622 if visual.logo else 808,
+                         42, min_size=30, alignment="left", max_lines=2)
+        _draw_text_block(draw, 96, 600,
                          f"{local_now.day} {MONTHS[local_now.month]} · {count} {_match_noun(count).upper()}",
-                         650 if visual.logo else 884, 27, display=True,
+                         622 if visual.logo else 808, 25, display=True,
                          alignment="left", fill=MUTED, max_lines=1)
         return
-    _center(draw, 325, "МАТЧИ CS2 СЕГОДНЯ", _font(DISPLAY_FONT, 62), WHITE)
-    _center(draw, 422, f"{local_now.day} {MONTHS[local_now.month]}  ·  {count} {_match_noun(count).upper()}", _font(DISPLAY_FONT, 36), AMBER)
+    _center(draw, 466, "МАТЧИ CS2 СЕГОДНЯ", _font(DISPLAY_FONT, 56), WHITE)
+    _center(draw, 560, f"{local_now.day} {MONTHS[local_now.month]}  ·  {count} {_match_noun(count).upper()}", _font(DISPLAY_FONT, 32), AMBER)
 
 
 def _match_card(
@@ -346,7 +347,7 @@ def _match_card(
     visual=None,
 ) -> None:
     draw = ImageDraw.Draw(image, "RGBA")
-    x0, x1, bottom = 98, 982, y + 250
+    x0, x1, bottom = 96, 904, y + 210
     branded = visual is not None and visual.branding is not None
     accent = visual.accent if branded else CYAN
     panel = tuple(round(PANEL[i] * .96 + accent[i] * .04) for i in range(3)) if branded else PANEL
@@ -369,27 +370,27 @@ def _match_card(
         raise ScheduleReelError("Schedule Reel contains an invalid match time") from exc
     tournament = match.tournament_name.upper()
     title_width = x1 - 28 - title_x
-    tournament_font = _fit(draw, tournament, DISPLAY_FONT, title_width, 29, 21)
-    draw.text((title_x, y + 25), _ellipsis(draw, tournament, tournament_font, title_width), font=tournament_font, fill=MUTED)
-    time_font = _font(LATIN_BOLD_FONT, 59)
-    _center(draw, y + 80, time_label, time_font, accent if branded else AMBER)
-    logo_y = y + 171
+    tournament_font = _fit(draw, tournament, DISPLAY_FONT, title_width, 26, 21)
+    draw.text((title_x, y + 20), _ellipsis(draw, tournament, tournament_font, title_width), font=tournament_font, fill=MUTED)
+    time_font = _font(LATIN_BOLD_FONT, 48)
+    _center(draw, y + 64, time_label, time_font, accent if branded else AMBER)
+    logo_y = y + 145
     for center, name, url, fallback, accent in (
-        ((x0 + 93, logo_y), match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url, CYAN),
-        ((x1 - 93, logo_y), match.team2_name, match.team2_logo_url, match.team2_logo_fallback_url, AMBER),
+        ((x0 + 72, logo_y), match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url, CYAN),
+        ((x1 - 72, logo_y), match.team2_name, match.team2_logo_url, match.team2_logo_fallback_url, AMBER),
     ):
         remaining = logo_deadline - time.monotonic() if logo_deadline is not None else None
         if remaining is not None and remaining < 0.1:
             url = fallback = None
         _draw_logo(
-            image, draw, center, 80, name, url, accent, fallback,
+            image, draw, center, 64, name, url, accent, fallback,
             download_timeout=min(0.75, remaining) if remaining is not None and remaining >= 0.1 else None,
             subtle=branded,
         )
     draw = ImageDraw.Draw(image, "RGBA")
     for left, name in ((True, match.team1_name), (False, match.team2_name)):
-        _draw_text_block(draw, x0 + 144 if left else x1 - 144, y + 182,
-                         name.upper(), 296, 42, min_size=36,
+        _draw_text_block(draw, x0 + 120 if left else x1 - 120, y + 157,
+                         name.upper(), 250, 38, min_size=30,
                          display=_uses_cyrillic(name), alignment="left" if left else "right")
 
 
@@ -417,15 +418,15 @@ def render_scene(
         _draw_day_intro(image, draw, scene.context_matches or scene.matches, count, tz, accent, logo_deadline)
     elif scene.kind == "matches":
         _heading(draw, local_now, count, shared)
-        card_height, gap = 250, 24
+        card_height, gap = 210, 16
         group_height = len(scene.matches) * card_height + (len(scene.matches) - 1) * gap
-        start_y = 550 + (1090 - group_height) // 2
+        start_y = 626 + (888 - group_height) // 2
         for index, match in enumerate(scene.matches):
             if not hide_matches:
                 _match_card(image, match, start_y + index * (card_height + gap), tz, logo_deadline,
                             visuals.by_match.get(match.match_id))
         draw = ImageDraw.Draw(image, "RGBA")
-        _center(draw, 1640, f"{scene.page} / {scene.pages}  ·  ИСТОЧНИК: PANDASCORE", _font(DISPLAY_FONT, 25), MUTED)
+        _center(draw, 1528, f"{scene.page} / {scene.pages}  ·  ИСТОЧНИК: PANDASCORE", _font(DISPLAY_FONT, 22), MUTED)
     elif scene.kind == "outro":
         if shared:
             _heading(draw, local_now, count, shared)
@@ -449,10 +450,10 @@ def _reveal_opacity(elapsed: float, index: int) -> float:
 
 def _progress(image: Image.Image, fraction: float, accent=CYAN) -> None:
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((98, 1672, 982, 1682), radius=5, fill=PANEL)
-    width = round(884 * max(0.0, min(1.0, fraction)))
+    draw.rounded_rectangle((96, 1559, 904, 1565), radius=3, fill=PANEL)
+    width = round(808 * max(0.0, min(1.0, fraction)))
     if width:
-        draw.rounded_rectangle((98, 1672, 98 + width, 1682), radius=5, fill=accent)
+        draw.rounded_rectangle((96, 1559, 96 + width, 1565), radius=3, fill=accent)
 
 
 def animated_scene_frames(scene, local_now, count, timezone_name, *, elapsed_before,
@@ -467,15 +468,15 @@ def animated_scene_frames(scene, local_now, count, timezone_name, *, elapsed_bef
                    preview_watermark=preview_watermark, hide_matches=True, visuals=visuals)
                   if scene.kind == "matches" else full)
     frames = math.ceil(scene.duration * ANIMATION_FPS)
-    group_height = len(scene.matches) * 250 + max(0, len(scene.matches) - 1) * 24
-    top = 550 + (1090 - group_height) // 2
+    group_height = len(scene.matches) * 210 + max(0, len(scene.matches) - 1) * 16
+    top = 626 + (888 - group_height) // 2
     for index in range(frames):
         elapsed = index / ANIMATION_FPS
         frame = full.copy() if elapsed >= .75 or scene.kind != "matches" else background.copy()
         if scene.kind == "matches" and elapsed < .75:
             for row in range(len(scene.matches)):
-                y = top + row * 274
-                box = (97, y - 1, 984, y + 252)
+                y = top + row * 226
+                box = (95, y - 1, 906, y + 212)
                 opacity = _reveal_opacity(elapsed, row)
                 frame.paste(Image.blend(background.crop(box), full.crop(box), opacity), box)
         _progress(frame, (elapsed_before + elapsed + 1 / ANIMATION_FPS) / total_seconds,

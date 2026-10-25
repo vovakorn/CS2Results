@@ -9,4 +9,5 @@ assert.equal(response.statusCode,200,response.body);
 const result=JSON.parse(response.body);
 assert.equal(result.render.frames,1944);assert.equal(result.render.width,1080);assert.equal(result.render.height,1920);
 assert.equal(result.render.fps,60);assert.equal(result.render.duration,32.4);assert.ok(result.render.audioPeakDb<0);
+assert.equal(result.render.layoutVersion,'instagram-safe-v1');assert.equal(result.render.coverOffsetMs,500);
 console.log(JSON.stringify(result));

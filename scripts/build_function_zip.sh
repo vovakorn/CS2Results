@@ -15,6 +15,7 @@ cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/requirements.txt"
 mkdir -p "${BUILD_DIR}/data"
 cp "${ROOT_DIR}/data/tournament_preview_profiles.json" "${BUILD_DIR}/data/tournament_preview_profiles.json"
 cp "${ROOT_DIR}/data/tournament_branding_themes.json" "${BUILD_DIR}/data/tournament_branding_themes.json"
+cp "${ROOT_DIR}/data/reel-safe-zone.json" "${BUILD_DIR}/data/reel-safe-zone.json"
 if [ "${XRAY_ENABLED:-0}" = "1" ]; then
   "${ROOT_DIR}/scripts/fetch_xray_core.sh"
   mkdir -p "${BUILD_DIR}/xray"

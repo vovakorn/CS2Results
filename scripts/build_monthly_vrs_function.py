@@ -20,6 +20,7 @@ def build():
                 archive.write(path, path.relative_to(ROOT))
         for name in ['requirements.txt', 'runtime.txt']:
             archive.write(ROOT / name, name)
+        archive.write(ROOT / 'data/reel-safe-zone.json', 'data/reel-safe-zone.json')
         if os.environ.get('XRAY_ENABLED') == '1':
             archive.write(xray, 'xray/xray')
     print(output)

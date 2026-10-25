@@ -64,7 +64,7 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test source boundaries, animation and private artifact delivery
         working-directory: video/vrs-major-race/cloud
-        run: node --test ../timeline.test.mjs ../data.test.mjs ../monthly.test.mjs handler.test.mjs
+        run: node --test ../timeline.test.mjs ../data.test.mjs ../monthly.test.mjs handler.test.mjs safe-zone.test.mjs
       - name: Build isolated Linux function
         run: python3 scripts/build_vrs_major_function.py
       - name: Render and decode full Americas probe in the packaged Linux runtime

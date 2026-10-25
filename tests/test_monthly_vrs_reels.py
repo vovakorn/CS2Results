@@ -31,6 +31,7 @@ def receipt():
         "sourceKey": f"vrs-monthly/2026-10/sources/{source}.json",
         "artifacts": {"videoKey": f"vrs-monthly/2026-10/renders/world/{source}/{digest}/reel.mp4"},
         "render": {"sha256": digest, "bytes": 5, "width": 1080, "height": 1920, "fps": 60,
+                   "layoutVersion": "instagram-safe-v1", "coverOffsetMs": 500,
                    "frames": 1944, "fullDecode": "passed"}}}
 
 
@@ -102,6 +103,8 @@ def test_receipt_rejects_other_month_or_bucket_scope_and_incomplete_render():
         lambda r: r["render"]["render"].update(fullDecode="failed"),
         lambda r: r.update(month="2026-09"),
         lambda r: r["render"]["render"].update(sha256="b" * 64),
+        lambda r: r["render"]["render"].pop("layoutVersion"),
+        lambda r: r["render"]["render"].update(coverOffsetMs=0),
     ]:
         data = receipt(); mutate(data)
         with pytest.raises(ValueError):

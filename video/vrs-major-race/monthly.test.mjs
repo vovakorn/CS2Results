@@ -25,7 +25,7 @@ test('world animation retains actual ranks including positions below 20 througho
  const data=prepareMonthlyWorld(fixture(),options),g=geometry(data,0);
  const below20=data.snapshots[0].rows.find(r=>r.rank>20);
  assert.ok(below20);assert.equal(g.ranks[0][below20.name],below20.rank);
- assert.equal(g.y(g.rankMax),1574);assert.equal(g.rowY(20),1574);
+ assert.equal(g.y(g.rankMax),1510);assert.equal(g.rowY(20),1510);
  for(let frame=0;frame<1944;frame++){
   const state=geometry(data,frame/60);
   assert.ok(state.endpoints.every(e=>Number.isFinite(e.y)&&state.offsets.has(e.id)));
