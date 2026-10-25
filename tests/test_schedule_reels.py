@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from PIL import Image
 
-from cs2bot import schedule_reels
+from cs2bot import media_cards, schedule_reels
 from cs2bot.match_sources.models import UpcomingMatchNormalized
 
 
@@ -91,11 +91,11 @@ def test_encoder_failure_is_safe(monkeypatch):
 @pytest.mark.parametrize("kind", ["intro", "matches", "outro"])
 def test_larger_channel_logo_stays_centered_on_lines_in_every_scene(monkeypatch, kind):
     calls = []
-    original = schedule_reels._draw_channel_logo
+    original = media_cards._draw_channel_logo
     def capture(image, draw, center, diameter):
         calls.append((center, diameter))
         return original(image, draw, center, diameter)
-    monkeypatch.setattr(schedule_reels, "_draw_channel_logo", capture)
+    monkeypatch.setattr(media_cards, "_draw_channel_logo", capture)
     scene = next(scene for scene in schedule_reels.storyboard(fixtures(4)) if scene.kind == kind)
     assert schedule_reels.render_scene(scene, NOW, 4).size == (1080, 1920)
     assert len(calls) == 1

@@ -34,7 +34,7 @@ def test_every_scene_keeps_text_and_logos_inside_safe_zone(monkeypatch, count, v
     monkeypatch.setattr(media_cards, "fetch_team_logo", lambda url, **kw:
         Image.new("RGBA", (100, 100), "white" if url.endswith("light") else "black"))
     boxes = []
-    original_text, original_logo, original_channel = ImageDraw.ImageDraw.text, r._draw_logo, r._draw_channel_logo
+    original_text, original_logo, original_channel = ImageDraw.ImageDraw.text, r._draw_logo, media_cards._draw_channel_logo
 
     def text(draw, xy, value, *args, **kwargs):
         if value and draw._image.size == r.REEL_SIZE:
@@ -55,7 +55,7 @@ def test_every_scene_keeps_text_and_logos_inside_safe_zone(monkeypatch, count, v
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
     monkeypatch.setattr(r, "_draw_logo", logo)
-    monkeypatch.setattr(r, "_draw_channel_logo", channel)
+    monkeypatch.setattr(media_cards, "_draw_channel_logo", channel)
     for scene in r.storyboard(fixtures):
         boxes.clear()
         assert r.render_scene(scene, now, count).size == (1080, 1920)

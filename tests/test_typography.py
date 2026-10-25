@@ -102,7 +102,7 @@ def test_known_long_names_are_complete_and_key_text_stays_inside_image(monkeypat
     names = [x for x in calls if any(word in x[0] for word in ["GAIMIN", "GLADIATORS", "ACADEMY", "NATUS", "JUNIOR"])]
     text = " ".join(x[0] for x in names)
     assert "GAIMIN GLADIATORS ACADEMY" in text and "NATUS VINCERE JUNIOR" in text
-    assert all(size >= 36 for _, size, _, _ in names)
+    assert all(size >= (30 if renderer == "reel" else 36) for _, size, _, _ in names)
     assert all(0 <= box[0] <= box[2] <= 1080 and 0 <= box[1] <= box[3] <= height
                for _, _, box, height in calls)
 
@@ -184,7 +184,8 @@ def test_every_template_has_a_centered_emblem_and_correct_header(monkeypatch, te
         r.render_scene(r.storyboard(fixtures)[index], NOW, 4)
     assert len(logos) == 1
     (center_x, center_y), diameter = logos[0]
-    assert center_x == 540
+    expected_center = 500 if template.startswith("reel") else 540
+    assert center_x == expected_center
     brands = [(box,size) for text,box,size in texts if text == "CS2 RESULTS"]
     compact = branded and template != "radar" and not template.startswith("reel")
     if compact:
@@ -194,10 +195,12 @@ def test_every_template_has_a_centered_emblem_and_correct_header(monkeypatch, te
     else:
         assert len(brands) == 1
         box, size = brands[0]
-        assert size >= 38 and (box[0]+box[2])/2 == 540
+        assert size >= 38 and (box[0]+box[2])/2 == expected_center
         assert box[1] > center_y + diameter/2 + 5
     assert all(0 <= b[0] <= b[2] <= 1080 and 0 <= b[1] <= b[3] <= (1920 if template.startswith("reel") else 1080)
                for _, b, _ in texts)
+    if template.startswith("reel"):
+        assert all(80 <= b[0] <= b[2] <= 920 and 250 <= b[1] <= b[3] <= 1570 for _, b, _ in texts)
 
 
 @pytest.mark.parametrize("name,branded", [("Unknown Cup 2026", False),

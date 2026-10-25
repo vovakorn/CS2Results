@@ -169,7 +169,7 @@ def test_reel_animation_is_staggered_and_progress_reaches_end():
     assert r._reveal_opacity(.75, 3) == 1
     image = Image.new("RGB", (1080, 1920), "black")
     r._progress(image, 1)
-    assert image.getpixel((978, 1677)) == r.CYAN
+    assert image.getpixel((900, 1562)) == r.CYAN
     scene = r.ReelScene("matches", (event_match(),), .25)
     frames = list(r.animated_scene_frames(scene, NOW, 1, "Europe/Moscow",
         elapsed_before=0, total_seconds=.25))

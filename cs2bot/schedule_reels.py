@@ -37,7 +37,6 @@ from .media_cards import (
     NAVY,
     PANEL,
     WHITE,
-    _draw_channel_logo,
     _draw_logo,
     _draw_text_block,
     _uses_cyrillic,
@@ -310,7 +309,7 @@ def _base(visual=None) -> Image.Image:
     draw.line((96, 330, 390, 330), fill=(*accent, 230), width=6)
     draw.line((610, 330, 904, 330), fill=(*(accent if visual else AMBER), 230), width=6)
     try:
-        _draw_channel_logo(image, draw, (SAFE_CENTER_X, 330), REEL_LOGO_DIAMETER)
+        media_cards._draw_channel_logo(image, draw, (SAFE_CENTER_X, 330), REEL_LOGO_DIAMETER)
         _draw_text_block(draw, SAFE_CENTER_X, 424, "CS2 RESULTS", 808, 38, max_lines=1)
     except MediaCardError as exc:
         raise ScheduleReelError("Bundled channel logo is unavailable") from exc

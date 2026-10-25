@@ -34,7 +34,7 @@ def test_single_exact_event_brands_every_scene_without_network(monkeypatch, kind
     image = r.render_scene(scene, NOW, len(matches))
     assert image.size == (1080, 1920)
     assert scene.context_matches == tuple(matches)
-    for point in ((100, 214), (950, 214)):
+    for point in ((110, 330), (880, 330)):
         red, green, blue = image.getpixel(point)
         assert green > red * 2 and green > blue * 2
 
@@ -49,10 +49,10 @@ def test_mixed_or_unconfirmed_event_keeps_neutral_shared_header():
     assert visuals.by_match[matches[0].match_id].branding is not None
     assert visuals.by_match[matches[-1].match_id].branding is None
     image = r.render_scene(scene, NOW, len(matches))
-    assert image.getpixel((100, 214)) == r.CYAN
-    assert image.getpixel((950, 214)) == r.AMBER
+    assert image.getpixel((110, 330)) == r.CYAN
+    assert image.getpixel((880, 330)) == r.AMBER
     # Even a homogeneous first page must not claim to represent the whole mixed day.
-    top = 550 + (1090 - (4 * 250 + 3 * 24)) // 2
+    top = 626 + (888 - (4 * 210 + 3 * 16)) // 2
     assert image.getpixel((140, top + 3))[1] > image.getpixel((140, top + 3))[2] * 2
 
 
@@ -112,7 +112,7 @@ def test_branded_progress_uses_tournament_accent():
     frames = list(r.animated_scene_frames(scene, NOW, 1, "Europe/Moscow",
         elapsed_before=0, total_seconds=.25))
     accent = r._resolve_reel_visuals(matches).shared.accent
-    assert frames[-1][0].getpixel((978, 1677)) == accent
+    assert frames[-1][0].getpixel((900, 1562)) == accent
 
 
 def test_different_profiles_keep_their_own_colours_and_neutral_global_header(monkeypatch):
