@@ -303,7 +303,8 @@ def _base(visual=None) -> Image.Image:
     draw = ImageDraw.Draw(image, "RGBA")
     accent = visual.accent if visual else CYAN
     if visual:
-        tournament_visuals.add_event_glow(image, accent)
+        if not (visual.branding and visual.branding.background):
+            tournament_visuals.add_event_glow(image, accent)
         tournament_visuals.add_event_watermark(image, visual.logo, position=(704, 352), size=(290, 290))
     draw.rounded_rectangle((72, 230, 928, 1590), radius=44, outline=(*accent, 95), width=3)
     draw.line((96, 330, 390, 330), fill=(*accent, 230), width=6)

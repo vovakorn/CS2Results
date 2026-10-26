@@ -9,6 +9,7 @@ from PIL import Image
 import pytest
 
 from cs2bot import media_cards as media
+from cs2bot import schedule_reels, tournament_visuals
 from cs2bot.match_sources.models import MapResult, MatchNormalized
 from cs2bot.tournament_branding import branding_for_tournament, load_theme_registry
 from cs2bot.tournament_preview import TournamentPreview
@@ -54,6 +55,28 @@ def test_backgrounds_match_unobstructed_edges_of_the_original_atlas():
                 assert current.crop(box).tobytes() == original.crop(box).tobytes(), theme.key
         checked += 1
     assert checked == 16
+
+
+@pytest.mark.parametrize("event", EVENTS)
+def test_schedule_reel_keeps_the_atlas_glow_without_a_second_overlay(event):
+    brand = branding_for_tournament(event)
+    visual = schedule_reels.ReelTournamentVisual(event, brand, None)
+    expected = preview_background(schedule_reels.REEL_SIZE, brand, frame=False, header=False)
+    actual = schedule_reels._base(visual)
+    # This strip is outside the Reel frame, logos, watermark and all text.
+    strip = (0, 0, 1080, 210)
+    assert actual.crop(strip).tobytes() == expected.crop(strip).tobytes()
+
+
+@pytest.mark.parametrize("with_brand", [False, True])
+def test_schedule_reel_without_an_atlas_keeps_its_existing_glow(with_brand):
+    brand = branding_for_tournament(EVENTS[0]).model_copy(update={"background": None}) if with_brand else None
+    visual = schedule_reels.ReelTournamentVisual("Fallback", brand, None)
+    expected = schedule_reels._base()
+    tournament_visuals.add_event_glow(expected, visual.accent)
+    actual = schedule_reels._base(visual)
+    strip = (0, 0, 1080, 210)
+    assert actual.crop(strip).tobytes() == expected.crop(strip).tobytes()
 
 
 @pytest.mark.parametrize("event", EVENTS)
