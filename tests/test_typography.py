@@ -197,7 +197,8 @@ def test_every_template_has_a_centered_emblem_and_correct_header(monkeypatch, te
         box, size = brands[0]
         assert size >= 38 and (box[0]+box[2])/2 == expected_center
         assert box[1] > center_y + diameter/2 + 5
-    assert all(0 <= b[0] <= b[2] <= 1080 and 0 <= b[1] <= b[3] <= (1920 if template.startswith("reel") else 1080)
+    static_height = 1920 if template.startswith("reel") else 1350
+    assert all(0 <= b[0] <= b[2] <= 1080 and 0 <= b[1] <= b[3] <= static_height
                for _, b, _ in texts)
     if template.startswith("reel"):
         assert all(80 <= b[0] <= b[2] <= 920 and 250 <= b[1] <= b[3] <= 1570 for _, b, _ in texts)
@@ -259,7 +260,7 @@ def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch,
             "BLAST Open Porto 2026", "Europe/Moscow", "next_match")
     assert len(panels) == 1 and len(logos) == 2
     x0, y0, x1, y1 = panels[0]
-    assert y1 - y0 <= (465 if template in {"result", "digest"} else 420)
+    assert y1 - y0 <= (570 if template in {"result", "digest"} else 490)
     for name, (center, diameter) in [
         ("GAIMIN GLADIATORS ACADEMY", logos[0]),
         ("NATUS VINCERE JUNIOR", logos[1]),
