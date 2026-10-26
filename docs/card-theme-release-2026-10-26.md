@@ -4,8 +4,10 @@
 в отдельном checkout; чужие незавершённые изменения не включены.
 После остановки автоматической проверкой пользователь отдельно разрешил
 отправку согласованного кода, атласа и документации в публичный origin.
-[PR #166](https://github.com/vovakorn/CS2Results/pull/166) создан, полный CI
-в работе; production этой задачей пока не менялся.
+[PR #166](https://github.com/vovakorn/CS2Results/pull/166) слит в
+`91a1b79120c619a18d33576ae91ff2a5adda271d`, финальный CI успешен.
+**Production этой задачей не обновлён: облачный preflight недоступен.**
+Эта итоговая запись дополнена локально после слияния; второй PR не создавался.
 
 ## Подготовленный результат
 
@@ -38,9 +40,16 @@
 - `pip check`, компиляция пакета, `git diff --check` и сборка
   `scripts/build_function_zip.sh` успешны. Это проверочный ZIP;
   production-пакет ещё не создавался штатным candidate-процессом.
-- CI Python 3.11/3.12 и Linux VRS обязательны для последнего head PR;
-  [запуски](https://github.com/vovakorn/CS2Results/actions?query=branch%3Acodex%2Fscore-card-theme-fix-20261026).
-  Облачные проверки ещё не выполнены.
+- Финальный [CI 40290783235](https://github.com/vovakorn/CS2Results/actions/runs/40290783235)
+  для head `9385e0b64441630ce67dee450621e3cbea691645` — success:
+  **1 277 passed** на Python 3.11 (237,42 s) и 3.12 (260,84 s), без исключений.
+  Локально недоступный loopback-тест в CI прошёл.
+- **27 Node-тестов**, audit/pip check, компиляция, обе Python ZIP-сборки,
+  Linux VRS bundle и полные Americas/monthly render/decode успешны.
+- Tree слитого main `6fca07cb70d7b0ffd0b376e43197acce5e373739` точно совпадает
+  с проверенным локальным деревом. Код и согласованные изображения после CI
+  не менялись; следующие локальные изменения относятся только к записи результата.
+- Облачные проверки ещё не выполнены.
 
 ## Допуск публикации в GitHub
 
@@ -58,7 +67,9 @@ Git blob-хешей опубликованных `PROJECT_STATUS.md`, `PROJECT_C
 19 Git blob исходных PNG атласа. После подтверждения дерево успешно создано
 и совпало с проверенным локальным Git tree `874cce0b463622edc7dbe3b180a1afee275e1cd4`.
 Первый head PR — `d00b5a5c922baf3a8971d001395058fb02781ca1`; после него
-в том же PR подготовлена поправка свечения Reel. Новые секреты не публиковались.
+в том же PR опубликована поправка свечения Reel. Финальный head —
+`9385e0b64441630ce67dee450621e3cbea691645`, merge — `91a1b79120c619a18d33576ae91ff2a5adda271d`.
+Новые секреты не публиковались. Блокировка GitHub снята; второй PR не нужен.
 
 ## Блокировка Yandex Cloud
 
@@ -66,6 +77,8 @@ Git blob-хешей опубликованных `PROJECT_STATUS.md`, `PROJECT_C
 Повторная диагностика показала отсутствие DNS-разрешения
 `api.cloud.yandex.net` и `serverless-functions.api.cloud.yandex.net`;
 прямые HTTPS-запросы завершаются `ConnectionError`.
+После слияния повторён read-only preflight: `yc serverless function list`
+для штатного folder не ответил за 20 s и остановлен по таймауту.
 
 Candidate, promote, production dry-run и социальные публикации не выполнялись.
 Конфигурации, секреты и таймеры не менялись. Версии в записи релиза 25 октября
@@ -76,6 +89,9 @@ Candidate, promote, production dry-run и социальные публикац�
 
 Отдельное подтверждение отправки согласованных изменений и сопутствующей
 документации в публичный `vovakorn/CS2Results` получено от пользователя.
-Далее — полный CI последнего head PR #166 и merge; после восстановления связи с Cloud API —
-штатные preflight/candidate/promote и production dry-run. Ранее данное
+GitHub-часть завершена. После восстановления связи с Cloud API нужны
+штатные preflight/candidate/promote и production dry-run из точного слитого main.
+Деплоится основной бот; отдельные VRS renderer/monthly publisher этой поправкой
+не меняются. Облачную конфигурацию, pinned secret references и таймеры нужно
+сверить заново, не использовать исторические версии как живой снимок. Ранее данное
 разрешение на release-цикл сохраняется; повторное общее согласование не требуется.
