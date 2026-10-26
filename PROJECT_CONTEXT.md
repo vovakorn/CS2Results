@@ -7,8 +7,10 @@
 добавленную высоту. Reels и остальные вертикальные видео не менялись: 1080 × 1920
 и их safe zones сохранены. Полный локальный прогон: 1 276 passed; единственный
 loopback-тест не выполняется в sandbox (`PermissionError` при bind) и остаётся
-обязательным в CI. Открыт [PR #167](https://github.com/vovakorn/CS2Results/pull/167);
-production не менялся.
+обязательным в CI. [PR #167](https://github.com/vovakorn/CS2Results/pull/167)
+слит после зелёного CI. Общий cloud preflight для #166/#167 не получил ответа
+от Cloud Functions API за две минуты и был остановлен; candidate/promote и
+production не менялись.
 
 Согласован релиз визуальных правок от 26 октября 2026; интегрирован `main` `00dfa8f`:
 восстановлены фоны согласованного атласа 3 октября, его 16 исходных образцов
