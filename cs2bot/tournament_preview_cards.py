@@ -13,7 +13,7 @@ from .tournament_visuals import accent_color, event_logo, add_event_glow, add_ev
 from .tournament_branding import resolve_branding
 from .tournament_theme_patterns import panel_color, preview_background
 
-SIZE = (1080, 1080)
+SIZE = (1080, 1350)
 TEAMS_PER_PAGE = 16
 
 
@@ -130,7 +130,8 @@ def _summary(draw, text, box, accent):
 def _footer(draw, demo, draft=False):
     label = ("МАКЕТ · ДЕМОНСТРАЦИОННЫЕ ДАННЫЕ" if demo else
              "МАКЕТ · ПЕРЕД ПУБЛИКАЦИЕЙ СВЕРИТЬ ДАННЫЕ" if draft else "CS2 RESULTS · ПЕРЕД СТАРТОМ")
-    _text(draw, label, (70, 1025, 1010, 1057), size=18, minimum=18,
+    height = draw._image.height
+    _text(draw, label, (70, height - 55, 1010, height - 23), size=18, minimum=18,
           color=media.AMBER if demo or draft else media.MUTED, center=True)
 
 
@@ -178,32 +179,32 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False)
     else:
         _text(draw, "COUNTER-STRIKE 2", (640, 530, 985, 636), size=34, minimum=26)
 
-    _location_pin(image, (70, 692), accent)
+    _location_pin(image, (70, 735), accent)
     locations = " / ".join(preview.locations)
     if len(preview.locations) > 2:
         locations = f"{len(preview.locations)} площадки · подробности в подписи"
-    _text(draw, locations, (112, 686, 1010, 758), size=33, minimum=20)
+    _text(draw, locations, (112, 729, 1010, 801), size=33, minimum=20)
 
-    _text(draw, "ФОРМАТ", (70, 767, 1010, 800), size=22, minimum=22,
+    _text(draw, "ФОРМАТ", (70, 820, 1010, 853), size=22, minimum=22,
           color=media.MUTED, display=True)
 
     gap = 44 if len(preview.stages) == 2 else 34
     width = (940 - (len(preview.stages) - 1) * gap) / len(preview.stages)
     for index, stage in enumerate(preview.stages):
         x = 70 + index * (width + gap)
-        _panel(draw, (x, 810, x + width, 955), accent, panel)
-        _text(draw, stage.label.upper(), (x + 18, 826, x + width - 18, 855),
+        _panel(draw, (x, 865, x + width, 1060), accent, panel)
+        _text(draw, stage.label.upper(), (x + 18, 884, x + width - 18, 913),
               size=21, minimum=18, color=accent, display=True)
-        _text(draw, date_range(stage.start, stage.end), (x + 18, 861, x + width - 18, 914),
+        _text(draw, date_range(stage.start, stage.end), (x + 18, 922, x + width - 18, 975),
               size=30, minimum=20)
         if stage.card_summary:
-            _summary(draw, stage.card_summary, (x + 18, 920, x + width - 18, 950), accent)
+            _summary(draw, stage.card_summary, (x + 18, 984, x + width - 18, 1038), accent)
         if index < len(preview.stages) - 1:
-            _arrow(draw, x + width + 10, 883, gap - 20, accent)
+            _arrow(draw, x + width + 10, 962, gap - 20, accent)
     if preview.first_match_at:
         local = preview.first_match_at.astimezone(ZoneInfo("Europe/Moscow"))
         _text(draw, f"Первый матч · {date_range(local.date(), local.date())}, {local:%H:%M} МСК",
-              (70, 965, 1010, 1014),
+              (70, 1100, 1010, 1149),
               size=30, minimum=24)
     _footer(draw, demo, draft)
     return media._as_png(image)
@@ -225,7 +226,7 @@ def render_preview_cards(preview: TournamentPreview, *, demo=False, draft=False)
         rows = math.ceil(len(teams) / columns)
         gap = 16
         cell_width = (940 - (columns - 1) * gap) / columns
-        cell_height = (740 - (rows - 1) * gap) / rows
+        cell_height = (960 - (rows - 1) * gap) / rows
         for index, team in enumerate(teams):
             x = 70 + (index % columns) * (cell_width + gap)
             y = 250 + (index // columns) * (cell_height + gap)
