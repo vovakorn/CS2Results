@@ -54,7 +54,7 @@ XRAY_ENABLED=1 scripts/build_function_zip.sh
 
 ## Behaviour
 
-- The daily schedule and daily digest are rendered as 1080×1080 cards. A
+- The daily schedule and daily digest are rendered as 1080×1350 (4:5) cards. A
   schedule with two pages is published as one Instagram carousel.
 - Each final match result is queued under an `instagram` delivery channel in
   the existing durable outbox. The 15-minute result trigger enqueues it and

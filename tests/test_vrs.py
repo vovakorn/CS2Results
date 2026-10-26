@@ -125,7 +125,7 @@ def test_vrs_card_renders_snapshot_dates_and_change_signs(monkeypatch):
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     monkeypatch.setattr(media_cards, "_draw_rank_transition", capture_transition)
     card = media_cards.render_tournament_vrs_cards("Test Tournament", impacts)[0]
-    assert Image.open(io.BytesIO(card)).size == (1080, 1080)
+    assert Image.open(io.BytesIO(card)).size == (1080, 1350)
     rendered_text = {text for text, _ in drawn}
     assert "VRS ПОСЛЕ ТУРНИРА" in rendered_text
     assert "ДО 01.09.2026 · ПОСЛЕ 08.09.2026" in rendered_text
@@ -226,7 +226,7 @@ def test_vrs_cards_are_square_and_paginated(count):
     ], before, after)
     cards = media_cards.render_tournament_vrs_cards("Test Tournament", impacts)
     assert len(cards) == (count + media_cards.TOURNAMENT_VRS_PER_CARD - 1) // media_cards.TOURNAMENT_VRS_PER_CARD
-    assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
+    assert all(Image.open(io.BytesIO(card)).size == (1080, 1350) for card in cards)
 
 
 def test_vrs_cards_reject_odd_team_count():

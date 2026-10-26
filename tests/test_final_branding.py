@@ -18,11 +18,11 @@ def final(count=4):
 
 
 @pytest.mark.parametrize("count", [3, 4, 5])
-def test_red_brand_keeps_square_card_and_both_red_header_segments(count):
+def test_red_brand_keeps_portrait_card_and_both_red_header_segments(count):
     image = Image.open(io.BytesIO(media_cards.render_final_card(final(count),
         branding=PreviewBranding(accent="#ED3D55"))))
     assert image.format == "PNG"
-    assert image.size == (1080, 1080)
+    assert image.size == (1080, 1350)
     for x in (80, 1000):
         red, green, blue = image.getpixel((x, 90))
         assert red > green * 2 and red > blue * 2
@@ -44,7 +44,7 @@ def test_missing_logo_keeps_brand_and_render_usable():
     brand = PreviewBranding(accent="#ED3D55", logo_asset="missing-logo.png",
                              logo_source_url="https://example.com/logo.png")
     image = Image.open(io.BytesIO(media_cards.render_final_card(final(), branding=brand)))
-    assert image.size == (1080, 1080)
+    assert image.size == (1080, 1350)
 
 
 def test_watermark_is_subtle_and_preserves_foreground_logo():
@@ -100,7 +100,7 @@ def test_standings_keep_every_team_and_brand_on_every_page(team_count, monkeypat
     assert drawn_names == [item.team_name.upper() for item in placements]
     for data in cards:
         image = Image.open(io.BytesIO(data))
-        assert image.format == "PNG" and image.size == (1080, 1080)
+        assert image.format == "PNG" and image.size == (1080, 1350)
         for x in (80, 1000):
             red, green, blue = image.getpixel((x, 90))
             assert red > green * 2 and red > blue * 2

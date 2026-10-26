@@ -76,7 +76,7 @@ def test_full_cover_uses_selected_palette_without_changing_passport(key):
     before = (preview.name, preview.start, preview.end, preview.prize_pool_usd, preview.locations)
     preview.branding = PreviewBranding(theme_key=key)
     image = Image.open(io.BytesIO(render_preview_cards(preview, demo=True)[0]))
-    assert image.size == (1080, 1080) and image.format == "PNG"
+    assert image.size == (1080, 1350) and image.format == "PNG"
     accent = resolve_branding(preview.branding).accent
     expected = tuple(int(accent[i:i + 2], 16) for i in (1, 3, 5))
     assert image.getpixel((100, 136))[:3] == expected

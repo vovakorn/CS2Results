@@ -27,9 +27,12 @@ from .match_sources.models import (
 )
 from .match_sources.storage import read_cached_logo, write_cached_logo
 
-RESULT_CARD_SIZE = (1080, 1080)
-SCHEDULE_CARD_SIZE = (1080, 1080)
-SCHEDULE_CONTEXT_COVER_SIZE = (1080, 1080)
+# One static master is shared by Telegram, Instagram and Threads.  Keep the
+# vertical video pipeline in ``schedule_reels.py`` at 1080 × 1920.
+STATIC_CARD_SIZE = (1080, 1350)
+RESULT_CARD_SIZE = STATIC_CARD_SIZE
+SCHEDULE_CARD_SIZE = STATIC_CARD_SIZE
+SCHEDULE_CONTEXT_COVER_SIZE = STATIC_CARD_SIZE
 MAX_RESULT_MATCHES = 10
 MAX_RESULT_MATCHES_PER_CARD = 4
 MAX_MEDIA_ALBUM_PAGES = 10
@@ -316,10 +319,11 @@ def _card_header(canvas, draw, title, tournament, meta="", tournament_logo_url=N
 
 
 def _card_footer(draw, source="PANDASCORE", page_number=1, page_count=1, *, accent=CYAN):
-    _draw_text_block(draw, 60, 1018, f"ИСТОЧНИК: {source.upper()}", 730, 22,
+    height = draw._image.height
+    _draw_text_block(draw, 60, height - 62, f"ИСТОЧНИК: {source.upper()}", 730, 22,
                      display=True, fill=MUTED, alignment="left", max_lines=1)
     right = f"{page_number}/{page_count}" if page_count > 1 else "@CS2_RESULTS"
-    _aligned_text(draw, 1020, 1002, right, _font(28), accent, "right")
+    _aligned_text(draw, 1020, height - 78, right, _font(28), accent, "right")
 
 
 def _shared_fixture_format(matches):
@@ -478,10 +482,14 @@ def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None,
 
 def _fixture_page_boxes(count):
     if count == 1:
-        return [(60, 425, 1020, 825)]
-    height = min(236, (640 - 12 * (count - 1)) // count)
-    top = 326 + (640 - (height * count + 12 * (count - 1))) // 2
-    return [(60, top + i * (height + 12), 1020, top + i * (height + 12) + height) for i in range(count)]
+        return [(60, 470, 1020, 960)]
+    # Portrait cards have a deliberately taller results field.  Keeping the
+    # same inter-row gap makes four fixtures as scannable as the old square,
+    # while one and two fixtures gain welcome breathing room.
+    available = 810
+    height = min(270, (available - 16 * (count - 1)) // count)
+    top = 375 + (available - (height * count + 16 * (count - 1))) // 2
+    return [(60, top + i * (height + 16), 1020, top + i * (height + 16) + height) for i in range(count)]
 
 
 def _fixture_timestamp(raw_date):
@@ -986,7 +994,7 @@ def _draw_radar_standings(canvas: Image.Image, draw: ImageDraw.ImageDraw, radar:
         _centered_text(draw, 540, 560, "ПОЛОЖЕНИЕ ПОКА НЕ ОПУБЛИКОВАНО", _font(24, display=True), MUTED)
         return
     row_height = 118
-    top = 386
+    top = 445
     for index, (rank, name, logo_url) in enumerate(entries):
         y0 = top + index * (row_height + 14)
         draw.rounded_rectangle((70, y0, 1010, y0 + row_height), radius=24, fill=(*PANEL, 238))
@@ -1116,10 +1124,10 @@ def _draw_radar_bracket_match(canvas, draw, match, box, *, reference=""):
 
 def _draw_radar_single_pair(canvas, draw, match):
     _draw_fixture_hero(canvas, draw, match, _fixture_page_boxes(1)[0], value_label="VS")
-    _draw_text_block(draw, 540, 448, _radar_round_label([match]) if match.round_name else "МАТЧ ТУРНИРА",
+    _draw_text_block(draw, 540, 490, _radar_round_label([match]) if match.round_name else "МАТЧ ТУРНИРА",
                      860, 24, display=True, fill=MUTED, max_lines=1)
     if (match.status or "").casefold() == "running":
-        _draw_text_block(draw, 540, 806, "LIVE", 860, 22, display=True, fill=CYAN, max_lines=1)
+        _draw_text_block(draw, 540, 940, "LIVE", 860, 22, display=True, fill=CYAN, max_lines=1)
 
 
 def _draw_radar_bracket(canvas, draw, matches, page_number, page_count, *, references=None):
@@ -1140,11 +1148,11 @@ def _draw_radar_bracket(canvas, draw, matches, page_number, page_count, *, refer
     width = (960 - 24 * (columns_count - 1)) // columns_count
     slots = {}
     for col, members in enumerate(columns):
-        height = min(280, (638 - 12 * (len(members) - 1)) // len(members))
-        top = 326 + (638 - (height * len(members) + 12 * (len(members) - 1))) // 2
+        height = min(300, (820 - 16 * (len(members) - 1)) // len(members))
+        top = 370 + (820 - (height * len(members) + 16 * (len(members) - 1))) // 2
         x0 = 60 + col * (width + 24)
         for i, node in enumerate(members):
-            y0 = top + i * (height + 12)
+            y0 = top + i * (height + 16)
             slots[node.match_id] = (x0, y0, x0 + width, y0 + height)
     # Connectors clarify a compact bracket. In the numbered list, predecessor
     # references carry the links without suggesting a bracket between columns.
@@ -1315,7 +1323,7 @@ def _confirmed_result_maps(match):
 def _draw_single_result_body(canvas, draw, match, *, show_format=True):
     from .tournament_theme_patterns import draw_result_panel
     maps = _confirmed_result_maps(match)
-    box = _fixture_page_boxes(1)[0] if maps else (60, 400, 1020, 865)
+    box = _fixture_page_boxes(1)[0] if maps else (60, 440, 1020, 1010)
     _draw_wide_result_match(canvas, draw, match, box, show_tournament=False,
                            show_format=show_format, prominent=not maps)
     if not maps:
@@ -1325,11 +1333,11 @@ def _draw_single_result_body(canvas, draw, match, *, show_format=True):
     width = (960 - gap * (len(maps) - 1)) / len(maps)
     for index, item in enumerate(maps):
         left = 60 + index * (width + gap)
-        draw_result_panel(canvas, (left, 853, left + width, 976), branding, PANEL, radius=16)
+        draw_result_panel(canvas, (left, 1000, left + width, 1128), branding, PANEL, radius=16)
         center = left + width / 2
-        _draw_text_block(draw, center, 883, item.name.upper(), width - 20,
+        _draw_text_block(draw, center, 1032, item.name.upper(), width - 20,
                          26, min_size=22, max_lines=1, fill=MUTED)
-        _draw_fixture_score(draw, center, 931, item.score1, item.score2, size=42, width=width - 20)
+        _draw_fixture_score(draw, center, 1083, item.score1, item.score2, size=42, width=width - 20)
 
 
 def _fixture_brand(matches):
@@ -1539,8 +1547,8 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
         header_foil=branding is None,
     ).convert("RGBA")
     width = RESULT_CARD_SIZE[0]
-    row_height = {3: 112, 4: 84, 5: 68}[len(match.maps)]
-    table = (190, 510, 890, 510 + row_height * len(match.maps))
+    row_height = {3: 128, 4: 98, 5: 78}[len(match.maps)]
+    table = (190, 620, 890, 620 + row_height * len(match.maps))
     prize_top = table[3] + 30
     prize = (190, prize_top, 890, prize_top + 86)
     if branding is None:
@@ -1569,7 +1577,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     right_team_x = 860
     left_name, right_name = match.team1_name.upper(), match.team2_name.upper()
     for x, name, side in [(left_team_x, left_name, "left"), (right_team_x, right_name, "right")]:
-        _draw_text_block(draw, x, 443, name, name_width, 48, min_size=36,
+        _draw_text_block(draw, x, 500, name, name_width, 48, min_size=36,
                          fill=FINAL_GOLD if winner_side == side else WHITE)
 
     x0, y0, x1, _ = table
@@ -1599,7 +1607,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     _draw_logo(
         canvas,
         draw,
-        (left_team_x, 362),
+        (left_team_x, 410),
         72,
         match.team1_name,
         match.team1_logo_url,
@@ -1610,7 +1618,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     _draw_logo(
         canvas,
         draw,
-        (right_team_x, 362),
+        (right_team_x, 410),
         72,
         match.team2_name,
         match.team2_logo_url,
@@ -1618,7 +1626,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
         match.team2_logo_fallback_url,
         content_scale=0.76,
     )
-    _draw_fixture_score(ImageDraw.Draw(canvas), width // 2, 362, match.score1, match.score2,
+    _draw_fixture_score(ImageDraw.Draw(canvas), width // 2, 410, match.score1, match.score2,
                         size=150, width=300, display=True, foil_canvas=canvas)
     for index, item in enumerate(match.maps):
         row_y = y0 + index * row_height
@@ -1669,7 +1677,7 @@ def _tournament_table_layout(
     header_height: int = 62,
 ) -> tuple[int, list[int]]:
     """Fill the table area while leaving room for the title and source line."""
-    available_rows_height = 946 - 340 - header_height
+    available_rows_height = 1210 - 400 - header_height
     if row_count <= 5 and champion_index is not None and row_count > 1:
         champion_height = 160 if row_count <= 4 else 128
         other_height = min(128, (available_rows_height - champion_height) // (row_count - 1))
@@ -1678,7 +1686,7 @@ def _tournament_table_layout(
     else:
         row_heights = [min(136, available_rows_height // row_count)] * row_count
     table_height = header_height + sum(row_heights)
-    return 340 + (606 - table_height) // 2, row_heights
+    return 400 + (810 - table_height) // 2, row_heights
 
 
 def _table_team_lines(
@@ -1846,7 +1854,7 @@ def _render_tournament_standings_page(tournament_name, placements, *, source_lab
         top, row_heights = _tournament_table_layout(len(placements), champion_index=champion_index,
                                                   header_height=header_height)
     else:
-        top, row_heights = 342, [68] * len(placements)
+        top, row_heights = 400, [92] * len(placements)
     table = (64, top, 1016, top + header_height + sum(row_heights))
     _chamfered_panel(draw, table, cut=20, accent=accent)
     x0, y0, x1, y1 = table
@@ -2016,7 +2024,7 @@ def _render_tournament_vrs_page(tournament_name, impacts, *, source_label, page_
     if sparse:
         top, row_heights = _tournament_table_layout(len(impacts), header_height=header_height)
     else:
-        top, row_heights = 342, [68] * len(impacts)
+        top, row_heights = 400, [92] * len(impacts)
     table = (44, top, 1036, top + header_height + sum(row_heights))
     _chamfered_panel(draw, table, cut=20, accent=accent)
     x0, y0, x1, y1 = table
@@ -2210,18 +2218,18 @@ def _render_schedule_context_cover(
     # Prefer the registered local mark, then the provider URL; never invent it.
     _fixture_header(canvas, draw, "ПЕРЕД МАТЧАМИ", tournament_name, date_label,
                     branding, tournament_logo_url)
-    _draw_text_block(draw, 540, 386, "БЛИЖАЙШИЙ МАТЧ", 880, 28,
+    _draw_text_block(draw, 540, 430, "БЛИЖАЙШИЙ МАТЧ", 880, 28,
                      display=True, fill=accent, max_lines=1)
-    _draw_wide_schedule_match(canvas, draw, matches[0], (60, 425, 1020, 843),
+    _draw_wide_schedule_match(canvas, draw, matches[0], (60, 475, 1020, 980),
                               ZoneInfo(DISPLAY_TIMEZONE), show_format=False)
     stage = matches[0].tournament_name
     if stage != tournament_name and stage.casefold().startswith(tournament_name.casefold()):
         stage = stage[len(tournament_name):].strip(" —-")
         if stage:
-            _draw_text_block(draw, 540, 886, stage.upper(), 940, 26,
+            _draw_text_block(draw, 540, 1030, stage.upper(), 940, 26,
                              display=_uses_cyrillic(stage), fill=MUTED, max_lines=1)
     zone_label = "МСК" if DISPLAY_TIMEZONE == "Europe/Moscow" else DISPLAY_TIMEZONE
-    _draw_text_block(draw, 540, 950,
+    _draw_text_block(draw, 540, 1094,
                      f"{_context_cover_match_count(len(matches))} · {format_label} · ВРЕМЯ {zone_label}",
                      940, 26, display=True, fill=MUTED, max_lines=1)
     _card_footer(draw, "PANDASCORE", accent=accent)

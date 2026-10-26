@@ -70,7 +70,7 @@ def test_three_stage_cover_fits_a_date_range_crossing_months():
     data["stages"][-1]["start"] = "2026-10-04"
     data["stages"].insert(1, middle)
     p = TournamentPreview.model_validate(data)
-    assert Image.open(io.BytesIO(render_preview_cards(p)[0])).size == (1080, 1080)
+    assert Image.open(io.BytesIO(render_preview_cards(p)[0])).size == (1080, 1350)
 
 
 def test_unapproved_stale_and_future_reviews_are_blocked():
@@ -205,7 +205,7 @@ def test_blast_participation_fees_are_not_labeled_as_player_prizes():
     caption = format_preview_caption(p)
     assert "Призовые $350 000; за участие $650 000" in caption
     assert "Игрокам" not in caption
-    assert Image.open(io.BytesIO(render_preview_cards(p)[0])).size == (1080, 1080)
+    assert Image.open(io.BytesIO(render_preview_cards(p)[0])).size == (1080, 1350)
 
 
 def test_draft_is_explicit_keeps_review_age_limit_and_default_fetch_is_blocked(monkeypatch):
@@ -241,7 +241,7 @@ def test_cover_badge_has_clearance_from_stripe_and_title(monkeypatch, name):
 
     monkeypatch.setattr(cards, "_text", tracked)
     image = Image.open(io.BytesIO(cards.render_preview_cover(p))).convert("RGB")
-    assert image.size == (1080, 1080)
+    assert image.size == (1080, 1350)
     accent = cards._accent(p)
     assert image.getpixel((100, 100)) != accent
     assert image.getpixel((100, 120)) == accent
@@ -277,7 +277,7 @@ def test_missing_event_logo_uses_full_title_space_without_losing_passport(monkey
         return original_text(draw, text, box, **kwargs)
     monkeypatch.setattr(cards, "_text", tracked)
     assert cards._event_logo(p) is None
-    assert Image.open(io.BytesIO(render_preview_cards(p)[0])).size == (1080, 1080)
+    assert Image.open(io.BytesIO(render_preview_cards(p)[0])).size == (1080, 1350)
     assert boxes[0][2] == 1010
     assert format_preview_caption(p) == original
 
@@ -312,7 +312,7 @@ def test_card_variants_are_square_and_include_every_participant(count):
     assert len(cards) <= 10
     for card in cards:
         image = Image.open(io.BytesIO(card))
-        assert image.size == (1080, 1080)
+        assert image.size == (1080, 1350)
 
 
 def test_long_names_and_contrasting_logos_fit(monkeypatch):
@@ -335,7 +335,7 @@ def test_branding_and_transition_summaries_preserve_full_passport():
     p.stages[0].card_summary = "GSL · 16 → 6"
     p.stages[1].card_summary = "BO3 · финал BO5"
     original = format_preview_caption(p)
-    assert Image.open(io.BytesIO(render_preview_cards(p, demo=True)[0])).size == (1080, 1080)
+    assert Image.open(io.BytesIO(render_preview_cards(p, demo=True)[0])).size == (1080, 1350)
     assert format_preview_caption(p) == original
 
 

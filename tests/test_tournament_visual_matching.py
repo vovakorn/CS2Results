@@ -204,7 +204,7 @@ def test_thunderpick_uses_palette_and_motif_in_every_active_fixture_format(kind,
         data = (media.render_result_card(result) if kind == "result" else
                 media.render_results_cards([result], NOW)[0])
         image = Image.open(BytesIO(data))
-    assert image.size == ((1080, 1920) if kind == "reel" else (1080, 1080))
+    assert image.size == ((1080, 1920) if kind == "reel" else (1080, 1350))
     assert image.getpixel((10, 10))[:3] == (9, 23, 33)
     # Background alone must retain the catalog's pulse, not merely its accent.
     themed = media._fixture_canvas(brand, (1080, 1080))
