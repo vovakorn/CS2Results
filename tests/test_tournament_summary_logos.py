@@ -36,7 +36,7 @@ def test_summary_source_logo_is_visible_on_every_page(monkeypatch, kind, row_cou
             branding=branding, tournament_logo_url=logo_url)
     for page in pages:
         image = Image.open(io.BytesIO(page))
-        assert image.size == (1080, 1080)
+        assert image.size == (1080, 1350)
         assert image.getpixel((890, 223))[:3] == (255, 0, 255)
 
 
@@ -50,4 +50,4 @@ def test_unavailable_summary_logo_preserves_text_fallback(monkeypatch):
         "Thunderpick World Championship 2026", placements,
         branding=branding_for_tournament("Thunderpick World Championship 2026"),
         tournament_logo_url="https://example.com/unavailable.png")
-    assert Image.open(io.BytesIO(cards[0])).size == (1080, 1080)
+    assert Image.open(io.BytesIO(cards[0])).size == (1080, 1350)
