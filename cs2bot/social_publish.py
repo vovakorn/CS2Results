@@ -29,7 +29,7 @@ INSTAGRAM_GRAPH_URL = "https://graph.instagram.com"
 THREADS_GRAPH_URL = "https://graph.threads.net/v1.0"
 HTTP_TIMEOUT_SECONDS = 20
 META_HTTP_HEADERS = {"User-Agent": "curl/8.7.1"}
-TEST_IMAGE_URL = "https://placehold.co/1080x1080/111827/FFFFFF.png?text=CS2Results%0AInstagram+test"
+TEST_IMAGE_URL = "https://placehold.co/1080x1350/111827/FFFFFF.png?text=CS2Results%0AInstagram+test"
 TEST_CAPTION = "Тест интеграции CS2Results с Instagram. ✅"
 THREADS_TEST_TEXT = "Тест интеграции CS2Results с Threads. ✅"
 THREADS_TEST_CARD_CAPTION = "Тестовая карточка CS2Results для Threads. ✅"
@@ -199,7 +199,7 @@ def publish_threads_test_post(context: Any) -> dict[str, str]:
 
 def _threads_test_card() -> bytes:
     """Render a deterministic, non-match card for an explicitly approved test."""
-    image = Image.new("RGB", (1080, 1080), "#111827")
+    image = Image.new("RGB", (1080, 1350), "#111827")
     draw = ImageDraw.Draw(image)
     draw.rectangle((64, 64, 1016, 1016), outline="#22d3ee", width=8)
     draw.rectangle((108, 420, 972, 660), fill="#172554", outline="#fbbf24", width=4)
