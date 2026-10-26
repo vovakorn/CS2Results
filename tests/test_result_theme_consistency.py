@@ -100,9 +100,9 @@ def test_score_and_map_surfaces_use_the_announcement_panel(event, kind, monkeypa
         pages = [media.render_result_card(match)]
     for index, data in enumerate(pages):
         with Image.open(BytesIO(data)) as image:
-            assert image.size == (1080, 1080)
+            assert image.size == (1080, 1350)
             if kind == "final":
-                assert image.getpixel((205, 550))[:3] == expected
+                assert image.getpixel((205, 660))[:3] == expected
             elif kind.startswith("digest") and int(kind.removeprefix("digest")) > 1:
                 count_on_page = min(4, int(kind.removeprefix("digest")) - index * 4)
                 for x0, y0, x1, y1 in media._fixture_page_boxes(count_on_page):
@@ -137,7 +137,7 @@ def test_result_panel_has_a_subtle_gradient_and_themed_outline(event, monkeypatc
     base = announcement_panel(event)
     with Image.open(BytesIO(media.render_result_card(result(event)))) as image:
         top = image.getpixel((80, 450))[:3]
-        bottom = image.getpixel((80, 790))[:3]
+        bottom = image.getpixel((80, 900))[:3]
         edge = image.getpixel((60, 620))[:3]
     assert bottom == base
     top_distance = sum(abs(a - b) for a, b in zip(top, base))
