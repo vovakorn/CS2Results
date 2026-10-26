@@ -230,7 +230,7 @@ def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch,
     texts, logos, panels = [], [], []
     original_text = ImageDraw.ImageDraw.text
     original_logo = m._draw_logo
-    original_rectangle = ImageDraw.ImageDraw.rounded_rectangle
+    original_hero = m._draw_fixture_hero
 
     def capture_text(draw, xy, text, *args, **kwargs):
         if draw._image.mode != "L" and kwargs.get("font"):
@@ -241,13 +241,12 @@ def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch,
         logos.append((center, diameter))
         return original_logo(canvas, draw, center, diameter, *args, **kwargs)
 
-    def capture_rectangle(draw, box, *args, **kwargs):
-        if kwargs.get("fill") == (*m.PANEL, 240):
-            panels.append(box)
-        return original_rectangle(draw, box, *args, **kwargs)
+    def capture_hero(canvas, draw, match, box, **kwargs):
+        panels.append(box)
+        return original_hero(canvas, draw, match, box, **kwargs)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-    monkeypatch.setattr(ImageDraw.ImageDraw, "rounded_rectangle", capture_rectangle)
+    monkeypatch.setattr(m, "_draw_fixture_hero", capture_hero)
     monkeypatch.setattr(m, "_draw_logo", capture_logo)
     if template == "schedule":
         m.render_schedule_card([upcoming()], NOW, "Europe/Moscow")
@@ -261,11 +260,13 @@ def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch,
     assert len(panels) == 1 and len(logos) == 2
     x0, y0, x1, y1 = panels[0]
     assert y1 - y0 <= (465 if template in {"result", "digest"} else 420)
-    for name, words, (center, diameter) in [
-        ("GAIMIN GLADIATORS ACADEMY", {"GAIMIN", "GLADIATORS", "ACADEMY"}, logos[0]),
-        ("NATUS VINCERE JUNIOR", {"NATUS VINCERE", "JUNIOR"}, logos[1]),
+    for name, (center, diameter) in [
+        ("GAIMIN GLADIATORS ACADEMY", logos[0]),
+        ("NATUS VINCERE JUNIOR", logos[1]),
     ]:
-        lines = [(text, box, size) for text, box, size in texts if text in words]
+        words = set(name.split())
+        lines = [(text, box, size) for text, box, size in texts
+                 if text.split() and set(text.split()).issubset(words)]
         assert " ".join(text for text, _, _ in lines) == name
         assert all(size >= 48 for _, _, size in lines)
         assert min(box[1] for _, box, _ in lines) >= center[1] + diameter / 2 + 20

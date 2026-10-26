@@ -330,10 +330,36 @@ def _shared_fixture_format(matches):
     return ""
 
 
-def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, show_format=True):
+def _draw_fixture_score(draw, center_x, center_y, score1, score2, *, size, width=260,
+                        display=False, foil_canvas=None):
+    """Keep the colon on the centre axis and use mirrored number cells."""
+    values = [str(score) if score is not None else "—" for score in (score1, score2)]
+    while True:
+        font = _font(size, display=display)
+        bounds = [draw.textbbox((0, 0), value, font=font) for value in (*values, ":")]
+        cell_width = max(box[2] - box[0] for box in bounds[:2])
+        colon_width = bounds[2][2] - bounds[2][0]
+        gap = max(6, round(size * .08))
+        if cell_width * 2 + colon_width + gap * 2 <= width or size <= 24:
+            break
+        size -= 2
+    offset = cell_width / 2 + gap + colon_width / 2
+    for x, value in ((center_x - offset, values[0]), (center_x, ":"),
+                     (center_x + offset, values[1])):
+        if foil_canvas is None:
+            _centered_text_on_point(draw, x, center_y, value, font, WHITE)
+        else:
+            _centered_foil_text_on_point(foil_canvas, x, center_y, value, font)
+
+
+def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, show_format=True,
+                      panel_branding=None):
+    from .tournament_theme_patterns import draw_result_panel
     x0, y0, x1, y1 = box
-    draw.rounded_rectangle(box, radius=18, fill=(*PANEL, 245))
-    draw.line((x0, y0 + 18, x0, y1 - 18), fill=(*CYAN, 180), width=3)
+    draw_result_panel(canvas, box, panel_branding, PANEL, radius=18)
+    from .tournament_visuals import accent_color
+    row_accent = accent_color(panel_branding) if panel_branding else CYAN
+    draw.line((x0, y0 + 18, x0, y1 - 18), fill=(*row_accent, 180), width=3)
     center_y = y0 + (y1 - y0) * .43
     for left, center_x, name, url, fallback in (
         (True, x0 + 52, match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url),
@@ -344,10 +370,13 @@ def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, 
         winner = _winner_side(match) if time_label is None else None
         _draw_text_block(draw, x0 + 111 if left else x1 - 111, center_y,
                          name.upper(), 300, 38, min_size=36, alignment="left" if left else "right",
+                         display=_uses_cyrillic(name),
                          fill=AMBER if winner == ("left" if left else "right") else WHITE)
-    value = time_label if time_label is not None else f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
-    _centered_text_on_point(draw, (x0 + x1) // 2, round(center_y), value,
-                            _font(64 if time_label is not None else 76), AMBER if time_label is not None else WHITE)
+    if time_label is None:
+        _draw_fixture_score(draw, (x0 + x1) // 2, round(center_y), match.score1, match.score2,
+                            size=76, width=166)
+    else:
+        _centered_text_on_point(draw, (x0 + x1) // 2, round(center_y), time_label, _font(64), AMBER)
     match_format = f"BO{match.best_of}" if show_format and match.best_of else ""
     # Keep the format visible even when a long event label is shortened.
     label = " · ".join(part for part in (match_format, event) if part)
@@ -357,11 +386,60 @@ def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, 
                          fill=MUTED, max_lines=1)
 
 
+def _draw_result_hero_content(canvas, draw, match, box, *, event, show_format, prominent,
+                              logo_deadline, subtle):
+    x0, y0, x1, y1 = box
+    names = [match.team1_name.upper(), match.team2_name.upper()]
+    size, name_width, gap = 66 if prominent else 60, 360, 23
+    while size > 48 and any(len(_wrap_text(draw, text, _font(size, display=_uses_cyrillic(text)),
+                                         name_width, 10000)) > 2 for text in names):
+        size -= 1
+    heights = []
+    for text in names:
+        font = _font(size, display=_uses_cyrillic(text))
+        lines = _wrap_text(draw, text, font, name_width, 3)
+        heights.append(sum(draw.textbbox((0, 0), line, font=font)[3] -
+                           draw.textbbox((0, 0), line, font=font)[1] for line in lines) +
+                       6 * (len(lines) - 1))
+    name_height = max(heights)
+    diameter = 200 if prominent else 182
+    content_bottom = y1 - 42 if event else y1
+    logo_y = round((y0 + content_bottom - gap - name_height) / 2)
+    caption_y = logo_y + diameter / 2 + gap + name_height / 2
+    winner = _winner_side(match)
+    for side, x, name, url, fallback in (
+        ("left", x0 + 180, names[0], match.team1_logo_url, match.team1_logo_fallback_url),
+        ("right", x1 - 180, names[1], match.team2_logo_url, match.team2_logo_fallback_url),
+    ):
+        remaining = logo_deadline - time.monotonic() if logo_deadline is not None else None
+        if remaining is not None and remaining < .1:
+            url = fallback = None
+        _draw_logo(canvas, draw, (x, logo_y), diameter, name, url,
+                   CYAN if side == "left" else AMBER, fallback, subtle=subtle,
+                   download_timeout=min(.75, remaining) if remaining is not None and remaining >= .1 else None)
+        _draw_text_block(draw, x, caption_y, name, name_width, size,
+                         display=_uses_cyrillic(name), max_lines=3, gap=6,
+                         fill=AMBER if winner == side else WHITE)
+    center_x = (x0 + x1) // 2
+    _draw_fixture_score(draw, center_x, logo_y, match.score1, match.score2,
+                        size=176 if prominent else 164)
+    if show_format and match.best_of:
+        _centered_text_on_point(draw, center_x, caption_y, f"BO{match.best_of}", _font(32), MUTED)
+    if event:
+        _draw_text_block(draw, center_x, y1 - 20, event.upper(), 860, 26,
+                         display=_uses_cyrillic(event), fill=MUTED, max_lines=1)
+
+
 def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None,
                        value_label=None, show_format=True, prominent=False, logo_deadline=None,
-                       subtle=False):
+                       subtle=False, panel_branding=None):
+    from .tournament_theme_patterns import draw_result_panel
     x0, y0, x1, y1 = box
-    draw.rounded_rectangle(box, radius=24, fill=(*PANEL, 240))
+    draw_result_panel(canvas, box, panel_branding, PANEL, radius=24, alpha=240)
+    if time_label is None and value_label is None:
+        _draw_result_hero_content(canvas, draw, match, box, event=event, show_format=show_format,
+                                  prominent=prominent, logo_deadline=logo_deadline, subtle=subtle)
+        return
     center_x = (x0 + x1) // 2
     logo_y = y0 + 135
     diameter = 200 if prominent else 182
@@ -741,12 +819,16 @@ def _draw_logo(
             failures or ["unavailable"],
         )
     if logo is not None:
+        logo = logo.convert("RGBA")
+        bounds = logo.getchannel("A").getbbox()
+        logo = logo.crop(bounds) if bounds else None
+    if logo is not None:
         _draw_logo_plate(draw, center, diameter, accent, _logo_plate_fill(logo), subtle=subtle)
         contained = ImageOps.contain(
             logo,
             (int(diameter * content_scale), int(diameter * content_scale)),
         )
-        canvas.alpha_composite(contained, (x - contained.width // 2, y - contained.height // 2))
+        canvas.alpha_composite(contained, (round(x - contained.width / 2), round(y - contained.height / 2)))
         return
     _draw_logo_plate(draw, center, diameter, accent, LOGO_PLATE_DARK, subtle=subtle)
     initials_font = _fit_font(
@@ -1196,11 +1278,12 @@ def _winner_side(match: MatchNormalized) -> str | None:
 
 def _draw_wide_result_match(canvas, draw, match, box, *, show_tournament=True, show_format=True, prominent=False):
     _draw_fixture_hero(canvas, draw, match, box, event=match.tournament_name if show_tournament else None,
-                       show_format=show_format, prominent=prominent, subtle=True)
+                       show_format=show_format, prominent=prominent, subtle=True,
+                       panel_branding=_fixture_brand([match]))
 
 
 def _draw_compact_result_match(canvas, draw, match, box):
-    _draw_fixture_row(canvas, draw, match, box)
+    _draw_fixture_row(canvas, draw, match, box, panel_branding=_fixture_brand([match]))
 
 
 def render_result_card(match):
@@ -1230,6 +1313,7 @@ def _confirmed_result_maps(match):
 
 
 def _draw_single_result_body(canvas, draw, match, *, show_format=True):
+    from .tournament_theme_patterns import draw_result_panel
     maps = _confirmed_result_maps(match)
     box = _fixture_page_boxes(1)[0] if maps else (60, 400, 1020, 865)
     _draw_wide_result_match(canvas, draw, match, box, show_tournament=False,
@@ -1237,16 +1321,15 @@ def _draw_single_result_body(canvas, draw, match, *, show_format=True):
     if not maps:
         return
     gap = 12
+    branding = _fixture_brand([match])
     width = (960 - gap * (len(maps) - 1)) / len(maps)
     for index, item in enumerate(maps):
         left = 60 + index * (width + gap)
-        draw.rounded_rectangle((left, 853, left + width, 976), radius=16,
-                               fill=(*PANEL, 245))
+        draw_result_panel(canvas, (left, 853, left + width, 976), branding, PANEL, radius=16)
         center = left + width / 2
         _draw_text_block(draw, center, 883, item.name.upper(), width - 20,
                          26, min_size=22, max_lines=1, fill=MUTED)
-        _draw_text_block(draw, center, 931, f"{item.score1}:{item.score2}", width - 20,
-                         42, min_size=36, max_lines=1)
+        _draw_fixture_score(draw, center, 931, item.score1, item.score2, size=42, width=width - 20)
 
 
 def _fixture_brand(matches):
@@ -1288,9 +1371,10 @@ def _chamfered_panel(
     accent: tuple[int, int, int] = AMBER,
     foil: bool = False,
     foil_highlight: tuple[int, int, int] = GOLD_FOIL_HIGHLIGHT,
+    background: tuple[int, int, int] = (10, 19, 29),
 ) -> None:
     points = _chamfered_points(box, cut)
-    draw.polygon(points, fill=(10, 19, 29, 245), outline=accent)
+    draw.polygon(points, fill=(*background, 245), outline=accent)
     draw.line(points + [points[0]], fill=accent, width=2)
     if foil:
         draw.line(points + [points[0]], fill=(*foil_highlight, 190), width=1)
@@ -1312,6 +1396,7 @@ def _draw_final_foil_panel(
     box: tuple[int, int, int, int],
     *,
     cut: int = 22,
+    background: tuple[int, int, int] = (10, 19, 29),
 ) -> None:
     """Draw a tight reflected edge, not a diffuse neon-like glow."""
     glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
@@ -1326,6 +1411,7 @@ def _draw_final_foil_panel(
         accent=FINAL_GOLD,
         foil=True,
         foil_highlight=FINAL_GOLD_HIGHLIGHT,
+        background=background,
     )
 
 
@@ -1441,9 +1527,11 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
         raise MediaCardError("Final card requires confirmed final maps and winner payout")
 
     from .tournament_visuals import accent_color
+    from .tournament_theme_patterns import panel_color
 
     branding = branding if branding is not None else _final_event_branding(match)
     accent = accent_color(branding) if branding is not None else FINAL_GOLD
+    panel = panel_color(branding, (10, 19, 29))
     canvas = _fixture_canvas(branding, RESULT_CARD_SIZE) if branding is not None else _background(
         RESULT_CARD_SIZE,
         header_accent_y=90,
@@ -1459,9 +1547,9 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
         _draw_final_foil_panel(canvas, table)
     else:
         outline = tuple(round(channel * .65 + background * .35)
-                        for channel, background in zip(accent, PANEL))
-        _chamfered_panel(ImageDraw.Draw(canvas, "RGBA"), table, accent=outline)
-    _draw_final_foil_panel(canvas, prize)
+                        for channel, background in zip(accent, panel))
+        _chamfered_panel(ImageDraw.Draw(canvas, "RGBA"), table, accent=outline, background=panel)
+    _draw_final_foil_panel(canvas, prize, background=panel)
 
     draw = ImageDraw.Draw(canvas, "RGBA")
     if branding is None:
@@ -1471,8 +1559,6 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
         _branded_tournament_header(canvas, draw, match.tournament_name, branding, accent,
                                    label="ГРАНД-ФИНАЛ")
 
-    score = f"{match.score1}:{match.score2}"
-    score_font = _font(150, display=True)
     winner_side = _winner_side(match)
     # The final-card template is intentionally data-first: team names frame the
     # score instead of being reduced to captions beneath logos. This keeps the
@@ -1532,7 +1618,8 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
         match.team2_logo_fallback_url,
         content_scale=0.76,
     )
-    _centered_foil_text(canvas, width // 2, 297, score, score_font)
+    _draw_fixture_score(ImageDraw.Draw(canvas), width // 2, 362, match.score1, match.score2,
+                        size=150, width=300, display=True, foil_canvas=canvas)
     for index, item in enumerate(match.maps):
         row_y = y0 + index * row_height
         _centered_foil_text(
@@ -2007,7 +2094,8 @@ def render_results_card(matches, local_now, *, page_number=1, page_count=1):
         else:
             _draw_fixture_row(canvas, draw, match, box,
                               event=match.tournament_name if len(events) > 1 else None,
-                              show_format=not shared_format)
+                              show_format=not shared_format,
+                              panel_branding=_fixture_brand([match]))
     sources = list(dict.fromkeys(x.source for x in ordered))
     from .tournament_visuals import accent_color
     _card_footer(draw, " / ".join(sources), page_number, page_count,

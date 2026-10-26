@@ -99,18 +99,28 @@ def test_missing_bundled_logo_uses_provider_mark_before_plain_title(monkeypatch)
 
 @pytest.mark.parametrize("count", [1, 2, 3, 4, 5])
 def test_single_result_retains_every_confirmed_map(count, monkeypatch):
-    texts = []
+    texts, score_cells = [], []
     original = m._draw_text_block
+    original_text = ImageDraw.ImageDraw.text
     def capture(draw, x, y, text, *args, **kwargs):
         texts.append(text)
         return original(draw, x, y, text, *args, **kwargs)
     monkeypatch.setattr(m, "_draw_text_block", capture)
+    def capture_text(draw, xy, text, *args, **kwargs):
+        font = kwargs.get("font")
+        if font is not None:
+            box = draw.textbbox(xy, text, font=font)
+            if abs((box[1] + box[3]) / 2 - 931) <= 1:
+                score_cells.append(text)
+        return original_text(draw, xy, text, *args, **kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     match = result_with_maps(count)
     assert m._confirmed_result_maps(match) == match.maps
     image = Image.open(io.BytesIO(m.render_result_card(match)))
     assert image.size == (1080, 1080)
     assert all(item.name.upper() in texts for item in match.maps)
-    assert all(f"{item.score1}:{item.score2}" in texts for item in match.maps)
+    assert score_cells == [value for item in match.maps
+                           for value in (str(item.score1), ":", str(item.score2))]
 
 
 @pytest.mark.parametrize("case", ["missing_score", "tied", "partial", "forfeit", "walkover"])

@@ -63,7 +63,8 @@ def _event_logo(preview):
 def _canvas(preview, label):
     accent = _accent(preview)
     image = preview_background(SIZE, preview.branding)
-    add_event_glow(image, accent)
+    if not preview.branding.background:
+        add_event_glow(image, accent)
     logo = _event_logo(preview)
     add_event_watermark(image, logo)
     draw = ImageDraw.Draw(image)
