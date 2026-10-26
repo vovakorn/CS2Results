@@ -49,14 +49,14 @@ def main():
     def footer(draw, *values, **kwargs):
         original_footer(draw, *values, **kwargs)
         draw.rectangle((38, 993, 1040, 1045), fill=media.NAVY)
-        media._draw_text_block(draw, 540, 1018, "МАКЕТ · ВЫМЫШЛЕННЫЕ ДАННЫЕ", 940, 22,
+        media._draw_text_block(draw, 540, 1218, "МАКЕТ · ВЫМЫШЛЕННЫЕ ДАННЫЕ", 940, 22,
                               display=True, fill=media.AMBER, max_lines=1)
 
     media._card_footer = footer
 
     def save(key, data):
         with Image.open(BytesIO(data)) as image:
-            assert image.size == (1080, 1080), (key, image.size)
+            assert image.size == (1080, 1350), (key, image.size)
             images[key] = image.convert("RGB")
         images[key].save(args.output / f"{key}.png")
 
@@ -108,7 +108,7 @@ def main():
            for key, _, _ in EVENTS for count in (1, 4, 10)], "density.png", columns=3, size=500)
     board([(f"{key}-{kind}", key.upper() + " · " + kind) for key, _, _ in EVENTS
            for kind in ("contrast", "missing")], "logos-and-long-names.png", size=780)
-    print(json.dumps({"renders": len(images), "dimensions": [1080, 1080], "output": str(args.output.resolve())}))
+    print(json.dumps({"renders": len(images), "dimensions": [1080, 1350], "output": str(args.output.resolve())}))
 
 
 if __name__ == "__main__":
