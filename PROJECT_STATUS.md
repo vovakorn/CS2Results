@@ -6,8 +6,10 @@
 переведены с 1080 × 1080 на 1080 × 1350. Обновлены композиции результатов,
 итогов, таблиц, финала и анонсов; Reels остаются 1080 × 1920 с прежними
 safe zones. Полный локальный прогон: 1 276 passed; loopback-проверка не может
-bind `127.0.0.1` в sandbox (`PermissionError`) и должна пройти в CI. Открыт
-[PR #167](https://github.com/vovakorn/CS2Results/pull/167); production не меняет.
+bind `127.0.0.1` в sandbox (`PermissionError`) и должна пройти в CI.
+[PR #167](https://github.com/vovakorn/CS2Results/pull/167) слит после зелёного
+CI. Общий read-only preflight для #166/#167 остановлен после двух минут без
+ответа Cloud Functions API; candidate/promote не создавались, production не менялся.
 
 ## Согласованный релиз карточек — 26 октября 2026
 
