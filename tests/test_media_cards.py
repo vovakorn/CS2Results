@@ -214,8 +214,8 @@ def test_final_card_places_compact_logos_above_team_names(monkeypatch):
     media_cards.render_final_card(match)
 
     assert logos == [
-        ((220, 362), 72, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url, 0.76),
-        ((860, 362), 72, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url, 0.76),
+        ((220, 410), 72, "3DMAX", match.team1_logo_url, match.team1_logo_fallback_url, 0.76),
+        ((860, 410), 72, "MOUZ", match.team2_logo_url, match.team2_logo_fallback_url, 0.76),
     ]
 
 
@@ -334,18 +334,18 @@ def test_tournament_standings_draws_metallic_podium_medals_and_a_distinct_header
     image = Image.open(
         io.BytesIO(media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)[0])
     ).convert("RGB")
-    table_top = 342 + (media_cards.TOURNAMENT_STANDINGS_PER_CARD - len(placements)) * 26
+    table_top = 400
     first_row_top = table_top + 72
 
     for index in range(4):
-        row_top = first_row_top + index * 68
+        row_top = first_row_top + index * 92
         shadow = image.getpixel((146, row_top + 13))
         sheen = image.getpixel((146, row_top + 22))
         assert sum(sheen) > sum(shadow)
-    assert image.getpixel((146, first_row_top + 22)) != image.getpixel((146, first_row_top + 68 + 22))
-    assert image.getpixel((146, first_row_top + 68 + 22)) != image.getpixel((146, first_row_top + 2 * 68 + 22))
-    assert image.getpixel((136, first_row_top + 17)) != image.getpixel((156, first_row_top + 17))
-    bronze_row_top = first_row_top + 2 * 68
+    assert image.getpixel((146, first_row_top + 22)) != image.getpixel((146, first_row_top + 92 + 22))
+    assert image.getpixel((146, first_row_top + 92 + 22)) != image.getpixel((146, first_row_top + 2 * 92 + 22))
+    assert image.getpixel((136, first_row_top + 30)) != image.getpixel((156, first_row_top + 30))
+    bronze_row_top = first_row_top + 2 * 92
     assert image.getpixel((120, bronze_row_top + 23)) != image.getpixel((172, bronze_row_top + 23))
     assert image.getpixel((540, table_top + 30)) == media_cards.STANDINGS_HEADER
     assert image.getpixel((540, table_top)) == media_cards.STANDINGS_HEADER_LINE
@@ -396,7 +396,7 @@ def test_daily_results_album_supports_requested_match_counts(match_count):
     matches = [_result().model_copy(update={"match_id": str(i)}) for i in range(match_count)]
     cards = media_cards.render_results_cards(matches, media_cards.datetime.fromisoformat("2026-08-01T23:00:00+03:00"))
     assert len(cards) == (match_count + 3) // 4
-    assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
+    assert all(Image.open(io.BytesIO(card)).size == (1080, 1350) for card in cards)
 
 
 def test_daily_results_album_rejects_more_than_ten_matches():
@@ -505,7 +505,7 @@ def test_tournament_radar_single_pair_uses_large_match_composition(monkeypatch):
 
     assert len(logo_sizes) == 2 and min(logo_sizes) >= 140
     assert media_cards._radar_bracket_content_label([match]) == "ПОДТВЕРЖДЁННАЯ ПАРА"
-    assert Image.open(io.BytesIO(data)).size == (1080, 1080)
+    assert Image.open(io.BytesIO(data)).size == (1080, 1350)
 
 
 def test_tournament_radar_four_pairs_get_large_non_overlapping_cards(monkeypatch):
@@ -535,7 +535,7 @@ def test_tournament_radar_four_pairs_get_large_non_overlapping_cards(monkeypatch
 
     assert len(boxes) == 4
     assert min(y1 - y0 for _, y0, _, y1 in boxes) >= 230
-    assert all(326 <= y0 < y1 <= 964 for _, y0, _, y1 in boxes)
+    assert all(370 <= y0 < y1 <= 1190 for _, y0, _, y1 in boxes)
     for index, left in enumerate(boxes):
         for right in boxes[index + 1:]:
             assert left[2] <= right[0] or right[2] <= left[0] or left[3] <= right[1] or right[3] <= left[1]
@@ -558,7 +558,7 @@ def test_tournament_radar_dense_structure_keeps_local_links_on_readable_pages():
         assert f"{2*i+1:02d}" in references[node.match_id]
         assert f"{2*i+2:02d}" in references[node.match_id]
     assert "С.1" in references["quarter-0"]
-    assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
+    assert all(Image.open(io.BytesIO(card)).size == (1080, 1350) for card in cards)
 
 
 def test_tournament_radar_large_structures_stay_within_telegram_album_limit(monkeypatch):
@@ -712,7 +712,7 @@ def test_tournament_radar_shows_future_slots_as_tbd_without_inventing_teams(monk
 def test_schedule_album_supports_ten_matches():
     cards = media_cards.render_schedule_cards([_upcoming(str(i)) for i in range(10)], media_cards.datetime.now(), "Europe/Moscow")
     assert len(cards) == 3
-    assert all(Image.open(io.BytesIO(card)).size == (1080, 1080) for card in cards)
+    assert all(Image.open(io.BytesIO(card)).size == (1080, 1350) for card in cards)
 
 
 def test_single_schedule_page_rejects_more_than_four_matches():
@@ -1230,7 +1230,7 @@ def test_tournament_standings_table_uses_available_height(count, monkeypatch):
     media_cards.render_tournament_standings_cards("BLAST Open Porto", placements)
     _, top, _, bottom = panels[0]
     assert top >= 340
-    assert bottom <= 960
+    assert bottom <= 1210
     assert bottom - top >= (340 if count == 2 else 600)
 
 @pytest.mark.parametrize("count", [2, 4, 6])
