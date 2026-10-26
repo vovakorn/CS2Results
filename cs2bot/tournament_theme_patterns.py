@@ -11,9 +11,33 @@ def color(value):
 
 
 def panel_color(branding, fallback):
-    if not branding.background:
+    if branding is None or not branding.background:
         return fallback
     return tuple(round(component * .5 + 23 * .5) for component in color(branding.background))
+
+
+def draw_result_panel(canvas, box, branding, fallback, *, radius, alpha=245):
+    """Use the announcement's base tone with a quiet tint and one-pixel edge."""
+    if branding is None or not branding.background:
+        ImageDraw.Draw(canvas, "RGBA").rounded_rectangle(box, radius=radius, fill=(*fallback, alpha))
+        return
+    base, accent = panel_color(branding, fallback), color(branding.accent)
+    x0, y0, x1, y1 = (round(value) for value in box)
+    width, height = x1 - x0 + 1, y1 - y0 + 1
+    layer = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(layer)
+    for y in range(height):
+        # A small tint at the top fades to the exact announcement tone.
+        amount = .06 * max(0, 1 - y / max(1, (height - 1) * .8))
+        shade = tuple(round(a * (1 - amount) + b * amount) for a, b in zip(base, accent))
+        draw.line((0, y, width - 1, y), fill=(*shade, 255))
+    mask = Image.new("L", layer.size)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=radius, fill=255)
+    layer.putalpha(mask)
+    canvas.alpha_composite(layer, (x0, y0))
+    edge = tuple(round(a * .82 + b * .18) for a, b in zip(base, accent))
+    ImageDraw.Draw(canvas, "RGBA").rounded_rectangle((x0, y0, x1, y1), radius=radius,
+                                                     outline=(*edge, 255), width=1)
 
 
 def preview_background(size, branding, *, frame=True, header=True):
@@ -23,7 +47,14 @@ def preview_background(size, branding, *, frame=True, header=True):
     if not branding.background:
         return media._background(size, header_accent_colors=(color(branding.accent),) * 2).convert("RGBA")
     accent, secondary = color(branding.accent), color(branding.secondary or branding.accent)
-    image = Image.new("RGBA", size, (*color(branding.background), 255))
+    # Preserve the original atlas composition, including its two soft glows.
+    # Render in the atlas coordinates before scaling to the target card.
+    base = Image.new("RGBA", (600, 480), (*color(branding.background), 255))
+    glow = Image.new("RGBA", base.size)
+    glow_draw = ImageDraw.Draw(glow)
+    glow_draw.ellipse((280, -150, 650, 230), fill=(*accent, 42))
+    glow_draw.ellipse((-180, 250, 110, 580), fill=(*secondary, 22))
+    base.alpha_composite(glow.filter(ImageFilter.GaussianBlur(65)))
     motif = Image.new("RGBA", (600, 480))
     p = ImageDraw.Draw(motif)
     line = (*secondary, 28)
@@ -73,10 +104,8 @@ def preview_background(size, branding, *, frame=True, header=True):
     elif name == "medal":
         for radius in (80, 100, 130):
             p.ellipse((480 - radius, 160 - radius, 480 + radius, 160 + radius), outline=line, width=2)
-    image.alpha_composite(motif.resize(size, Image.Resampling.LANCZOS))
-    glow = Image.new("RGBA", (180, 180))
-    ImageDraw.Draw(glow).ellipse((-45, 100, 70, 235), fill=(*secondary, 20))
-    image.alpha_composite(glow.filter(ImageFilter.GaussianBlur(25)).resize(size, Image.Resampling.LANCZOS))
+    base.alpha_composite(motif)
+    image = base.resize(size, Image.Resampling.LANCZOS)
     draw = ImageDraw.Draw(image, "RGBA")
     if frame:
         draw.rounded_rectangle((34, 34, size[0] - 34, size[1] - 34), radius=42,
