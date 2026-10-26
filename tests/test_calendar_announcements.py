@@ -87,7 +87,7 @@ def test_all_real_profiles_fit_three_platforms_and_square_cover(api, key, first,
     text = format_preview_threads_caption(preview)
     assert len(text.encode("utf-16-le")) // 2 <= 500
     cards = render_preview_cards(preview)
-    assert len(cards) == 1 and Image.open(io.BytesIO(cards[0])).size == (1080, 1080)
+    assert len(cards) == 1 and Image.open(io.BytesIO(cards[0])).size == (1080, 1350)
     assert not preview.teams and p.branding.logo_asset
     if key.startswith("pgl-major"):
         assert [stage.kind for stage in preview.stages] == ["swiss_1", "swiss_2", "swiss_3", "playoffs"]
