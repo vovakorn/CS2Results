@@ -54,7 +54,7 @@ def test_team_score_and_caption_rows_are_centred_in_the_panel(names, with_maps, 
         maps=[MapResult(name=n, score1=a, score2=b) for n, a, b in
               [("Mirage", 13, 9), ("Nuke", 8, 13), ("Dust II", 13, 10)]] if with_maps else [])
     with Image.open(BytesIO(media.render_result_card(match))) as image:
-        assert image.size == (1080, 1080)
+        assert image.size == (1080, 1350)
     assert len(logos) == len(captions) == 2 and len(scores) == 1
     assert logos[0][0][0] + logos[1][0][0] == 1080
     assert scores[0] == (540, logos[0][0][1]) == (540, logos[1][0][1])
@@ -64,7 +64,7 @@ def test_team_score_and_caption_rows_are_centred_in_the_panel(names, with_maps, 
     # The tallest name fixes the bottom of a shared caption area.
     name_height = 2 * (captions[0][1] - logos[0][0][1] - logos[0][1] / 2 - 23)
     bottom = captions[0][1] + name_height / 2
-    panel_center = (425 + 825) / 2 if with_maps else (400 + 865) / 2
+    panel_center = (470 + 960) / 2 if with_maps else (440 + 1010) / 2
     assert (top + bottom) / 2 == pytest.approx(panel_center, abs=1)
 
 
