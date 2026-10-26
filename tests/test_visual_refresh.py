@@ -58,7 +58,7 @@ def test_registered_event_uses_local_logo_and_green_stripes_without_network(kind
             score1=2, score2=1) for match in fixtures]
         data = m.render_results_card(results, NOW)
     image = Image.open(io.BytesIO(data))
-    assert image.format == "PNG" and image.size == (1080, 1080)
+    assert image.format == "PNG" and image.size == (1080, 1350)
     for x in (80, 1000):
         red, green, blue = image.getpixel((x, 90))
         assert green > red * 2 and green > blue * 2
@@ -82,7 +82,7 @@ def test_context_replaces_illustration_and_retains_later_available_event_logo(mo
     monkeypatch.setattr(m, "fetch_team_logo",
                         lambda url: (loaded.append(url), Image.new("RGBA", (100, 100), "white"))[1])
     monkeypatch.setattr(m, "SCHEDULE_CONTEXT_BACKGROUND", "nonexistent-illustration.png")
-    assert Image.open(io.BytesIO(m.render_schedule_context_covers([first, second], NOW)[0])).size == (1080, 1080)
+    assert Image.open(io.BytesIO(m.render_schedule_context_covers([first, second], NOW)[0])).size == (1080, 1350)
     assert loaded == ["preview://event"]
 
 
@@ -93,7 +93,7 @@ def test_missing_bundled_logo_uses_provider_mark_before_plain_title(monkeypatch)
     monkeypatch.setattr(m, "fetch_team_logo",
         lambda url: (loaded.append(url), Image.new("RGBA", (100, 100), "white"))[1])
     match = event_match().model_copy(update={"tournament_logo_url":"preview://event"})
-    assert Image.open(io.BytesIO(m.render_schedule_context_covers([match], NOW)[0])).size == (1080, 1080)
+    assert Image.open(io.BytesIO(m.render_schedule_context_covers([match], NOW)[0])).size == (1080, 1350)
     assert loaded == ["preview://event"]
 
 
@@ -110,14 +110,14 @@ def test_single_result_retains_every_confirmed_map(count, monkeypatch):
         font = kwargs.get("font")
         if font is not None:
             box = draw.textbbox(xy, text, font=font)
-            if abs((box[1] + box[3]) / 2 - 931) <= 1:
+            if abs((box[1] + box[3]) / 2 - 1083) <= 1:
                 score_cells.append(text)
         return original_text(draw, xy, text, *args, **kwargs)
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     match = result_with_maps(count)
     assert m._confirmed_result_maps(match) == match.maps
     image = Image.open(io.BytesIO(m.render_result_card(match)))
-    assert image.size == (1080, 1080)
+    assert image.size == (1080, 1350)
     assert all(item.name.upper() in texts for item in match.maps)
     assert score_cells == [value for item in match.maps
                            for value in (str(item.score1), ":", str(item.score2))]
@@ -162,7 +162,7 @@ def test_vrs_all_pages_use_brand_and_draw_both_absolute_ranks(monkeypatch):
     assert transitions == [(item.before_rank, item.after_rank) for item in impacts]
     for data in pages:
         image = Image.open(io.BytesIO(data))
-        assert image.size == (1080, 1080)
+        assert image.size == (1080, 1350)
         assert image.getpixel((80, 90))[1] > image.getpixel((80, 90))[2] * 2
 
 
