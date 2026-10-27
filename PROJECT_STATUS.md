@@ -1,23 +1,15 @@
 # CS2 Results Bot — production-состояние
 
-## Локально: адаптивные размеры карточек — 27 октября 2026
+## Релиз адаптивных карточек — 27 октября 2026
 
-Подготовлены 1080 × 1080 для Telegram и коротких форматов Threads;
-Instagram и подробные форматы Threads получают 1080 × 1350. Меняется
-компоновка элементов, а не размер готового PNG. 573 целевых теста прошли,
-36 offline-рендеров проверены. Reels, claims и подтверждённые публикации
-сохранены. Изменения остаются локальными в отдельном worktree от `afe4313`;
-новые PR/deploy/посты не выполнялись. Реальные клиенты Telegram/Instagram
-этой итерацией не проверены. [Контракт и воспроизведение](docs/static-card-formats.md).
-
-Выкладка утверждена 27 октября. Полный прогон: 1307 passed / 3 failed;
-все три ошибки тестовых заглушек устранены, повтор их модуля — 35 passed.
-Проверочная сборка успешна. Read-only сверка показала production
-`d4em6shgg8p9p6edh3bu`, rollback `d4e0ko5n3dfonjcem4f4` и прежние девять
-таймеров на `production`, радар PAUSED. После возобновления штатный preflight
-прошёл: 30 environment entries, 7 Lockbox references и семь main timers.
-Подготовлен переход к PR/CI, затем candidate/promote; текущая задача пока
-не переключала production. [Состояние релиза](docs/static-card-release-2026-10-27.md).
+[PR #168](https://github.com/vovakorn/CS2Results/pull/168) открыт, deploy ожидает
+полного зелёного CI и merge. Подготовлены 1:1 для Telegram/коротких форматов
+Threads и 4:5 для Instagram/подробных форматов Threads.
+Штатный preflight прошёл: production `d4em6shgg8p9p6edh3bu`, rollback
+`d4e0ko5n3dfonjcem4f4`, 30 environment entries, 7 Lockbox references и семь
+main timers; все девять таймеров вызывают `production`, радар PAUSED.
+Текущая задача ещё не создавала candidate и не переключала production.
+[Контракт](docs/static-card-formats.md), [проверки и этап релиза](docs/static-card-release-2026-10-27.md).
 
 ## Локально: статичные карточки 4:5 — 26 октября 2026
 

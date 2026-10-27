@@ -70,7 +70,8 @@ delivery state; выключенный job не делает запросов. �
 В production с 2 октября 2026 года (PR #131, версия `d4ectvltcablmvlapuqa`).
 Согласованный реестр турнирных тем выпущен 4 октября (PR #134, текущая версия
 `d4egkm2nv8ai69o10144`); реальный EPL dry-run прошёл в candidate и production.
-Telegram, Instagram и Threads независимо публикуют один PNG-альбом.
+Telegram, Instagram и Threads независимо публикуют PNG-альбомы из одних данных;
+Telegram использует квадратную компоновку, Meta — портретную.
 Первый EPL-выпуск подтверждён во всех трёх сетях; discovery работает в 18:00 МСК.
 Радар остаётся PAUSED. Начальный VRS и root анонса проверены в Object Storage;
 повтор job не создал постов и не изменил ни снимок, ни root.
@@ -256,6 +257,10 @@ claims, `attempting`, `sent`, `uncertain`, processed marker и reconciliation.
 При неопределённой отправке нет повтора или текстового fallback. Ошибка marker
 после подтверждённой отправки не освобождает claim. Dry-run не отправляет сообщения
 и не меняет delivery state. Если карточки Telegram отключены, отправляется текст.
+Если карточки включены, ошибка квадратного рендера не заменяет анонс текстом:
+Telegram получает ошибку подготовки без claim/processed и ждёт следующей попытки.
+Ошибки квадратного и портретного рендера изолированы; исправная площадка продолжает
+доставку. Для Telegram-only выпуска портретный альбом не строится.
 
 Instagram и Threads используют собственные UID
 `instagram_tournament_preview_{profile.key}` и `threads_tournament_preview_{profile.key}`.

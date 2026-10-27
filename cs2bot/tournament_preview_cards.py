@@ -194,20 +194,20 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False,
     width = (940 - (len(preview.stages) - 1) * gap) / len(preview.stages)
     for index, stage in enumerate(preview.stages):
         x = 70 + index * (width + gap)
-        _panel(draw, (x, 810, x + width, 955) if square else (x, 865, x + width, 1060), accent, panel)
+        _panel(draw, (x, 810, x + width, 985) if square else (x, 865, x + width, 1060), accent, panel)
         _text(draw, stage.label.upper(), (x + 18, 826, x + width - 18, 855) if square else (x + 18, 884, x + width - 18, 913),
               size=21, minimum=18, color=accent, display=True)
         _text(draw, date_range(stage.start, stage.end), (x + 18, 861, x + width - 18, 914) if square else (x + 18, 922, x + width - 18, 975),
               size=30, minimum=20)
         if stage.card_summary:
-            _summary(draw, stage.card_summary, (x + 18, 920, x + width - 18, 950) if square else (x + 18, 984, x + width - 18, 1038), accent)
+            _summary(draw, stage.card_summary, (x + 18, 918, x + width - 18, 976) if square else (x + 18, 984, x + width - 18, 1038), accent)
         if index < len(preview.stages) - 1:
             _arrow(draw, x + width + 10, 883 if square else 962, gap - 20, accent)
     if preview.first_match_at:
         local = preview.first_match_at.astimezone(ZoneInfo("Europe/Moscow"))
         _text(draw, f"Первый матч · {date_range(local.date(), local.date())}, {local:%H:%M} МСК",
-              (70, 965, 1010, 1014) if square else (70, 1100, 1010, 1149),
-              size=30, minimum=24)
+              (70, 991, 1010, 1022) if square else (70, 1100, 1010, 1149),
+              size=24 if square else 30, minimum=24)
     _footer(draw, demo, draft)
     return media._as_png(image)
 
