@@ -13,7 +13,7 @@ from .tournament_visuals import accent_color, event_logo, add_event_glow, add_ev
 from .tournament_branding import resolve_branding
 from .tournament_theme_patterns import panel_color, preview_background
 
-SIZE = (1080, 1350)
+SIZE = media.STATIC_CARD_SIZE
 TEAMS_PER_PAGE = 16
 
 
@@ -60,9 +60,9 @@ def _event_logo(preview):
     return event_logo(preview.branding, media.ASSET_DIR)
 
 
-def _canvas(preview, label):
+def _canvas(preview, label, card_format="portrait"):
     accent = _accent(preview)
-    image = preview_background(SIZE, preview.branding)
+    image = preview_background(media.static_card_size(card_format), preview.branding)
     if not preview.branding.background:
         add_event_glow(image, accent)
     logo = _event_logo(preview)
@@ -135,9 +135,11 @@ def _footer(draw, demo, draft=False):
           color=media.AMBER if demo or draft else media.MUTED, center=True)
 
 
-def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False) -> bytes:
+def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False,
+                         card_format: media.StaticCardFormat = "portrait") -> bytes:
     preview = preview.model_copy(update={"branding": resolve_branding(preview.branding, event_key=preview.key)})
-    image, draw = _canvas(preview, "ПЕРЕД СТАРТОМ")
+    image, draw = _canvas(preview, "ПЕРЕД СТАРТОМ", card_format)
+    square = card_format == "square"
     accent = _accent(preview)
     panel = panel_color(preview.branding, media.PANEL)
     logo = _event_logo(preview)
@@ -179,43 +181,44 @@ def render_preview_cover(preview: TournamentPreview, *, demo=False, draft=False)
     else:
         _text(draw, "COUNTER-STRIKE 2", (640, 530, 985, 636), size=34, minimum=26)
 
-    _location_pin(image, (70, 735), accent)
+    _location_pin(image, (70, 692 if square else 735), accent)
     locations = " / ".join(preview.locations)
     if len(preview.locations) > 2:
         locations = f"{len(preview.locations)} площадки · подробности в подписи"
-    _text(draw, locations, (112, 729, 1010, 801), size=33, minimum=20)
+    _text(draw, locations, (112, 686, 1010, 758) if square else (112, 729, 1010, 801), size=33, minimum=20)
 
-    _text(draw, "ФОРМАТ", (70, 820, 1010, 853), size=22, minimum=22,
+    _text(draw, "ФОРМАТ", (70, 767, 1010, 800) if square else (70, 820, 1010, 853), size=22, minimum=22,
           color=media.MUTED, display=True)
 
     gap = 44 if len(preview.stages) == 2 else 34
     width = (940 - (len(preview.stages) - 1) * gap) / len(preview.stages)
     for index, stage in enumerate(preview.stages):
         x = 70 + index * (width + gap)
-        _panel(draw, (x, 865, x + width, 1060), accent, panel)
-        _text(draw, stage.label.upper(), (x + 18, 884, x + width - 18, 913),
+        _panel(draw, (x, 810, x + width, 985) if square else (x, 865, x + width, 1060), accent, panel)
+        _text(draw, stage.label.upper(), (x + 18, 826, x + width - 18, 855) if square else (x + 18, 884, x + width - 18, 913),
               size=21, minimum=18, color=accent, display=True)
-        _text(draw, date_range(stage.start, stage.end), (x + 18, 922, x + width - 18, 975),
+        _text(draw, date_range(stage.start, stage.end), (x + 18, 861, x + width - 18, 914) if square else (x + 18, 922, x + width - 18, 975),
               size=30, minimum=20)
         if stage.card_summary:
-            _summary(draw, stage.card_summary, (x + 18, 984, x + width - 18, 1038), accent)
+            _summary(draw, stage.card_summary, (x + 18, 918, x + width - 18, 976) if square else (x + 18, 984, x + width - 18, 1038), accent)
         if index < len(preview.stages) - 1:
-            _arrow(draw, x + width + 10, 962, gap - 20, accent)
+            _arrow(draw, x + width + 10, 883 if square else 962, gap - 20, accent)
     if preview.first_match_at:
         local = preview.first_match_at.astimezone(ZoneInfo("Europe/Moscow"))
         _text(draw, f"Первый матч · {date_range(local.date(), local.date())}, {local:%H:%M} МСК",
-              (70, 1100, 1010, 1149),
-              size=30, minimum=24)
+              (70, 991, 1010, 1022) if square else (70, 1100, 1010, 1149),
+              size=24 if square else 30, minimum=24)
     _footer(draw, demo, draft)
     return media._as_png(image)
 
 
-def render_preview_cards(preview: TournamentPreview, *, demo=False, draft=False) -> list[bytes]:
+def render_preview_cards(preview: TournamentPreview, *, demo=False, draft=False,
+                         card_format: media.StaticCardFormat = "portrait") -> list[bytes]:
     preview = preview.model_copy(update={"branding": resolve_branding(preview.branding, event_key=preview.key)})
-    cards = [render_preview_cover(preview, demo=demo, draft=draft)]
+    cards = [render_preview_cover(preview, demo=demo, draft=draft, card_format=card_format)]
     for offset in range(0, len(preview.teams), TEAMS_PER_PAGE):
         teams = preview.teams[offset:offset + TEAMS_PER_PAGE]
-        image, draw = _canvas(preview, "УЧАСТНИКИ ТУРНИРА")
+        image, draw = _canvas(preview, "УЧАСТНИКИ ТУРНИРА", card_format)
         accent = _accent(preview)
         _text(draw, preview.name, (70, 151, 1010, 227), size=34, minimum=18)
         pages = math.ceil(len(preview.teams) / TEAMS_PER_PAGE)
@@ -226,7 +229,7 @@ def render_preview_cards(preview: TournamentPreview, *, demo=False, draft=False)
         rows = math.ceil(len(teams) / columns)
         gap = 16
         cell_width = (940 - (columns - 1) * gap) / columns
-        cell_height = (960 - (rows - 1) * gap) / rows
+        cell_height = (image.height - 390 - (rows - 1) * gap) / rows
         for index, team in enumerate(teams):
             x = 70 + (index % columns) * (cell_width + gap)
             y = 250 + (index // columns) * (cell_height + gap)

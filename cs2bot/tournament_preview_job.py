@@ -108,7 +108,6 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
             text = format_preview_caption(preview)
             instagram = runtime.instagram_publishing_enabled() if not dry_run else False
             threads = runtime.threads_publishing_enabled() if not dry_run else False
-            cards = render_preview_cards(preview) if dry_run or runtime.TELEGRAM_MEDIA_CARDS or instagram or threads else []
         except Exception as exc:
             item["skipped_reason"] = str(exc) if isinstance(exc, PreviewUnavailable) else type(exc).__name__
             if not dry_run:
@@ -117,7 +116,20 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
                     "Проверьте профиль и источники до начала турнира.")
             body["previews"].append(item)
             continue
-        item.update({"eligible": eligible, "card_count": len(cards), "warnings": preview.warnings})
+        cards = []
+        if dry_run or instagram or threads:
+            try:
+                cards = render_preview_cards(preview)
+            except Exception as exc:
+                item["card_error"] = type(exc).__name__
+        telegram_cards = []
+        if dry_run or runtime.TELEGRAM_MEDIA_CARDS:
+            try:
+                telegram_cards = render_preview_cards(preview, card_format="square")
+            except Exception as exc:
+                item["telegram_card_error"] = type(exc).__name__
+        item.update({"eligible": eligible, "card_count": max(len(cards), len(telegram_cards)),
+                     "telegram_card_count": len(telegram_cards), "warnings": preview.warnings})
         captions = {"telegram": text}
         caption_errors = {}
         for platform, formatter in (("instagram", format_preview_instagram_caption),
@@ -150,7 +162,12 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
                 if not _allowed(runtime, channel_id):
                     deliveries[f"telegram:{channel_id}"] = {"status": "held"}
                     continue
-                telegram_cards = cards if runtime.TELEGRAM_MEDIA_CARDS else []
+                if runtime.TELEGRAM_MEDIA_CARDS and not telegram_cards:
+                    deliveries[f"telegram:{channel_id}"] = {"status": "failed",
+                        "error_type": item.get("telegram_card_error", "preview_cards_missing")}
+                    runtime._notify_admin(f"telegram_preview_card_{profile.key}_{channel_id}",
+                        f"Не подготовлена квадратная карточка анонса {profile.key}; Telegram ждёт повторной проверки.")
+                    continue
                 deliveries[f"telegram:{channel_id}"] = _deliver(runtime, uid, channel_id,
                     lambda: _send_telegram(runtime, channel, profile, telegram_cards, text),
                     runtime.TelegramDeliveryUncertainError, media_card=bool(telegram_cards))

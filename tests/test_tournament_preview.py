@@ -73,6 +73,19 @@ def test_three_stage_cover_fits_a_date_range_crossing_months():
     assert Image.open(io.BytesIO(render_preview_cards(p)[0])).size == (1080, 1350)
 
 
+@pytest.mark.parametrize("stage_count", [3, 4])
+def test_square_cover_fits_maximum_stage_summaries(stage_count):
+    data = preview().model_dump(mode="json")
+    base = data["stages"][0]
+    kinds = ["groups", "swiss", "playoffs"] if stage_count == 3 else ["swiss_1", "swiss_2", "swiss_3", "playoffs"]
+    summary = "Двойная сетка, матчи BO3, решающий матч и выход в плей офф".ljust(60, "!")
+    data["stages"] = [{**base, "kind": kind, "start": f"2026-10-0{index+2}",
+        "end": f"2026-10-0{index+3}", "card_summary": summary} for index, kind in enumerate(kinds)]
+    data["stages"][-1]["end"] = data["end"]
+    p = TournamentPreview.model_validate(data)
+    assert Image.open(io.BytesIO(render_preview_cards(p, card_format="square")[0])).size == (1080, 1080)
+
+
 def test_unapproved_stale_and_future_reviews_are_blocked():
     for p in [profile(approved=False), profile(verified_at=NOW - timedelta(days=8)),
               profile(verified_at=NOW + timedelta(seconds=1))]:
@@ -347,7 +360,7 @@ def runtime(tmp_path, monkeypatch, *, enabled=True, uncertain=False, marker_fail
         calls.append("fetch")
         return preview()
     monkeypatch.setattr(job, "fetch_tournament_preview", fetched)
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: [b"png"])
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: [b"png"])
     class Uncertain(Exception):
         pass
     async def reconcile(*args):
@@ -423,7 +436,7 @@ def test_duplicate_claim_prevents_send(tmp_path, monkeypatch):
 def test_confirmed_preview_delivery_preserves_media_and_finishes_marker(tmp_path, monkeypatch, card_count, method):
     r, calls = runtime(tmp_path, monkeypatch)
     r.TELEGRAM_MEDIA_CARDS = bool(card_count)
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: [b"png"] * card_count)
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: [b"png"] * card_count)
     sent = []
     def send(kind, *args, **kwargs):
         sent.append((kind, args, kwargs))
@@ -495,7 +508,7 @@ def social_runtime(tmp_path, monkeypatch, *, failure=None):
 
 def test_all_platforms_publish_independently_with_context_and_stable_identity(tmp_path, monkeypatch):
     r, calls, sent = social_runtime(tmp_path, monkeypatch)
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: [b"png", b"teams"])
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: [b"png", b"teams"])
     r.send_media_group_to_telegram = lambda *args, **kwargs: calls.append("send")
     context = {"token": "test-token"}
     body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW, context=context)["body"])
@@ -509,12 +522,54 @@ def test_all_platforms_publish_independently_with_context_and_stable_identity(tm
     assert sent[1][6] == {"is_root": True}
 
 
+def test_telegram_only_preview_renders_only_square(tmp_path, monkeypatch):
+    r, calls = runtime(tmp_path, monkeypatch)
+    formats = []
+    def render(*args, card_format="portrait", **kwargs):
+        assert card_format == "square"
+        formats.append(card_format)
+        return [b"png"]
+    monkeypatch.setattr(job, "render_preview_cards", render)
+    body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW)["body"])
+    assert formats == ["square"] and body["messages_sent"] == 1 and "send" in calls
+
+
+@pytest.mark.parametrize("failed_format", ["square", "portrait"])
+def test_preview_format_failure_does_not_block_other_platforms(tmp_path, monkeypatch, failed_format):
+    r, calls, sent = social_runtime(tmp_path, monkeypatch)
+    def render(*args, card_format="portrait", **kwargs):
+        if card_format == failed_format:
+            raise RuntimeError("renderer failed")
+        return [b"png"]
+    monkeypatch.setattr(job, "render_preview_cards", render)
+    body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW)["body"])
+    if failed_format == "square":
+        assert body["messages_sent"] == 2 and body["delivery_failures"] == 1
+        assert "send" not in calls and calls.count("claim") == 2 and len(sent) == 2
+    else:
+        assert body["messages_sent"] == 1 and body["delivery_failures"] == 2
+        assert "send" in calls and calls.count("claim") == 1 and sent == []
+
+
+def test_failed_square_preview_remains_available_for_retry(tmp_path, monkeypatch):
+    r, calls = runtime(tmp_path, monkeypatch)
+    def fail(*args, **kwargs):
+        raise RuntimeError("renderer failed")
+    monkeypatch.setattr(job, "render_preview_cards", fail)
+    body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW)["body"])
+    assert body["delivery_failures"] == 1
+    assert not any(value in calls for value in ("claim", "send", "marker"))
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: [b"png"])
+    body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW)["body"])
+    assert body["messages_sent"] == 1 and calls.count("send") == 1
+
+
 def test_telegram_text_flag_does_not_disable_social_cards(tmp_path, monkeypatch):
     r, calls, sent = social_runtime(tmp_path, monkeypatch)
     r.TELEGRAM_MEDIA_CARDS = False
     r.send_to_telegram = lambda *args: calls.append("send")
     rendered = []
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: rendered.append(True) or [b"png"])
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: rendered.append(True) or [b"png"])
     body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW)["body"])
     assert rendered == [True] and body["messages_sent"] == 3
     assert all(item[2] == [b"png"] for item in sent)

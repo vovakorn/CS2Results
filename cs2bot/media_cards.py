@@ -10,7 +10,7 @@ import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Sequence, TypeVar
+from typing import Literal, Sequence, TypeVar
 from urllib.parse import urlparse
 
 import requests
@@ -27,8 +27,9 @@ from .match_sources.models import (
 )
 from .match_sources.storage import read_cached_logo, write_cached_logo
 
-# One static master is shared by Telegram, Instagram and Threads.  Keep the
-# vertical video pipeline in ``schedule_reels.py`` at 1080 × 1920.
+# Each layout is rendered from data; never pad, stretch or crop a finished card.
+StaticCardFormat = Literal["square", "portrait"]
+SQUARE_CARD_SIZE = (1080, 1080)
 STATIC_CARD_SIZE = (1080, 1350)
 RESULT_CARD_SIZE = STATIC_CARD_SIZE
 SCHEDULE_CARD_SIZE = STATIC_CARD_SIZE
@@ -120,6 +121,14 @@ LATIN_MEDIUM_FONT = FONT_DIR / "Rajdhani-Medium.ttf"
 
 class MediaCardError(RuntimeError):
     """A recoverable card-rendering or logo-download error."""
+
+
+def static_card_size(card_format: StaticCardFormat) -> tuple[int, int]:
+    if card_format == "square":
+        return SQUARE_CARD_SIZE
+    if card_format == "portrait":
+        return STATIC_CARD_SIZE
+    raise MediaCardError("Unsupported static card format")
 
 
 def _font(size: int, *, display: bool = False, medium: bool = False) -> ImageFont.FreeTypeFont:
@@ -373,7 +382,8 @@ def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, 
                    CYAN if left else AMBER, fallback, subtle=True)
         winner = _winner_side(match) if time_label is None else None
         _draw_text_block(draw, x0 + 111 if left else x1 - 111, center_y,
-                         name.upper(), 300, 38, min_size=36, alignment="left" if left else "right",
+                         name.upper(), 268, 38, min_size=36, alignment="left" if left else "right",
+                         max_lines=3,
                          display=_uses_cyrillic(name),
                          fill=AMBER if winner == ("left" if left else "right") else WHITE)
     if time_label is None:
@@ -480,16 +490,14 @@ def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None,
                          display=_uses_cyrillic(event), fill=MUTED, max_lines=1)
 
 
-def _fixture_page_boxes(count):
+def _fixture_page_boxes(count, *, card_height=STATIC_CARD_SIZE[1]):
+    square = card_height == SQUARE_CARD_SIZE[1]
     if count == 1:
-        return [(60, 470, 1020, 960)]
-    # Portrait cards have a deliberately taller results field.  Keeping the
-    # same inter-row gap makes four fixtures as scannable as the old square,
-    # while one and two fixtures gain welcome breathing room.
-    available = 810
-    height = min(270, (available - 16 * (count - 1)) // count)
-    top = 375 + (available - (height * count + 16 * (count - 1))) // 2
-    return [(60, top + i * (height + 16), 1020, top + i * (height + 16) + height) for i in range(count)]
+        return [(60, 400, 1020, 825)] if square else [(60, 470, 1020, 960)]
+    start, available, gap, maximum = (326, 640, 12, 236) if square else (375, 810, 16, 270)
+    height = min(maximum, (available - gap * (count - 1)) // count)
+    top = start + (available - (height * count + gap * (count - 1))) // 2
+    return [(60, top + i * (height + gap), 1020, top + i * (height + gap) + height) for i in range(count)]
 
 
 def _fixture_timestamp(raw_date):
@@ -1099,35 +1107,37 @@ def _radar_bracket_columns(
 
 def _draw_radar_bracket_match(canvas, draw, match, box, *, reference=""):
     x0, y0, x1, y1 = box
+    compact = y1 - y0 < 210
     draw.rounded_rectangle(box, radius=16, fill=(*PANEL, 245))
     _draw_text_block(draw, x0 + 16, y0 + 25, _radar_round_label([match]), x1 - x0 - 32,
                      24, display=True, alignment="left", fill=MUTED, max_lines=1)
-    row_height = (y1 - y0 - 76) / 2
+    row_height = (y1 - y0 - (68 if compact else 76)) / 2
     for index, name, url, fallback in (
         (0, match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url),
         (1, match.team2_name, match.team2_logo_url, match.team2_logo_fallback_url),
     ):
-        y = y0 + 44 + row_height * (index + .5)
+        y = y0 + (38 if compact else 44) + row_height * (index + .5)
         _draw_logo(canvas, draw, (x0 + 29, round(y)), 38, name or "?", url,
                    CYAN if index == 0 else AMBER, fallback)
         _draw_text_block(draw, x0 + 62, y, (name or "TBD").upper(), x1 - x0 - 78,
-                         38, min_size=36, alignment="left")
+                         36 if compact else 38, min_size=36, alignment="left")
     if match.team1_name and match.team2_name:
         reference = ""
     labels = [reference] if reference else []
     if (match.status or "").casefold() == "running":
         labels.append("LIVE")
     if labels:
-        _draw_text_block(draw, x0 + 16, y1 - 17, " · ".join(labels), x1 - x0 - 32, 22,
+        _draw_text_block(draw, x0 + 16, y1 - (11 if compact else 17), " · ".join(labels), x1 - x0 - 32, 22,
                          display=True, alignment="left", fill=CYAN, max_lines=1)
 
 
 def _draw_radar_single_pair(canvas, draw, match):
-    _draw_fixture_hero(canvas, draw, match, _fixture_page_boxes(1)[0], value_label="VS")
-    _draw_text_block(draw, 540, 490, _radar_round_label([match]) if match.round_name else "МАТЧ ТУРНИРА",
+    box = _fixture_page_boxes(1, card_height=canvas.height)[0]
+    _draw_fixture_hero(canvas, draw, match, box, value_label="VS")
+    _draw_text_block(draw, 540, box[1] + 20, _radar_round_label([match]) if match.round_name else "МАТЧ ТУРНИРА",
                      860, 24, display=True, fill=MUTED, max_lines=1)
     if (match.status or "").casefold() == "running":
-        _draw_text_block(draw, 540, 940, "LIVE", 860, 22, display=True, fill=CYAN, max_lines=1)
+        _draw_text_block(draw, 540, box[3] - 20, "LIVE", 860, 22, display=True, fill=CYAN, max_lines=1)
 
 
 def _draw_radar_bracket(canvas, draw, matches, page_number, page_count, *, references=None):
@@ -1147,9 +1157,10 @@ def _draw_radar_bracket(canvas, draw, matches, page_number, page_count, *, refer
     columns_count = len(columns)
     width = (960 - 24 * (columns_count - 1)) // columns_count
     slots = {}
+    start, available = (340, 606) if canvas.height == SQUARE_CARD_SIZE[1] else (370, 820)
     for col, members in enumerate(columns):
-        height = min(300, (820 - 16 * (len(members) - 1)) // len(members))
-        top = 370 + (820 - (height * len(members) + 16 * (len(members) - 1))) // 2
+        height = min(300, (available - 16 * (len(members) - 1)) // len(members))
+        top = start + (available - (height * len(members) + 16 * (len(members) - 1))) // 2
         x0 = 60 + col * (width + 24)
         for i, node in enumerate(members):
             y0 = top + i * (height + 16)
@@ -1181,7 +1192,7 @@ def _draw_radar_next_match(canvas, draw, radar, timezone_name):
     except Exception as exc:
         raise MediaCardError("Radar timezone is invalid") from exc
     match = radar.next_matches[0]
-    _draw_fixture_hero(canvas, draw, match, _fixture_page_boxes(1)[0], time_label=_schedule_time(match, tz))
+    _draw_fixture_hero(canvas, draw, match, _fixture_page_boxes(1, card_height=canvas.height)[0], time_label=_schedule_time(match, tz))
 
 
 def _radar_bracket_nodes(radar: TournamentRadar) -> Sequence[RadarBracketNode]:
@@ -1240,14 +1251,14 @@ def _radar_facts(radar: TournamentRadar, matches: Sequence[RadarBracketNode]) ->
     return f"{radar.roster_team_count} УЧАСТНИКОВ   ·   {match_count}"
 
 
-def render_tournament_radar_card(radar, tournament_name, timezone_name, variant="auto"):
-    cards = render_tournament_radar_cards(radar, tournament_name, timezone_name, variant)
+def render_tournament_radar_card(radar, tournament_name, timezone_name, variant="auto", *, card_format: StaticCardFormat = "portrait"):
+    cards = render_tournament_radar_cards(radar, tournament_name, timezone_name, variant, card_format=card_format)
     if len(cards) != 1:
         raise MediaCardError("Radar needs several pages; use render_tournament_radar_cards")
     return cards[0]
 
 
-def render_tournament_radar_cards(radar, tournament_name, timezone_name, variant="auto"):
+def render_tournament_radar_cards(radar, tournament_name, timezone_name, variant="auto", *, card_format: StaticCardFormat = "portrait"):
     if variant not in {"auto", "bracket", "next_match"}:
         raise MediaCardError("Unsupported radar card variant")
     nodes = list(_radar_bracket_nodes(radar))
@@ -1256,7 +1267,7 @@ def render_tournament_radar_cards(radar, tournament_name, timezone_name, variant
     pages = pages or [[]]
     rendered = []
     for i, page in enumerate(pages, 1):
-        canvas = _background(SCHEDULE_CARD_SIZE, header_accent_y=90).convert("RGBA")
+        canvas = _background(static_card_size(card_format), header_accent_y=90).convert("RGBA")
         draw = ImageDraw.Draw(canvas, "RGBA")
         label = _radar_bracket_content_label(nodes) if bracket else "БЛИЖАЙШИЙ МАТЧ"
         _radar_header(canvas, draw, tournament_name, f"{label} · {_radar_facts(radar, nodes)}")
@@ -1294,10 +1305,10 @@ def _draw_compact_result_match(canvas, draw, match, box):
     _draw_fixture_row(canvas, draw, match, box, panel_branding=_fixture_brand([match]))
 
 
-def render_result_card(match):
+def render_result_card(match, *, card_format: StaticCardFormat = "portrait"):
     from .tournament_visuals import accent_color
     branding = _fixture_brand([match])
-    canvas = _fixture_canvas(branding, RESULT_CARD_SIZE)
+    canvas = _fixture_canvas(branding, static_card_size(card_format))
     draw = ImageDraw.Draw(canvas, "RGBA")
     _fixture_header(canvas, draw, "РЕЗУЛЬТАТ МАТЧА", match.tournament_name, "",
                     branding, match.tournament_logo_url)
@@ -1323,7 +1334,9 @@ def _confirmed_result_maps(match):
 def _draw_single_result_body(canvas, draw, match, *, show_format=True):
     from .tournament_theme_patterns import draw_result_panel
     maps = _confirmed_result_maps(match)
-    box = _fixture_page_boxes(1)[0] if maps else (60, 440, 1020, 1010)
+    square = canvas.height == SQUARE_CARD_SIZE[1]
+    box = (_fixture_page_boxes(1, card_height=canvas.height)[0] if maps else
+           (60, 350, 1020, 915) if square else (60, 440, 1020, 1010))
     _draw_wide_result_match(canvas, draw, match, box, show_tournament=False,
                            show_format=show_format, prominent=not maps)
     if not maps:
@@ -1331,13 +1344,14 @@ def _draw_single_result_body(canvas, draw, match, *, show_format=True):
     gap = 12
     branding = _fixture_brand([match])
     width = (960 - gap * (len(maps) - 1)) / len(maps)
+    map_top = 853 if square else 1000
     for index, item in enumerate(maps):
         left = 60 + index * (width + gap)
-        draw_result_panel(canvas, (left, 1000, left + width, 1128), branding, PANEL, radius=16)
+        draw_result_panel(canvas, (left, map_top, left + width, map_top + 128), branding, PANEL, radius=16)
         center = left + width / 2
-        _draw_text_block(draw, center, 1032, item.name.upper(), width - 20,
+        _draw_text_block(draw, center, map_top + 32, item.name.upper(), width - 20,
                          26, min_size=22, max_lines=1, fill=MUTED)
-        _draw_fixture_score(draw, center, 1083, item.score1, item.score2, size=42, width=width - 20)
+        _draw_fixture_score(draw, center, map_top + 83, item.score1, item.score2, size=42, width=width - 20)
 
 
 def _fixture_brand(matches):
@@ -1529,7 +1543,7 @@ def _branded_tournament_header(canvas, draw, tournament_name, branding, accent, 
         canvas.alpha_composite(logo, (round(890 - logo.width / 2), round(223 - logo.height / 2)))
 
 
-def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
+def render_final_card(match: MatchNormalized, *, branding=None, card_format: StaticCardFormat = "portrait") -> bytes:
     """Render a deterministic 1080px final card with map scores and champion payout."""
     if not can_render_final_card(match):
         raise MediaCardError("Final card requires confirmed final maps and winner payout")
@@ -1540,15 +1554,18 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     branding = branding if branding is not None else _final_event_branding(match)
     accent = accent_color(branding) if branding is not None else FINAL_GOLD
     panel = panel_color(branding, (10, 19, 29))
-    canvas = _fixture_canvas(branding, RESULT_CARD_SIZE) if branding is not None else _background(
-        RESULT_CARD_SIZE,
+    size = static_card_size(card_format)
+    square = card_format == "square"
+    canvas = _fixture_canvas(branding, size) if branding is not None else _background(
+        size,
         header_accent_y=90,
         header_accent_colors=(accent, accent),
         header_foil=branding is None,
     ).convert("RGBA")
-    width = RESULT_CARD_SIZE[0]
-    row_height = {3: 128, 4: 98, 5: 78}[len(match.maps)]
-    table = (190, 620, 890, 620 + row_height * len(match.maps))
+    width = canvas.width
+    row_height = ({3: 112, 4: 84, 5: 68} if square else {3: 128, 4: 98, 5: 78})[len(match.maps)]
+    table_top = 510 if square else 620
+    table = (190, table_top, 890, table_top + row_height * len(match.maps))
     prize_top = table[3] + 30
     prize = (190, prize_top, 890, prize_top + 86)
     if branding is None:
@@ -1577,7 +1594,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     right_team_x = 860
     left_name, right_name = match.team1_name.upper(), match.team2_name.upper()
     for x, name, side in [(left_team_x, left_name, "left"), (right_team_x, right_name, "right")]:
-        _draw_text_block(draw, x, 500, name, name_width, 48, min_size=36,
+        _draw_text_block(draw, x, 447 if square else 500, name, name_width, 48, min_size=36,
                          fill=FINAL_GOLD if winner_side == side else WHITE)
 
     x0, y0, x1, _ = table
@@ -1607,7 +1624,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     _draw_logo(
         canvas,
         draw,
-        (left_team_x, 410),
+        (left_team_x, 355 if square else 410),
         72,
         match.team1_name,
         match.team1_logo_url,
@@ -1618,7 +1635,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
     _draw_logo(
         canvas,
         draw,
-        (right_team_x, 410),
+        (right_team_x, 355 if square else 410),
         72,
         match.team2_name,
         match.team2_logo_url,
@@ -1626,7 +1643,7 @@ def render_final_card(match: MatchNormalized, *, branding=None) -> bytes:
         match.team2_logo_fallback_url,
         content_scale=0.76,
     )
-    _draw_fixture_score(ImageDraw.Draw(canvas), width // 2, 410, match.score1, match.score2,
+    _draw_fixture_score(ImageDraw.Draw(canvas), width // 2, 355 if square else 410, match.score1, match.score2,
                         size=150, width=300, display=True, foil_canvas=canvas)
     for index, item in enumerate(match.maps):
         row_y = y0 + index * row_height
@@ -1675,9 +1692,11 @@ def _tournament_table_layout(
     *,
     champion_index: int | None = None,
     header_height: int = 62,
+    card_height: int = STATIC_CARD_SIZE[1],
 ) -> tuple[int, list[int]]:
     """Fill the table area while leaving room for the title and source line."""
-    available_rows_height = 1210 - 400 - header_height
+    top, bottom = (340, 946) if card_height == SQUARE_CARD_SIZE[1] else (400, 1210)
+    available_rows_height = bottom - top - header_height
     if row_count <= 5 and champion_index is not None and row_count > 1:
         champion_height = 160 if row_count <= 4 else 128
         other_height = min(128, (available_rows_height - champion_height) // (row_count - 1))
@@ -1686,7 +1705,7 @@ def _tournament_table_layout(
     else:
         row_heights = [min(136, available_rows_height // row_count)] * row_count
     table_height = header_height + sum(row_heights)
-    return 400 + (810 - table_height) // 2, row_heights
+    return top + (bottom - top - table_height) // 2, row_heights
 
 
 def _table_team_lines(
@@ -1833,12 +1852,13 @@ def _draw_standings_metal_text(
 
 
 def _render_tournament_standings_page(tournament_name, placements, *, source_label, page_number,
-                                      page_count, branding=None, tournament_logo_url=None):
+                                      page_count, branding=None, tournament_logo_url=None, card_format="portrait"):
     from .tournament_visuals import accent_color
 
     accent = accent_color(branding) if branding is not None else AMBER
-    canvas = (_fixture_canvas(branding, RESULT_CARD_SIZE) if branding is not None else
-              _background(RESULT_CARD_SIZE, header_accent_y=90,
+    size = static_card_size(card_format)
+    canvas = (_fixture_canvas(branding, size) if branding is not None else
+              _background(size, header_accent_y=90,
                           header_accent_colors=(CYAN, AMBER)).convert("RGBA"))
     draw = ImageDraw.Draw(canvas, "RGBA")
     if branding is None:
@@ -1852,9 +1872,9 @@ def _render_tournament_standings_page(tournament_name, placements, *, source_lab
     sparse = len(placements) < TOURNAMENT_STANDINGS_PER_CARD
     if sparse:
         top, row_heights = _tournament_table_layout(len(placements), champion_index=champion_index,
-                                                  header_height=header_height)
+                                                  header_height=header_height, card_height=canvas.height)
     else:
-        top, row_heights = 400, [92] * len(placements)
+        top, row_heights = (340, [66] * len(placements)) if card_format == "square" else (400, [92] * len(placements))
     table = (64, top, 1016, top + header_height + sum(row_heights))
     _chamfered_panel(draw, table, cut=20, accent=accent)
     x0, y0, x1, y1 = table
@@ -1909,6 +1929,7 @@ def render_tournament_standings_cards(
     *,
     branding=None,
     tournament_logo_url: str | None = None,
+    card_format: StaticCardFormat = "portrait",
 ) -> list[bytes]:
     """Render every confirmed placement, splitting long tables into an album."""
     if not tournament_name.strip() or not source_label.strip() or not can_render_tournament_standings(placements):
@@ -1927,6 +1948,7 @@ def render_tournament_standings_cards(
             page_count=len(chunks),
             branding=branding,
             tournament_logo_url=tournament_logo_url,
+            card_format=card_format,
         )
         for index, chunk in enumerate(chunks, start=1)
     ]
@@ -2009,10 +2031,10 @@ def _draw_rank_transition(draw, center_x, center_y, before, after, color):
 
 
 def _render_tournament_vrs_page(tournament_name, impacts, *, source_label, page_number,
-                                page_count, branding=None, tournament_logo_url=None):
+                                page_count, branding=None, tournament_logo_url=None, card_format="portrait"):
     from .tournament_visuals import accent_color
     accent = accent_color(branding) if branding else AMBER
-    canvas = _fixture_canvas(branding, RESULT_CARD_SIZE)
+    canvas = _fixture_canvas(branding, static_card_size(card_format))
     draw = ImageDraw.Draw(canvas, "RGBA")
     before = _vrs_snapshot_date(impacts[0].before_effective_at, impacts[0].before_version)
     after = _vrs_snapshot_date(impacts[0].after_effective_at, impacts[0].after_version)
@@ -2022,9 +2044,9 @@ def _render_tournament_vrs_page(tournament_name, impacts, *, source_label, page_
     header_height = 72
     sparse = len(impacts) < TOURNAMENT_VRS_PER_CARD
     if sparse:
-        top, row_heights = _tournament_table_layout(len(impacts), header_height=header_height)
+        top, row_heights = _tournament_table_layout(len(impacts), header_height=header_height, card_height=canvas.height)
     else:
-        top, row_heights = 400, [92] * len(impacts)
+        top, row_heights = (340, [66] * len(impacts)) if card_format == "square" else (400, [92] * len(impacts))
     table = (44, top, 1036, top + header_height + sum(row_heights))
     _chamfered_panel(draw, table, cut=20, accent=accent)
     x0, y0, x1, y1 = table
@@ -2070,24 +2092,25 @@ def render_tournament_vrs_cards(
     *,
     branding=None,
     tournament_logo_url: str | None = None,
+    card_format: StaticCardFormat = "portrait",
 ) -> list[bytes]:
     if not tournament_name.strip() or not source_label.strip() or not can_render_tournament_vrs(impacts):
         raise MediaCardError("Tournament VRS requires complete impacts")
     chunks = [impacts[index:index + TOURNAMENT_VRS_PER_CARD] for index in range(0, len(impacts), TOURNAMENT_VRS_PER_CARD)]
     return [_render_tournament_vrs_page(tournament_name, chunk, source_label=source_label,
                                         page_number=index, page_count=len(chunks), branding=branding,
-                                        tournament_logo_url=tournament_logo_url)
+                                        tournament_logo_url=tournament_logo_url, card_format=card_format)
             for index, chunk in enumerate(chunks, start=1)]
 
 
-def render_results_card(matches, local_now, *, page_number=1, page_count=1):
+def render_results_card(matches, local_now, *, page_number=1, page_count=1, card_format: StaticCardFormat = "portrait"):
     if len({match.source for match in matches}) > 1:
         raise MediaCardError("A results page cannot mix sources")
     if not 1 <= len(matches) <= MAX_RESULT_MATCHES_PER_CARD:
         raise MediaCardError("Results page supports one to four matches; use render_results_cards")
     ordered = sorted(matches, key=lambda x: _fixture_timestamp(x.end_date or x.date or x.start_date or ""))
     branding = _fixture_brand(ordered)
-    canvas = _fixture_canvas(branding, RESULT_CARD_SIZE)
+    canvas = _fixture_canvas(branding, static_card_size(card_format))
     draw = ImageDraw.Draw(canvas, "RGBA")
     shared_format = _shared_fixture_format(ordered)
     events = {match.competition_key or match.tournament_name for match in ordered}
@@ -2096,7 +2119,7 @@ def render_results_card(matches, local_now, *, page_number=1, page_count=1):
         meta += f" · {shared_format}"
     event, logo_url = _schedule_tournament_header(ordered)
     _fixture_header(canvas, draw, "ИТОГИ ДНЯ", event, meta, branding, logo_url)
-    for match, box in zip(ordered, _fixture_page_boxes(len(ordered))):
+    for match, box in zip(ordered, _fixture_page_boxes(len(ordered), card_height=canvas.height)):
         if len(ordered) == 1:
             _draw_single_result_body(canvas, draw, match, show_format=not shared_format)
         else:
@@ -2111,14 +2134,14 @@ def render_results_card(matches, local_now, *, page_number=1, page_count=1):
     return _as_png(canvas)
 
 
-def render_results_cards(matches, local_now):
+def render_results_cards(matches, local_now, *, card_format: StaticCardFormat = "portrait"):
     pages = _paginate_fixture_groups(matches, lambda x: (x.source, x.competition_key or x.tournament_name),
                                      MAX_RESULT_MATCHES, lambda x: x.end_date or x.date or x.start_date or "")
-    return [render_results_card(page, local_now, page_number=i, page_count=len(pages))
+    return [render_results_card(page, local_now, page_number=i, page_count=len(pages), card_format=card_format)
             for i, page in enumerate(pages, 1)]
 
 
-def render_schedule_card(matches, local_now, timezone_name, *, page_number=1, page_count=1):
+def render_schedule_card(matches, local_now, timezone_name, *, page_number=1, page_count=1, card_format: StaticCardFormat = "portrait"):
     if not 1 <= len(matches) <= MAX_SCHEDULE_MATCHES:
         raise MediaCardError("Schedule page supports one to four matches; use render_schedule_cards")
     if page_count < 1 or not 1 <= page_number <= page_count:
@@ -2130,7 +2153,7 @@ def render_schedule_card(matches, local_now, timezone_name, *, page_number=1, pa
         raise MediaCardError("Schedule timezone is invalid") from exc
     ordered = sorted(matches, key=lambda x: _fixture_timestamp(x.scheduled_at))
     branding = _fixture_brand(ordered)
-    canvas = _fixture_canvas(branding, SCHEDULE_CARD_SIZE)
+    canvas = _fixture_canvas(branding, static_card_size(card_format))
     draw = ImageDraw.Draw(canvas, "RGBA")
     event, logo_url = _schedule_tournament_header(ordered)
     meta = f"{local_now.day} {MONTH_NAMES[local_now.month]}"
@@ -2140,7 +2163,7 @@ def render_schedule_card(matches, local_now, timezone_name, *, page_number=1, pa
                     event, meta, branding, logo_url)
     mixed = len({_schedule_tournament_key(x) for x in ordered}) > 1
     show_format = not _shared_fixture_format(ordered)
-    for match, box in zip(ordered, _fixture_page_boxes(len(ordered))):
+    for match, box in zip(ordered, _fixture_page_boxes(len(ordered), card_height=canvas.height)):
         if len(ordered) == 1:
             _draw_wide_schedule_match(canvas, draw, match, box, tz, show_format=show_format)
         elif mixed:
@@ -2161,9 +2184,9 @@ def paginate_schedule_matches(matches):
                                      MAX_SCHEDULE_TOTAL_MATCHES, lambda x: x.scheduled_at)
 
 
-def render_schedule_cards(matches, local_now, timezone_name):
+def render_schedule_cards(matches, local_now, timezone_name, *, card_format: StaticCardFormat = "portrait"):
     pages = paginate_schedule_matches(matches)
-    return [render_schedule_card(page, local_now, timezone_name, page_number=i, page_count=len(pages))
+    return [render_schedule_card(page, local_now, timezone_name, page_number=i, page_count=len(pages), card_format=card_format)
             for i, page in enumerate(pages, 1)]
 
 
@@ -2194,6 +2217,8 @@ def _context_cover_match_count(count: int) -> str:
 def _render_schedule_context_cover(
     matches: Sequence[UpcomingMatchNormalized],
     local_now: datetime,
+    *,
+    card_format: StaticCardFormat = "portrait",
 ) -> bytes:
     if not matches:
         raise MediaCardError("Schedule context cover requires at least one match")
@@ -2204,7 +2229,7 @@ def _render_schedule_context_cover(
     matches = sorted(matches, key=lambda match: _fixture_timestamp(match.scheduled_at))
     branding = _fixture_brand(matches)
     accent = accent_color(branding) if branding else CYAN
-    canvas = _fixture_canvas(branding, SCHEDULE_CONTEXT_COVER_SIZE)
+    canvas = _fixture_canvas(branding, static_card_size(card_format))
     draw = ImageDraw.Draw(canvas, "RGBA")
     tournament_name, tournament_logo_url = _schedule_tournament_header(matches)
     formats = {match.best_of for match in matches}
@@ -2218,18 +2243,19 @@ def _render_schedule_context_cover(
     # Prefer the registered local mark, then the provider URL; never invent it.
     _fixture_header(canvas, draw, "ПЕРЕД МАТЧАМИ", tournament_name, date_label,
                     branding, tournament_logo_url)
-    _draw_text_block(draw, 540, 430, "БЛИЖАЙШИЙ МАТЧ", 880, 28,
+    square = card_format == "square"
+    _draw_text_block(draw, 540, 370 if square else 430, "БЛИЖАЙШИЙ МАТЧ", 880, 28,
                      display=True, fill=accent, max_lines=1)
-    _draw_wide_schedule_match(canvas, draw, matches[0], (60, 475, 1020, 980),
+    _draw_wide_schedule_match(canvas, draw, matches[0], (60, 410, 1020, 820) if square else (60, 475, 1020, 980),
                               ZoneInfo(DISPLAY_TIMEZONE), show_format=False)
     stage = matches[0].tournament_name
     if stage != tournament_name and stage.casefold().startswith(tournament_name.casefold()):
         stage = stage[len(tournament_name):].strip(" —-")
         if stage:
-            _draw_text_block(draw, 540, 1030, stage.upper(), 940, 26,
+            _draw_text_block(draw, 540, 870 if square else 1030, stage.upper(), 940, 26,
                              display=_uses_cyrillic(stage), fill=MUTED, max_lines=1)
     zone_label = "МСК" if DISPLAY_TIMEZONE == "Europe/Moscow" else DISPLAY_TIMEZONE
-    _draw_text_block(draw, 540, 1094,
+    _draw_text_block(draw, 540, 930 if square else 1094,
                      f"{_context_cover_match_count(len(matches))} · {format_label} · ВРЕМЯ {zone_label}",
                      940, 26, display=True, fill=MUTED, max_lines=1)
     _card_footer(draw, "PANDASCORE", accent=accent)
@@ -2239,6 +2265,8 @@ def _render_schedule_context_cover(
 def render_schedule_context_covers(
     matches: Sequence[UpcomingMatchNormalized],
     local_now: datetime,
+    *,
+    card_format: StaticCardFormat = "portrait",
 ) -> list[bytes]:
     """Render one context cover per Tier-1 tournament and series format."""
     if not matches:
@@ -2247,4 +2275,4 @@ def render_schedule_context_covers(
     for match in sorted(matches, key=lambda item: _fixture_timestamp(item.scheduled_at)):
         key = (_schedule_tournament_key(match), match.best_of)
         groups.setdefault(key, []).append(match)
-    return [_render_schedule_context_cover(group, local_now) for group in groups.values()]
+    return [_render_schedule_context_cover(group, local_now, card_format=card_format) for group in groups.values()]

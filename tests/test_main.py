@@ -569,7 +569,7 @@ def test_social_uncertain_result_is_removed_from_automatic_outbox(
     )
     deleted = []
     monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
-    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda value, **kwargs: b"card")
     monkeypatch.setattr(
         main,
         publisher_name,
@@ -788,7 +788,7 @@ def test_result_uses_spoiler_photo_when_media_cards_enabled(monkeypatch):
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
     monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
-    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda item, **kwargs: b"card")
     monkeypatch.setattr(main, "send_to_telegram", lambda *args, **kwargs: sent_text.append(args))
     monkeypatch.setattr(
         main,
@@ -832,7 +832,7 @@ def test_result_skips_media_after_soft_budget_and_sends_bounded_text(monkeypatch
     monkeypatch.setattr(
         main,
         "render_result_card",
-        lambda item: pytest.fail("card rendering must be skipped after the soft budget"),
+        lambda item, **kwargs: pytest.fail("card rendering must be skipped after the soft budget"),
     )
     monkeypatch.setattr(
         main,
@@ -866,7 +866,7 @@ def test_result_sends_photo_after_slow_preparation(monkeypatch, preparation_seco
     monkeypatch.setattr(main, "get_new_finished_matches", fetch)
     monkeypatch.setattr(main, "claim_channel_delivery", claim)
     monkeypatch.setattr(main, "mark_channel_processed", lambda *a, **k: _async(None))
-    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda item, **kwargs: b"card")
     monkeypatch.setattr(main, "send_photo_to_telegram", lambda *a, **k: photos.append(a) or {"ok": True})
     monkeypatch.setattr(main, "send_to_telegram", lambda *a, **k: texts.append(a))
     monkeypatch.setattr(main, "log_event", lambda logger, level, event, **fields: events.append((event, fields)))
@@ -945,7 +945,7 @@ def test_result_falls_back_to_text_when_photo_delivery_fails(monkeypatch):
     monkeypatch.setattr(main, "get_new_finished_matches", fake_get_new_finished_matches)
     monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
-    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda item, **kwargs: b"card")
     monkeypatch.setattr(
         main,
         "send_photo_to_telegram",
@@ -987,7 +987,7 @@ def test_result_connect_timeout_enables_text_only_mode(monkeypatch):
     monkeypatch.setattr(main, "claim_channel_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_channel_processed", fake_mark)
     monkeypatch.setattr(main, "mark_telegram_media_degraded", fake_mark_degraded)
-    monkeypatch.setattr(main, "render_result_card", lambda item: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda item, **kwargs: b"card")
     monkeypatch.setattr(
         main,
         "send_photo_to_telegram",
@@ -2741,7 +2741,7 @@ def test_context_failure_does_not_lose_or_repeat_confirmed_schedule(monkeypatch,
     processed = set()
     context_note = "🔎 <b>Контекст к матчам дня</b>"
 
-    def render_context(*args):
+    def render_context(*args, **kwargs):
         if context_failure == "render":
             raise RuntimeError("context cover unavailable")
         return [b"cover"]
@@ -2766,7 +2766,7 @@ def test_context_failure_does_not_lose_or_repeat_confirmed_schedule(monkeypatch,
     monkeypatch.setattr(main, "reconcile_content_delivery", lambda uid, job: _async(uid in processed))
     monkeypatch.setattr(main, "mark_content_processed", lambda uid, job: _async(processed.add(uid)))
     monkeypatch.setattr(main, "release_delivery_claim", lambda *args: pytest.fail("Confirmed schedule must stay claimed"))
-    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: [b"schedule"])
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"schedule"])
     monkeypatch.setattr(main, "render_schedule_context_covers", render_context)
     monkeypatch.setattr(main, "format_schedule_context_messages", lambda *args: [context_note])
     monkeypatch.setattr(main, "send_photo_to_telegram", send_photo)
@@ -2794,7 +2794,7 @@ def test_long_or_multiple_context_notes_remain_complete(monkeypatch, cover_count
     delivered = []
     covers = [b"cover"] * cover_count
     monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
-    monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args: covers)
+    monkeypatch.setattr(main, "render_schedule_context_covers", lambda *args, **kwargs: covers)
     monkeypatch.setattr(main, "send_photo_to_telegram", lambda chat, photo, caption, **kwargs: delivered.append(("photo", caption)))
     monkeypatch.setattr(main, "send_media_group_to_telegram", lambda chat, photos, caption, **kwargs: delivered.append(("album", caption)))
     monkeypatch.setattr(main, "send_to_telegram", lambda chat, text: delivered.append(("text", text)))
@@ -3040,6 +3040,37 @@ def test_digest_uses_spoiler_results_card_when_media_cards_enabled(monkeypatch):
     assert sent_photos[0][1]["filename"].startswith("cs2-results-")
 
 
+@pytest.mark.parametrize("job", ["schedule", "digest"])
+@pytest.mark.parametrize("portrait_fails", [False, True])
+def test_daily_platforms_render_separate_formats(monkeypatch, job, portrait_fails):
+    delivered = {}
+
+    def render(*args, card_format="portrait", **kwargs):
+        if portrait_fails and card_format == "portrait":
+            raise RuntimeError("portrait rendering failed")
+        return [card_format.encode()]
+
+    monkeypatch.setattr(main, "fetch_pandascore_finished_matches", lambda *args, **kwargs: _async([_match()]))
+    monkeypatch.setattr(main, "fetch_upcoming_matches", lambda *args, **kwargs: _async([_upcoming()]))
+    monkeypatch.setattr(main, "_fetch_schedule_contexts", lambda matches: _async([None] * len(matches)))
+    monkeypatch.setattr(main, "_send_schedule_context_to_telegram", lambda *args, **kwargs: 0)
+    monkeypatch.setattr(main, "CHANNELS", [{"id": "global", "name": "global", "chat_id": "chat", "teams": None}])
+    monkeypatch.setattr(main, "TELEGRAM_MEDIA_CARDS", True)
+    monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
+    monkeypatch.setattr(main, "claim_content_delivery", lambda *args: _async("claim"))
+    monkeypatch.setattr(main, "mark_content_processed", lambda *args: _async(None))
+    monkeypatch.setattr(main, "render_schedule_cards", render)
+    monkeypatch.setattr(main, "render_results_cards", render)
+    monkeypatch.setattr(main, "send_photo_to_telegram", lambda chat, photo, *args, **kwargs: delivered.update(telegram=[photo]))
+    monkeypatch.setattr(main, "_deliver_instagram_content", lambda **kwargs: (delivered.update(instagram=kwargs["cards"]), (0, 0, 0))[1])
+    monkeypatch.setattr(main, "_deliver_threads_content", lambda **kwargs: (delivered.update(threads=kwargs["cards"]), (0, 0, 0))[1])
+
+    assert main.handler({"job": job}, None)["statusCode"] == 200
+    assert delivered["telegram"] == delivered["threads"] == [b"square"]
+    assert delivered["instagram"] == ([] if portrait_fails else [b"portrait"])
+
+
 def test_digest_sends_every_result_page_in_one_spoiler_album(monkeypatch):
     albums = []
 
@@ -3174,7 +3205,7 @@ def test_threads_result_readiness_timeout_keeps_outbox_and_releases_claim(monkey
     claim = DeliveryClaim("channel", "claim", "id")
     released, deleted, attempted, marked = [], [], [], []
     monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(claim))
-    monkeypatch.setattr(main, "render_result_card", lambda *args: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda *args, **kwargs: b"card")
     monkeypatch.setattr(main, "release_delivery_claim", lambda *args: _async(released.append(args)))
     monkeypatch.setattr(main, "delete_result_delivery", lambda *args: _async(deleted.append(args)))
     monkeypatch.setattr(main, "record_result_delivery_attempt", lambda *args: _async(attempted.append(args)))
@@ -3224,7 +3255,7 @@ def test_preview_is_root_and_schedule_result_liquipedia_standings_vrs_follow_it(
     monkeypatch.setattr(main, "mark_content_processed", lambda *args: _async(None))
     monkeypatch.setattr(main, "delete_result_delivery", lambda *args: _async(deleted.append(args)))
     monkeypatch.setattr(main, "release_delivery_claim", lambda *args: _async(released.append(args)))
-    monkeypatch.setattr(main, "render_result_card", lambda *args: b"result")
+    monkeypatch.setattr(main, "render_result_card", lambda *args, **kwargs: b"result")
     monkeypatch.setattr(main, "_enqueue_tournament_standings", lambda *args: False)
     monkeypatch.setattr(main, "_record_post_analytics", lambda *args, **kwargs: None)
     monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
@@ -3295,7 +3326,7 @@ def test_social_uncertain_result_marks_claim_and_calls_publisher_once(
         raise error
 
     monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
-    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda value, **kwargs: b"card")
     monkeypatch.setattr(main, publisher_name, publisher)
     monkeypatch.setattr(main, "mark_delivery_claim_uncertain", lambda claim: _async(uncertain.append(claim.match_uid) or claim))
     monkeypatch.setattr(main, "release_delivery_claim", lambda claim: _async(released.append(claim.match_uid)))
@@ -3335,7 +3366,7 @@ def test_social_failure_before_external_request_releases_claim_and_keeps_outbox(
     deleted = []
 
     monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
-    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda value, **kwargs: b"card")
     monkeypatch.setattr(main, publisher_name, lambda *args: published.append(args))
 
     async def fail_before_request(claim):
@@ -3381,7 +3412,7 @@ def test_social_marker_failure_reconciles_without_republishing(
     reconciled = []
 
     monkeypatch.setattr(main, "claim_channel_delivery", lambda *args: _async(_claim(match, "social")))
-    monkeypatch.setattr(main, "render_result_card", lambda value: b"card")
+    monkeypatch.setattr(main, "render_result_card", lambda value, **kwargs: b"card")
     monkeypatch.setattr(main, publisher_name, lambda *args: published.append(args))
     monkeypatch.setattr(main, "mark_delivery_claim_attempting", lambda claim: _async(claim_states.append("attempting") or claim))
     monkeypatch.setattr(main, "mark_delivery_claim_sent", lambda claim: _async(claim_states.append("sent") or claim))
@@ -3566,7 +3597,7 @@ def test_social_failure_does_not_change_other_platform_claims(monkeypatch, faile
             main.datetime.fromisoformat("2026-08-30T10:00:00+03:00"),
         ),
     )
-    monkeypatch.setattr(main, "render_schedule_cards", lambda *args: [b"social-card"])
+    monkeypatch.setattr(main, "render_schedule_cards", lambda *args, **kwargs: [b"social-card"])
     monkeypatch.setattr(main, "claim_content_delivery", fake_claim)
     monkeypatch.setattr(main, "mark_delivery_claim_attempting", fake_attempting)
     monkeypatch.setattr(main, "mark_delivery_claim_sent", fake_sent)

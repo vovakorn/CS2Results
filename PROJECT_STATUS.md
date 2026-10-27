@@ -1,5 +1,16 @@
 # CS2 Results Bot — production-состояние
 
+## Релиз адаптивных карточек — 27 октября 2026
+
+[PR #168](https://github.com/vovakorn/CS2Results/pull/168) открыт, deploy ожидает
+полного зелёного CI и merge. Подготовлены 1:1 для Telegram/коротких форматов
+Threads и 4:5 для Instagram/подробных форматов Threads.
+Штатный preflight прошёл: production `d4em6shgg8p9p6edh3bu`, rollback
+`d4e0ko5n3dfonjcem4f4`, 30 environment entries, 7 Lockbox references и семь
+main timers; все девять таймеров вызывают `production`, радар PAUSED.
+Текущая задача ещё не создавала candidate и не переключала production.
+[Контракт](docs/static-card-formats.md), [проверки и этап релиза](docs/static-card-release-2026-10-27.md).
+
 ## Локально: статичные карточки 4:5 — 26 октября 2026
 
 В отдельной рабочей ветке статичные PNG для Telegram, Instagram и Threads

@@ -220,7 +220,7 @@ def test_old_digest_does_not_resume_after_owner_toggle(monkeypatch, runtime, gen
     monkeypatch.setattr(main, "fetch_pandascore_finished_matches", lambda *a, **k: _async([_match()]))
     monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
     monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
-    monkeypatch.setattr(main, "render_results_cards", lambda *a: [b"card"])
+    monkeypatch.setattr(main, "render_results_cards", lambda *a, **kwargs: [b"card"])
     monkeypatch.setattr(main, "publish_rendered_cards", lambda *a: pytest.fail("old Instagram edition"))
     monkeypatch.setattr(main, "publish_threads_rendered_cards", lambda *a: pytest.fail("old Threads edition"))
     response = main._handle_content_job("digest", False, digest_attempt=queue.claim_due())
@@ -253,7 +253,7 @@ def test_recovered_digest_uses_stable_ids_on_all_platforms(monkeypatch, runtime)
     monkeypatch.setattr(main, "claim_content_delivery", lambda uid: _async(ids.append(uid) or DeliveryClaim(uid, uid, uid)))
     monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: True)
     monkeypatch.setattr(main, "threads_publishing_enabled", lambda: True)
-    monkeypatch.setattr(main, "render_results_cards", lambda *a: [b"card"])
+    monkeypatch.setattr(main, "render_results_cards", lambda *a, **kwargs: [b"card"])
     monkeypatch.setattr(main, "publish_rendered_cards", lambda *a: meta.append(a) or "instagram-id")
     monkeypatch.setattr(main, "publish_threads_rendered_cards", lambda *a: meta.append(a) or "threads-id")
     body = json.loads(main._handle_content_job("digest", False, digest_attempt=queue.claim_due())["body"])
@@ -270,7 +270,7 @@ def test_daily_owner_change_before_attempting_blocks_request(monkeypatch, runtim
     monkeypatch.setattr(main, "fetch_pandascore_finished_matches", lambda *a, **k: _async([_match()]))
     monkeypatch.setattr(main, "instagram_publishing_enabled", lambda: destination == "instagram")
     monkeypatch.setattr(main, "threads_publishing_enabled", lambda: destination == "threads")
-    monkeypatch.setattr(main, "render_results_cards", lambda *a: [b"card"])
+    monkeypatch.setattr(main, "render_results_cards", lambda *a, **kwargs: [b"card"])
 
     def claim(uid):
         if (uid.startswith("digest_") and destination == "global") or uid.startswith(destination + "_"):
