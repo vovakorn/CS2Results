@@ -1178,6 +1178,7 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
                     pending.match.tournament_name, impacts, impacts[0].source,
                     branding=branding_for_match(pending.match, TOURNAMENT_PREVIEW_PROFILES_PATH),
                     tournament_logo_url=pending.match.tournament_logo_url,
+                    card_format="square",
                 )
             except Exception as exc:
                 log_event(logger, logging.WARNING, "vrs_card_fallback",
@@ -1292,6 +1293,7 @@ def _deliver_tournament_standings(
                     match.tournament_placements,
                     branding=branding_for_match(match, TOURNAMENT_PREVIEW_PROFILES_PATH),
                     tournament_logo_url=match.tournament_logo_url,
+                    card_format="square",
                 )
             except Exception as exc:
                 log_event(
@@ -2330,9 +2332,9 @@ def _deliver_threads_result(pending: PendingDelivery, context: Any) -> str:
                 asyncio.run(delete_result_delivery(pending))
             return "duplicate"
         card = (
-            render_final_card(match)
+            render_final_card(match, card_format="square")
             if match.source == "liquipedia" and can_render_final_card(match)
-            else render_result_card(match)
+            else render_result_card(match, card_format="square")
         )
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         _publish_threads_chain(
@@ -2414,7 +2416,7 @@ def _send_schedule_context_to_telegram(
     covers: list[bytes] = []
     if TELEGRAM_MEDIA_CARDS and 1 <= len(matches) <= MAX_SCHEDULE_TOTAL_MATCHES:
         try:
-            covers = render_schedule_context_covers(matches, local_now)
+            covers = render_schedule_context_covers(matches, local_now, card_format="square")
             if len(covers) > 10:
                 covers = []
         except Exception as exc:
@@ -2697,7 +2699,7 @@ def _handle_content_job(
     ) or (
         job == "digest" and 1 <= len(selected) <= MAX_RESULT_MATCHES
     )
-    if card_supported and job == "schedule" and (instagram_enabled or threads_enabled):
+    if card_supported and job == "schedule" and instagram_enabled:
         try:
             social_media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
         except Exception as exc:
@@ -2712,7 +2714,7 @@ def _handle_content_job(
             )
     if card_supported and TELEGRAM_MEDIA_CARDS and job == "schedule":
         try:
-            telegram_media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE)
+            telegram_media_cards = render_schedule_cards(selected, local_now, DISPLAY_TIMEZONE, card_format="square")
             if len(telegram_media_cards) > 10:
                 media_card_error = "too_many_tournament_cards"
                 telegram_media_cards = []
@@ -2733,13 +2735,9 @@ def _handle_content_job(
                 error_type=type(exc).__name__,
                 error=_safe_error_message(exc),
             )
-    if card_supported and job == "digest" and (
-        TELEGRAM_MEDIA_CARDS or instagram_enabled or threads_enabled
-    ):
+    if card_supported and job == "digest" and instagram_enabled:
         try:
             social_media_cards = render_results_cards(selected, local_now)
-            if TELEGRAM_MEDIA_CARDS:
-                telegram_media_cards = social_media_cards
         except Exception as exc:
             media_card_error = type(exc).__name__
             log_event(
@@ -2750,6 +2748,14 @@ def _handle_content_job(
                 error_type=type(exc).__name__,
                 error=_safe_error_message(exc),
             )
+
+    if card_supported and job == "digest" and TELEGRAM_MEDIA_CARDS:
+        try:
+            telegram_media_cards = render_results_cards(selected, local_now, card_format="square")
+        except Exception as exc:
+            media_card_error = type(exc).__name__
+            log_event(logger, logging.WARNING, "media_card_fallback", job=job,
+                      error_type=type(exc).__name__, error=_safe_error_message(exc))
 
     sent = 0
     duplicates = 0
@@ -2908,10 +2914,10 @@ def _handle_content_job(
         for tournament_key, members in groups.items():
             try:
                 if job == "schedule":
-                    cards = render_schedule_cards(members, local_now, DISPLAY_TIMEZONE)
+                    cards = render_schedule_cards(members, local_now, DISPLAY_TIMEZONE, card_format="square")
                     caption = f"Расписание турнира: {members[0].tournament_name}"
                 elif job == "digest":
-                    cards = render_results_cards(members, local_now)
+                    cards = render_results_cards(members, local_now, card_format="square")
                     caption = f"Результаты турнира: {members[0].tournament_name}"
                 else:
                     cards, caption = social_media_cards, text
@@ -3024,7 +3030,7 @@ def _handle_radar_job(
         threads_enabled = threads_publishing_enabled()
     except ThreadsPublishError:
         threads_enabled = False
-    if TELEGRAM_MEDIA_CARDS or threads_enabled:
+    if threads_enabled:
         try:
             media_cards = render_tournament_radar_cards(
                 radar, tournament_name, DISPLAY_TIMEZONE, card_variant
@@ -3038,6 +3044,17 @@ def _handle_radar_job(
                 tournament_id=tournament_id,
                 error_type=type(exc).__name__,
             )
+
+    telegram_radar_cards: list[bytes] = []
+    if TELEGRAM_MEDIA_CARDS:
+        try:
+            telegram_radar_cards = render_tournament_radar_cards(
+                radar, tournament_name, DISPLAY_TIMEZONE, card_variant, card_format="square"
+            )
+        except Exception as exc:
+            media_card_error = type(exc).__name__
+            log_event(logger, logging.WARNING, "tournament_radar_card_unavailable",
+                      tournament_id=tournament_id, error_type=type(exc).__name__)
 
     sent = 0
     duplicates = 0
@@ -3069,25 +3086,25 @@ def _handle_radar_job(
                 duplicates += 1
                 continue
             claim = asyncio.run(mark_delivery_claim_attempting(claim))
-            if media_cards and TELEGRAM_MEDIA_CARDS:
+            if telegram_radar_cards and TELEGRAM_MEDIA_CARDS:
                 caption = f"🏆 <b>Турнирный радар</b>\n{html.escape(tournament_name)}\n\nИсточник: PandaScore"
                 if test_run_id:
                     caption = f"🧪 <b>Тестовая карточка</b>\n\n{caption}"
                 try:
-                    if len(media_cards) > 1:
+                    if len(telegram_radar_cards) > 1:
                         send_media_group_to_telegram(
                             channel["chat_id"],
-                            media_cards,
+                            telegram_radar_cards,
                             caption,
                             filenames=[
-                                f"cs2-radar-{tournament_id}-{display_day_key}-{index}-of-{len(media_cards)}.png"
-                                for index in range(1, len(media_cards) + 1)
+                                f"cs2-radar-{tournament_id}-{display_day_key}-{index}-of-{len(telegram_radar_cards)}.png"
+                                for index in range(1, len(telegram_radar_cards) + 1)
                             ],
                         )
                     else:
                         send_photo_to_telegram(
                             channel["chat_id"],
-                            media_cards[0],
+                            telegram_radar_cards[0],
                             caption,
                             filename=f"cs2-radar-{tournament_id}-{display_day_key}.png",
                         )
@@ -3115,7 +3132,7 @@ def _handle_radar_job(
                 "radar",
                 tournament_id=tournament_id,
                 radar_card_variant=card_variant,
-                media_card=bool(media_cards),
+                media_card=bool(telegram_radar_cards),
             )
             sent += 1
         except Exception as exc:
@@ -3168,8 +3185,8 @@ def _handle_radar_job(
                 "preview": text,
                 "radar": radar.model_dump(),
                 "media_card_enabled": TELEGRAM_MEDIA_CARDS,
-                "media_card_ready": bool(media_cards),
-                "media_card_count": len(media_cards),
+                "media_card_ready": bool(telegram_radar_cards),
+                "media_card_count": len(telegram_radar_cards),
                 "radar_card_variant": card_variant,
             }
         )
@@ -4142,9 +4159,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 render_started_at = _monotonic()
                 try:
                     result_card = (
-                        render_final_card(match)
+                        render_final_card(match, card_format="square")
                         if match.source == "liquipedia" and can_render_final_card(match)
-                        else render_result_card(match)
+                        else render_result_card(match, card_format="square")
                     )
                     log_event(
                         logger,

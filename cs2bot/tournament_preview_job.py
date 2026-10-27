@@ -117,6 +117,12 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
                     "Проверьте профиль и источники до начала турнира.")
             body["previews"].append(item)
             continue
+        telegram_cards = []
+        if dry_run or runtime.TELEGRAM_MEDIA_CARDS:
+            try:
+                telegram_cards = render_preview_cards(preview, card_format="square")
+            except Exception as exc:
+                item["telegram_card_error"] = type(exc).__name__
         item.update({"eligible": eligible, "card_count": len(cards), "warnings": preview.warnings})
         captions = {"telegram": text}
         caption_errors = {}
@@ -150,7 +156,6 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
                 if not _allowed(runtime, channel_id):
                     deliveries[f"telegram:{channel_id}"] = {"status": "held"}
                     continue
-                telegram_cards = cards if runtime.TELEGRAM_MEDIA_CARDS else []
                 deliveries[f"telegram:{channel_id}"] = _deliver(runtime, uid, channel_id,
                     lambda: _send_telegram(runtime, channel, profile, telegram_cards, text),
                     runtime.TelegramDeliveryUncertainError, media_card=bool(telegram_cards))

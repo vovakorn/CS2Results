@@ -347,7 +347,7 @@ def runtime(tmp_path, monkeypatch, *, enabled=True, uncertain=False, marker_fail
         calls.append("fetch")
         return preview()
     monkeypatch.setattr(job, "fetch_tournament_preview", fetched)
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: [b"png"])
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: [b"png"])
     class Uncertain(Exception):
         pass
     async def reconcile(*args):
@@ -423,7 +423,7 @@ def test_duplicate_claim_prevents_send(tmp_path, monkeypatch):
 def test_confirmed_preview_delivery_preserves_media_and_finishes_marker(tmp_path, monkeypatch, card_count, method):
     r, calls = runtime(tmp_path, monkeypatch)
     r.TELEGRAM_MEDIA_CARDS = bool(card_count)
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: [b"png"] * card_count)
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: [b"png"] * card_count)
     sent = []
     def send(kind, *args, **kwargs):
         sent.append((kind, args, kwargs))
@@ -495,7 +495,7 @@ def social_runtime(tmp_path, monkeypatch, *, failure=None):
 
 def test_all_platforms_publish_independently_with_context_and_stable_identity(tmp_path, monkeypatch):
     r, calls, sent = social_runtime(tmp_path, monkeypatch)
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: [b"png", b"teams"])
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: [b"png", b"teams"])
     r.send_media_group_to_telegram = lambda *args, **kwargs: calls.append("send")
     context = {"token": "test-token"}
     body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW, context=context)["body"])
@@ -514,7 +514,7 @@ def test_telegram_text_flag_does_not_disable_social_cards(tmp_path, monkeypatch)
     r.TELEGRAM_MEDIA_CARDS = False
     r.send_to_telegram = lambda *args: calls.append("send")
     rendered = []
-    monkeypatch.setattr(job, "render_preview_cards", lambda *args: rendered.append(True) or [b"png"])
+    monkeypatch.setattr(job, "render_preview_cards", lambda *args, **kwargs: rendered.append(True) or [b"png"])
     body = json.loads(job.run_preview_job("test-2026", False, r, now=NOW)["body"])
     assert rendered == [True] and body["messages_sent"] == 3
     assert all(item[2] == [b"png"] for item in sent)

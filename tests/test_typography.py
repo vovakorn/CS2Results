@@ -81,8 +81,9 @@ def test_readable_floor_does_not_allow_overflow():
     assert font.size >= 36 and box[2] - box[0] <= 200 and bounded.endswith("…")
 
 
-@pytest.mark.parametrize("renderer", ["schedule", "digest", "reel"])
-def test_known_long_names_are_complete_and_key_text_stays_inside_image(monkeypatch, renderer):
+@pytest.mark.parametrize("renderer,card_format", [("schedule", "square"), ("schedule", "portrait"),
+    ("digest", "square"), ("digest", "portrait"), ("reel", "portrait")])
+def test_known_long_names_are_complete_and_key_text_stays_inside_image(monkeypatch, renderer, card_format):
     calls = []
     original = ImageDraw.ImageDraw.text
     def capture(draw, xy, text, *args, **kwargs):
@@ -94,9 +95,9 @@ def test_known_long_names_are_complete_and_key_text_stays_inside_image(monkeypat
         return original(draw, xy, text, *args, **kwargs)
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
     if renderer == "schedule":
-        m.render_schedule_card([upcoming(i) for i in range(4)], NOW, "Europe/Moscow")
+        m.render_schedule_card([upcoming(i) for i in range(4)], NOW, "Europe/Moscow", card_format=card_format)
     elif renderer == "digest":
-        m.render_results_card([result(i) for i in range(4)], NOW)
+        m.render_results_card([result(i) for i in range(4)], NOW, card_format=card_format)
     else:
         r.render_scene(r.storyboard([upcoming(i) for i in range(4)])[1], NOW, 4)
     names = [x for x in calls if any(word in x[0] for word in ["GAIMIN", "GLADIATORS", "ACADEMY", "NATUS", "JUNIOR"])]
@@ -227,7 +228,8 @@ def test_missing_tournament_logo_keeps_title_in_the_correct_header(monkeypatch, 
 
 
 @pytest.mark.parametrize("template", ["schedule", "result", "digest", "radar"])
-def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch, template):
+@pytest.mark.parametrize("card_format", ["square", "portrait"])
+def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch, template, card_format):
     texts, logos, panels = [], [], []
     original_text = ImageDraw.ImageDraw.text
     original_logo = m._draw_logo
@@ -250,14 +252,14 @@ def test_single_match_long_names_remain_complete_and_clear_of_logos(monkeypatch,
     monkeypatch.setattr(m, "_draw_fixture_hero", capture_hero)
     monkeypatch.setattr(m, "_draw_logo", capture_logo)
     if template == "schedule":
-        m.render_schedule_card([upcoming()], NOW, "Europe/Moscow")
+        m.render_schedule_card([upcoming()], NOW, "Europe/Moscow", card_format=card_format)
     elif template == "result":
-        m.render_result_card(result())
+        m.render_result_card(result(), card_format=card_format)
     elif template == "digest":
-        m.render_results_card([result()], NOW)
+        m.render_results_card([result()], NOW, card_format=card_format)
     else:
         m.render_tournament_radar_card(TournamentRadar(tournament_id="t", next_matches=[upcoming()]),
-            "BLAST Open Porto 2026", "Europe/Moscow", "next_match")
+            "BLAST Open Porto 2026", "Europe/Moscow", "next_match", card_format=card_format)
     assert len(panels) == 1 and len(logos) == 2
     x0, y0, x1, y1 = panels[0]
     assert y1 - y0 <= (570 if template in {"result", "digest"} else 490)
