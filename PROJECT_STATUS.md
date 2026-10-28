@@ -6,7 +6,8 @@
 preflight успешен: production `d4e40kgvrkgv4s1p7rnj`, 30 environment entries,
 7 Lockbox references и семь таймеров main. Полный локальный набор: 1 384 passed,
 один loopback-тест заблокирован sandbox и успешно повторён без ограничения.
-PR/candidate/promote пока не выполнены. [Этапы и состав](docs/schedule-panel-release-2026-10-28.md).
+[PR #169](https://github.com/vovakorn/CS2Results/pull/169) открыт; ожидается CI.
+Candidate/promote пока не выполнены. [Этапы и состав](docs/schedule-panel-release-2026-10-28.md).
 
 Следующие записи этой итерации описывают подготовку до разрешения выпуска.
 
