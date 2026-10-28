@@ -34,16 +34,17 @@ def test_single_exact_event_brands_every_scene_without_network(monkeypatch, kind
     image = r.render_scene(scene, NOW, len(matches))
     assert image.size == (1080, 1920)
     assert scene.context_matches == tuple(matches)
-    for point in ((110, 330), (880, 330)):
-        red, green, blue = image.getpixel(point)
-        assert green > red * 2 and green > blue * 2
+    if kind != "intro":
+        for point in ((110, 330), (880, 330)):
+            red, green, blue = image.getpixel(point)
+            assert green > red * 2 and green > blue * 2
 
 
 def test_mixed_or_unconfirmed_event_keeps_neutral_shared_header():
     matches = fixtures(5)
     matches[-1] = matches[-1].model_copy(update={"source_refs": None,
         "tournament_name": "Unknown Cup", "competition_key": "Unknown Cup"})
-    scene = r.storyboard(matches)[1]
+    scene = next(scene for scene in r.storyboard(matches) if scene.kind == "matches")
     visuals = r._resolve_reel_visuals(matches)
     assert visuals.shared is None
     assert visuals.by_match[matches[0].match_id].branding is not None
@@ -63,7 +64,7 @@ def test_logo_missing_locally_uses_later_provider_url_once_per_animated_scene(mo
     fetched = []
     monkeypatch.setattr(m, "fetch_team_logo", lambda url, **kwargs:
         (fetched.append((url, kwargs["timeout"])), Image.new("RGBA", (100, 100), "white"))[1])
-    scene = r.storyboard(matches)[1]
+    scene = next(scene for scene in r.storyboard(matches) if scene.kind == "matches")
     frames = list(r.animated_scene_frames(scene, NOW, 4, "Europe/Moscow",
         elapsed_before=1.5, total_seconds=8))
     assert len(frames) == 48
@@ -100,7 +101,7 @@ def test_shared_and_row_watermarks_leave_original_logo_unchanged(monkeypatch):
         calls.append(kwargs)
         draw(image, logo, **kwargs)
     monkeypatch.setattr(tv, "add_event_watermark", capture)
-    r.render_scene(r.storyboard(matches)[1], NOW, 4, visuals=visuals)
+    r.render_scene(next(scene for scene in r.storyboard(matches) if scene.kind == "matches"), NOW, 4, visuals=visuals)
     assert calls[0]["position"] == (704, 352)
     assert len(calls) == 5
     assert visuals.shared.logo.tobytes() == original

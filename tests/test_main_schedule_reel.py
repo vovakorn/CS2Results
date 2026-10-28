@@ -61,6 +61,22 @@ def test_reel_dry_run_uses_all_selected_matches_without_publishing(monkeypatch):
     assert body["duration_seconds"] == 8
 
 
+def test_reel_dry_run_reports_all_team_pages_and_new_duration(monkeypatch):
+    monkeypatch.setattr(main, "instagram_reels_enabled", lambda: False)
+    monkeypatch.setattr(main, "_local_day_window", lambda: (NOW, NOW, NOW))
+    fixtures = [match(index).model_copy(update={"team1_name": f"Team {index * 2 + 1}",
+        "team2_name": f"Team {index * 2 + 2}"}) for index in range(20)]
+    async def fetched(*args):
+        return fixtures
+    monkeypatch.setattr(main, "fetch_upcoming_matches", fetched)
+    monkeypatch.setattr(main, "_select_schedule_matches", lambda matches: matches)
+    monkeypatch.setattr(main, "render_schedule_reel", lambda *args: (_ for _ in ()).throw(AssertionError("encoded")))
+    body = json.loads(main._handle_schedule_reel_job(True, None)["body"])
+    assert body["match_ids"] == [item.match_id for item in fixtures]
+    assert body["scene_count"] == 13
+    assert body["duration_seconds"] == 38
+
+
 def test_reel_over_limit_does_not_publish_partial_day(monkeypatch):
     monkeypatch.setattr(main, "instagram_reels_enabled", lambda: True)
     monkeypatch.setattr(main, "_local_day_window", lambda: (NOW, NOW, NOW))

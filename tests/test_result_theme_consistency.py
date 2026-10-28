@@ -1,4 +1,4 @@
-"""Result surfaces inherit announcement tones and preserve the approved atlas."""
+"""Tournament panels inherit announcement tones and preserve the approved atlas."""
 from datetime import datetime
 from functools import lru_cache
 from io import BytesIO
@@ -10,7 +10,7 @@ import pytest
 
 from cs2bot import media_cards as media
 from cs2bot import schedule_reels, tournament_visuals
-from cs2bot.match_sources.models import MapResult, MatchNormalized
+from cs2bot.match_sources.models import MapResult, MatchNormalized, UpcomingMatchNormalized
 from cs2bot.tournament_branding import branding_for_tournament, load_theme_registry
 from cs2bot.tournament_preview import TournamentPreview
 from cs2bot.tournament_preview_cards import render_preview_cover
@@ -38,6 +38,100 @@ def announcement_panel(event):
         return image.getpixel((80, 590))[:3]
 
 
+def upcoming(event, index=0):
+    return UpcomingMatchNormalized(match_id=str(index), tournament_name=event, competition_key=event,
+        team1_name="TheMongolz", team2_name="Nemiga", best_of=3,
+        scheduled_at=f"2026-10-25T{10 + index:02}:00:00Z")
+
+
+@pytest.mark.parametrize("event", EVENTS)
+@pytest.mark.parametrize("card_format", ["square", "portrait"])
+@pytest.mark.parametrize("kind,count", [("context", 3), ("schedule", 1), ("schedule", 4), ("schedule", 10)])
+def test_schedule_and_context_panels_match_announcement(event, card_format, kind, count, monkeypatch):
+    monkeypatch.setattr(media, "fetch_team_logo", lambda *args, **kwargs: None)
+    fixtures = [upcoming(event, index) for index in range(count)]
+    if kind == "context":
+        pages = media.render_schedule_context_covers(fixtures, NOW, card_format=card_format)
+    else:
+        pages = media.render_schedule_cards(fixtures, NOW, "Europe/Moscow", card_format=card_format)
+    expected = announcement_panel(event)
+    assert len(pages) == (1 if kind == "context" else (count + 3) // 4)
+    for page_index, data in enumerate(pages):
+        with Image.open(BytesIO(data)) as image:
+            if kind == "context":
+                boxes = [(60, 410, 1020, 820) if card_format == "square" else (60, 475, 1020, 980)]
+            else:
+                boxes = media._fixture_page_boxes(min(4, count - page_index * 4), card_height=image.height)
+            for x0, y0, x1, y1 in boxes:
+                assert image.getpixel((x0 + 20, y1 - 25))[:3] == expected
+
+
+@pytest.mark.parametrize("card_format", ["square", "portrait"])
+def test_mixed_schedule_preserves_each_event_panel_and_unknown_fallback(card_format, monkeypatch):
+    monkeypatch.setattr(media, "fetch_team_logo", lambda *args, **kwargs: None)
+    events = [EVENTS[0], EVENTS[3], "Unknown Community Cup"]
+    fixtures = [upcoming(event, index) for index, event in enumerate(events)]
+    with Image.open(BytesIO(media.render_schedule_card(fixtures, NOW, "Europe/Moscow", card_format=card_format))) as image:
+        for event, (x0, y0, x1, y1) in zip(events, media._fixture_page_boxes(3, card_height=image.height)):
+            expected = announcement_panel(event) if event in EVENTS else media.PANEL
+            assert image.getpixel((x0 + 20, y1 - 25))[:3] == expected
+
+
+@pytest.mark.parametrize("card_format", ["square", "portrait"])
+@pytest.mark.parametrize("kind", ["context", "schedule"])
+def test_unknown_schedule_and_context_keep_channel_panel(card_format, kind, monkeypatch):
+    monkeypatch.setattr(media, "fetch_team_logo", lambda *args, **kwargs: None)
+    fixtures = [upcoming("Unknown Community Cup")]
+    if kind == "context":
+        data = media.render_schedule_context_covers(fixtures, NOW, card_format=card_format)[0]
+        bottom = 820 if card_format == "square" else 980
+    else:
+        data = media.render_schedule_card(fixtures, NOW, "Europe/Moscow", card_format=card_format)
+        bottom = media._fixture_page_boxes(1, card_height=media.static_card_size(card_format)[1])[0][3]
+    with Image.open(BytesIO(data)) as image:
+        assert image.getpixel((80, bottom - 25))[:3] == media.PANEL
+
+
+def reel_panel_pixels(scene, fixtures):
+    image = schedule_reels.render_scene(scene, NOW, len(fixtures))
+    assert image.size == (1080, 1920)
+    if scene.kind == "intro":
+        teams = schedule_reels._intro_teams(fixtures)[:schedule_reels.MAX_INTRO_TEAMS]
+        return [image.getpixel((x0 + 20, y0 + 20))
+                for x0, y0, x1, y1 in schedule_reels._intro_team_boxes(len(teams))]
+    start = 626 + (888 - (len(scene.matches) * 210 + (len(scene.matches) - 1) * 16)) // 2
+    return [image.getpixel((884, start + index * 226 + 190)) for index in range(len(scene.matches))]
+
+
+@pytest.mark.parametrize("event", EVENTS)
+@pytest.mark.parametrize("count", [1, 4, 10])
+def test_reel_intro_and_all_match_pages_use_announcement_panel(event, count, monkeypatch):
+    monkeypatch.setattr(media, "fetch_team_logo", lambda *args, **kwargs: None)
+    fixtures = [upcoming(event, index) for index in range(count)]
+    expected = announcement_panel(event)
+    for scene in schedule_reels.storyboard(fixtures):
+        if scene.kind != "outro":
+            pixels = reel_panel_pixels(scene, fixtures)
+            assert pixels and all(pixel == expected for pixel in pixels)
+
+
+def test_mixed_reel_uses_event_panels_and_neutral_intro_and_unknown_rows(monkeypatch):
+    monkeypatch.setattr(media, "fetch_team_logo", lambda *args, **kwargs: None)
+    events = [EVENTS[0], EVENTS[3], "Unknown Community Cup"]
+    fixtures = [upcoming(event, index) for index, event in enumerate(events)]
+    intro, matches, outro = schedule_reels.storyboard(fixtures)
+    assert all(pixel == media.PANEL for pixel in reel_panel_pixels(intro, fixtures))
+    assert reel_panel_pixels(matches, fixtures) == [announcement_panel(event) for event in events[:2]] + [media.PANEL]
+
+
+def test_unknown_reel_keeps_channel_panels_in_intro_and_matches(monkeypatch):
+    monkeypatch.setattr(media, "fetch_team_logo", lambda *args, **kwargs: None)
+    fixtures = [upcoming("Unknown Community Cup")]
+    for scene in schedule_reels.storyboard(fixtures):
+        if scene.kind != "outro":
+            assert all(pixel == media.PANEL for pixel in reel_panel_pixels(scene, fixtures))
+
+
 def test_backgrounds_match_unobstructed_edges_of_the_original_atlas():
     samples = Path(__file__).parents[1] / "docs/design/tournament-atlas-2026-10-03/samples"
     checked = 0
@@ -61,7 +155,9 @@ def test_backgrounds_match_unobstructed_edges_of_the_original_atlas():
 def test_schedule_reel_keeps_the_atlas_glow_without_a_second_overlay(event):
     brand = branding_for_tournament(event)
     visual = schedule_reels.ReelTournamentVisual(event, brand, None)
-    expected = preview_background(schedule_reels.REEL_SIZE, brand, frame=False, header=False)
+    opacity = .5 if brand.motif in ("diagonal", "ember", "metal") else 1.0
+    expected = preview_background(schedule_reels.REEL_SIZE, brand, frame=False, header=False,
+                                  motif_opacity=opacity)
     actual = schedule_reels._base(visual)
     # This strip is outside the Reel frame, logos, watermark and all text.
     strip = (0, 0, 1080, 210)

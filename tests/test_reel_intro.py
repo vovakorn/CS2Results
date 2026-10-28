@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import pytest
 
 from cs2bot import media_cards as m, schedule_reels as r
@@ -35,7 +35,7 @@ def capture_intro(monkeypatch, matches, **kwargs):
 
 
 @pytest.mark.parametrize("count", [1, 4, 10, 20])
-def test_intro_uses_all_day_counts_but_only_six_unique_team_tiles(monkeypatch, count):
+def test_intro_shows_all_unique_teams_across_pages_without_changing_the_day(monkeypatch, count):
     matches = list(reversed(fixtures(count)))
     before = [match.model_dump() for match in matches]
     scene, image, texts, logos = capture_intro(monkeypatch, matches)
@@ -43,10 +43,24 @@ def test_intro_uses_all_day_counts_but_only_six_unique_team_tiles(monkeypatch, c
     assert scene.matches == () and len(scene.context_matches) == count
     assert len(logos) == min(count * 2, 6)
     assert "ТВОЯ КОМАНДА" in texts and "ИГРАЕТ СЕГОДНЯ?" in texts
-    assert f"{count} {r._match_noun(count).upper()} · СТАРТ В 10:00 МСК" in texts
+    assert f"4 ОКТЯБРЯ · {count} {r._match_noun(count).upper()}" in texts
+    assert "СТАРТ В 10:00 МСК" in texts
     assert not any("БЛИЖАЙШИЙ" in text for text in texts)
-    if count > 3:
-        assert any(text.startswith(f"ЕЩЁ {count * 2 - 6} ") for text in texts)
+    intro = [part for part in r.storyboard(matches) if part.kind == "intro"]
+    assert len(intro) == (count * 2 + 5) // 6
+    assert [team.name for part in intro for team in part.intro_teams] == [team.name for team in r._intro_teams(matches)]
+    assert all(1 <= len(part.intro_teams) <= 6 for part in intro)
+    assert [part.page for part in intro] == list(range(1, len(intro) + 1))
+    if len(intro) > 1:
+        assert f"КОМАНДЫ 1 / {len(intro)}" in texts
+        for part in intro[1:]:
+            capture = []
+            original = r._draw_logo
+            with monkeypatch.context() as scoped:
+                scoped.setattr(r, "_draw_logo", lambda *args, **kwargs:
+                    capture.append(args[4]) or original(*args, **kwargs))
+                r.render_scene(part, NOW, count)
+            assert capture == [team.name for team in part.intro_teams]
     assert [match.model_dump() for match in matches] == before
     assert len([match for part in r.storyboard(matches) for match in part.matches]) == count
 
@@ -79,8 +93,15 @@ def test_parallel_starts_keep_all_teams_and_a_stable_non_editorial_order(monkeyp
     matches = [match.model_copy(update={"scheduled_at": "2026-10-04T10:00:00+03:00"}) for match in fixtures(4)]
     assert r._intro_teams(matches) == r._intro_teams(list(reversed(matches)))
     _, _, texts, logos = capture_intro(monkeypatch, list(reversed(matches)))
-    assert "ЕЩЁ 2 КОМАНДЫ" in texts
+    assert "КОМАНДЫ 1 / 2" in texts
     assert [call[0][4] for call in logos] == [f"Team {index}" for index in range(1, 7)]
+
+
+@pytest.mark.parametrize("count,duration", [(1, 8), (4, 9.5), (10, 20.5), (20, 38)])
+def test_intro_pagination_updates_duration_for_distinct_teams(count, duration):
+    scenes = r.storyboard(fixtures(count))
+    assert sum(scene.duration for scene in scenes) == duration
+    assert scenes[0].kind == "intro" and scenes[-1].kind == "outro"
 
 
 def test_start_uses_real_earliest_instant_in_display_timezone(monkeypatch):
@@ -88,11 +109,50 @@ def test_start_uses_real_earliest_instant_in_display_timezone(monkeypatch):
     early = early.model_copy(update={"scheduled_at": "2026-10-04T06:00:00Z"})
     later = later.model_copy(update={"scheduled_at": "2026-10-04T10:00:00+03:00"})
     _, _, texts, _ = capture_intro(monkeypatch, [later, early])
-    assert "2 МАТЧА · СТАРТ В 09:00 МСК" in texts
+    assert "СТАРТ В 09:00 МСК" in texts
     scene = r.storyboard([later, early])[0]
     texts.clear()
     assert r.render_scene(scene, NOW, 2, "UTC").size == (1080, 1920)
-    assert "2 МАТЧА · СТАРТ В 06:00 UTC" in texts
+    assert "СТАРТ В 06:00 UTC" in texts
+
+
+def test_intro_centers_event_summary_and_places_event_mark_beside_channel_emblem(monkeypatch):
+    matches = [match.model_copy(update={"tournament_name": "PGL Masters Bucharest",
+                                       "competition_key": "PGL Masters Bucharest"}) for match in fixtures(4)]
+    monkeypatch.setattr(r.tournament_visuals, "event_logo", lambda *args: Image.new("RGBA", (100, 60), "lime"))
+    calls = []
+    original = r._draw_text_block
+    def capture(draw, x, y, text, width, size=38, **kwargs):
+        calls.append((text, x, y))
+        return original(draw, x, y, text, width, size, **kwargs)
+    monkeypatch.setattr(r, "_draw_text_block", capture)
+    image = r.render_scene(r.storyboard(matches)[0], NOW, 4)
+    assert ("МАТЧИ СЕГОДНЯ", 220, 330) in calls
+    assert ("PGL MASTERS BUCHAREST", 500, 460) in calls
+    assert ("4 ОКТЯБРЯ · 4 МАТЧА", 500, 535) in calls
+    assert image.getpixel((820, 330)) == (0, 255, 0)
+    assert image.getpixel((380, 330)) != r.CYAN
+    assert image.getpixel((620, 330)) != r.CYAN
+    assert not any(text == "CS2 RESULTS" for text, _, _ in calls)
+
+
+def test_mixed_intro_uses_neutral_title_without_borrowing_event_logo(monkeypatch):
+    first, second = fixtures(2)
+    matches = [first.model_copy(update={"tournament_name": "PGL Masters Bucharest"}),
+               second.model_copy(update={"tournament_name": "IEM Beijing"})]
+    monkeypatch.setattr(r.tournament_visuals, "event_logo", lambda *args: Image.new("RGBA", (100, 60), "lime"))
+    scene, image, texts, _ = capture_intro(monkeypatch, matches)
+    assert "ТУРНИРЫ ДНЯ" in texts
+    assert image.getpixel((820, 330)) != (0, 255, 0)
+
+
+def test_unbranded_single_event_keeps_its_real_name_and_provider_logo(monkeypatch):
+    match = fixtures(1)[0].model_copy(update={"tournament_name": "Unknown Community Cup",
+        "tournament_logo_url": "preview://event"})
+    monkeypatch.setattr(m, "fetch_team_logo", lambda *args, **kwargs: Image.new("RGBA", (100, 60), "lime"))
+    scene, image, texts, _ = capture_intro(monkeypatch, [match])
+    assert "UNKNOWN COMMUNITY CUP" in texts
+    assert image.getpixel((820, 330)) == (0, 255, 0)
 
 
 def test_logo_primary_fallback_then_initials_and_long_names(monkeypatch):
@@ -114,6 +174,30 @@ def test_logo_primary_fallback_then_initials_and_long_names(monkeypatch):
     assert "Natus Vincere Junior" in initials
     assert image.size == (1080, 1920)
     assert "GAIMIN GLADIATORS ACADEMY" in texts
+
+
+def test_long_intro_names_fit_their_tile_without_truncation_or_logo_overlap(monkeypatch):
+    matches = fixtures(4)
+    matches[0] = matches[0].model_copy(update={"team1_name": "Gaimin Gladiators Academy",
+        "team2_name": "Natus Vincere Junior"})
+    text_boxes, logos = [], []
+    original_text, original_logo = ImageDraw.ImageDraw.text, r._draw_logo
+    def text(draw, xy, value, *args, **kwargs):
+        if draw._image.size == r.REEL_SIZE and kwargs.get("font"):
+            text_boxes.append((str(value), draw.textbbox(xy, value, font=kwargs["font"])))
+        return original_text(draw, xy, value, *args, **kwargs)
+    def logo(image, draw, center, diameter, name, *args, **kwargs):
+        logos.append((name, center, diameter))
+        return original_logo(image, draw, center, diameter, name, *args, **kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
+    monkeypatch.setattr(r, "_draw_logo", logo)
+    r.render_scene(r.storyboard(matches)[0], NOW, 4)
+    assert any(value == "ACADEMY" for value, _ in text_boxes)
+    assert not any("…" in value for value, _ in text_boxes)
+    _, (x, y), diameter = next(item for item in logos if item[0] == "Gaimin Gladiators Academy")
+    name_boxes = [box for value, box in text_boxes if value in {"GAIMIN", "GLADIATORS", "ACADEMY"}]
+    assert len(name_boxes) == 3
+    assert all(box[1] > y + diameter / 2 for box in name_boxes)
 
 
 def test_deadline_skips_network_and_splits_budget_between_logo_attempts(monkeypatch):

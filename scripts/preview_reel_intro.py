@@ -54,8 +54,12 @@ def main():
     try:
         tiles = []
         for count in (1, 4, 10, 20):
-            image = r.render_scene(r.storyboard(fixtures(count))[0], NOW, count, preview_watermark=True)
+            intro = [scene for scene in r.storyboard(fixtures(count)) if scene.kind == "intro"]
+            image = r.render_scene(intro[0], NOW, count, preview_watermark=True)
             image.save(args.output / f"intro-{count}.png")
+            for page, scene in enumerate(intro[1:], 2):
+                r.render_scene(scene, NOW, count, preview_watermark=True).save(
+                    args.output / f"intro-{count}-page-{page}.png")
             tile = image.resize((360, 640), Image.Resampling.LANCZOS)
             tile.save(args.output / f"intro-{count}-360.png")
             if count in (1, 4, 10):

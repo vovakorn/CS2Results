@@ -61,7 +61,7 @@ def main():
                     image.save(args.output / f"{label}-{count}-{index}.png")
                     tile = image.resize((360, 640), Image.Resampling.LANCZOS)
                     tile.save(args.output / f"{label}-{count}-{index}-360.png")
-                    if index < 2:
+                    if (scene.kind == "matches" and len(tiles) == 1) or (scene.kind == "intro" and not tiles):
                         tiles.append(tile)
                 if count == 4:
                     sheet = Image.new("RGB", (720, 680), m.NAVY)

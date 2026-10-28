@@ -72,7 +72,8 @@ def main() -> None:
         for count in args.counts:
             fixtures = _fixtures(count, now)
             scenes = storyboard(fixtures)
-            still = render_scene(scenes[1], now, count, preview_watermark=True)
+            still = render_scene(next(scene for scene in scenes if scene.kind == "matches"),
+                                 now, count, preview_watermark=True)
             still_path = args.output_dir / f"schedule-reel-{count}-scene.png"
             still.save(still_path)
             video_path = args.output_dir / f"schedule-reel-{count}.mp4"
