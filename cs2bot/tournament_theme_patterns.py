@@ -40,7 +40,7 @@ def draw_result_panel(canvas, box, branding, fallback, *, radius, alpha=245):
                                                      outline=(*edge, 255), width=1)
 
 
-def preview_background(size, branding, *, frame=True, header=True):
+def preview_background(size, branding, *, frame=True, header=True, motif_opacity=1.0):
     """Scale the approved 600x480 atlas artwork beneath the full-size layout."""
     from . import media_cards as media
 
@@ -104,6 +104,8 @@ def preview_background(size, branding, *, frame=True, header=True):
     elif name == "medal":
         for radius in (80, 100, 130):
             p.ellipse((480 - radius, 160 - radius, 480 + radius, 160 + radius), outline=line, width=2)
+    if motif_opacity != 1.0:
+        motif.putalpha(motif.getchannel("A").point(lambda value: round(value * motif_opacity)))
     base.alpha_composite(motif)
     image = base.resize(size, Image.Resampling.LANCZOS)
     draw = ImageDraw.Draw(image, "RGBA")

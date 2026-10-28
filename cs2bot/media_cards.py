@@ -973,12 +973,12 @@ def _schedule_time(match: UpcomingMatchNormalized, display_timezone: object) -> 
 
 def _draw_wide_schedule_match(canvas, draw, match, box, display_timezone, *, show_format=True):
     _draw_fixture_hero(canvas, draw, match, box, time_label=_schedule_time(match, display_timezone),
-                       show_format=show_format, subtle=True)
+                       show_format=show_format, subtle=True, panel_branding=_fixture_brand([match]))
 
 
 def _draw_compact_schedule_match(canvas, draw, match, box, display_timezone, *, show_format=True):
     _draw_fixture_row(canvas, draw, match, box, time_label=_schedule_time(match, display_timezone),
-                      show_format=show_format)
+                      show_format=show_format, panel_branding=_fixture_brand([match]))
 
 
 def _radar_standing_entries(radar: TournamentRadar) -> list[tuple[int, str, str | None]]:
@@ -2168,7 +2168,8 @@ def render_schedule_card(matches, local_now, timezone_name, *, page_number=1, pa
             _draw_wide_schedule_match(canvas, draw, match, box, tz, show_format=show_format)
         elif mixed:
             _draw_fixture_row(canvas, draw, match, box, time_label=_schedule_time(match, tz),
-                              event=_schedule_match_event_label(match), show_format=show_format)
+                              event=_schedule_match_event_label(match), show_format=show_format,
+                              panel_branding=_fixture_brand([match]))
         else:
             _draw_compact_schedule_match(canvas, draw, match, box, tz, show_format=show_format)
     from .tournament_visuals import accent_color

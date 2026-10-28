@@ -45,7 +45,7 @@ def test_storyboard_does_not_silently_truncate(count):
 
 
 def test_scene_renders_vertical_with_long_names_and_missing_logos():
-    scene = schedule_reels.storyboard(fixtures(4))[1]
+    scene = next(scene for scene in schedule_reels.storyboard(fixtures(4)) if scene.kind == "matches")
     image = schedule_reels.render_scene(scene, NOW, 4, preview_watermark=True)
 
     assert isinstance(image, Image.Image)
@@ -193,5 +193,6 @@ def test_runtime_probe_exercises_bundled_tournament_brand_without_publication(mo
     monkeypatch.setattr(renderer, "render_schedule_reel", render)
     result = renderer.probe_reel_runtime(datetime(2026, 10, 3, 9, tzinfo=ZoneInfo("Europe/Moscow")))
     assert result["tournament_theme"] is True
+    assert result["duration_seconds"] == 38
     assert len(calls[0][0]) == 20
     assert calls[0][1] == {"preview_watermark": True}

@@ -99,7 +99,8 @@ def test_known_long_names_are_complete_and_key_text_stays_inside_image(monkeypat
     elif renderer == "digest":
         m.render_results_card([result(i) for i in range(4)], NOW, card_format=card_format)
     else:
-        r.render_scene(r.storyboard([upcoming(i) for i in range(4)])[1], NOW, 4)
+        scene = next(scene for scene in r.storyboard([upcoming(i) for i in range(4)]) if scene.kind == "matches")
+        r.render_scene(scene, NOW, 4)
     names = [x for x in calls if any(word in x[0] for word in ["GAIMIN", "GLADIATORS", "ACADEMY", "NATUS", "JUNIOR"])]
     text = " ".join(x[0] for x in names)
     assert "GAIMIN GLADIATORS ACADEMY" in text and "NATUS VINCERE JUNIOR" in text
@@ -181,15 +182,17 @@ def test_every_template_has_a_centered_emblem_and_correct_header(monkeypatch, te
             winner_prize_usd=500000, maps=[MapResult(name=n, score1=a, score2=b)
                 for n,a,b in [("Mirage",13,9),("Nuke",9,13),("Ancient",13,8)]]))
     else:
-        index = {"reel_intro":0, "reel_matches":1, "reel_outro":2}[template]
-        r.render_scene(r.storyboard(fixtures)[index], NOW, 4)
+        kind = {"reel_intro": "intro", "reel_matches": "matches", "reel_outro": "outro"}[template]
+        r.render_scene(next(scene for scene in r.storyboard(fixtures) if scene.kind == kind), NOW, 4)
     assert len(logos) == 1
     (center_x, center_y), diameter = logos[0]
     expected_center = 500 if template.startswith("reel") else 540
     assert center_x == expected_center
     brands = [(box,size) for text,box,size in texts if text == "CS2 RESULTS"]
     compact = branded and template != "radar" and not template.startswith("reel")
-    if compact:
+    if template == "reel_intro":
+        assert not brands
+    elif compact:
         assert not brands and diameter >= 64
         titles = [box for text, box, _ in texts if text == name.upper()]
         assert titles and all(box[1] > center_y + diameter/2 + 5 for box in titles)
