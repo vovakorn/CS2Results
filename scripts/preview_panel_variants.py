@@ -98,7 +98,8 @@ def main():
                 media._fixture_page_boxes(4, card_height=media.static_card_size(card_format)[1]))
         scenes = reels.storyboard(fixtures)
         intro_boxes = reels._intro_team_boxes(min(reels.MAX_INTRO_TEAMS, len(reels._intro_teams(fixtures))))
-        variant("reel-intro", lambda: reels.render_scene(scenes[0], now, 4, preview_watermark=True), intro_boxes)
+        intro_scene = next(scene for scene in scenes if scene.kind == "intro")
+        variant("reel-intro", lambda: reels.render_scene(intro_scene, now, 4, preview_watermark=True), intro_boxes)
         start = 626 + (888 - (4 * 210 + 3 * 16)) // 2
         match_boxes = [(96, start + index * 226, 904, start + index * 226 + 210) for index in range(4)]
         match_scene = next(scene for scene in scenes if scene.kind == "matches")

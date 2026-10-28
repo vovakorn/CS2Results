@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from cs2bot import media_cards as m, schedule_reels as r
-from scripts.preview_reel_safety_zone import demo_fixtures, demo_logo
+from scripts.reel_demo_fixtures import demo_fixtures, demo_logo
 
 
 def main():

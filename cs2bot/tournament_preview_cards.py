@@ -62,7 +62,9 @@ def _event_logo(preview):
 
 def _canvas(preview, label, card_format="portrait"):
     accent = _accent(preview)
-    image = preview_background(media.static_card_size(card_format), preview.branding)
+    motif_opacity = .5 if preview.branding.motif in ("diagonal", "ember", "metal") else 1.0
+    image = preview_background(media.static_card_size(card_format), preview.branding,
+                               motif_opacity=motif_opacity)
     if not preview.branding.background:
         add_event_glow(image, accent)
     logo = _event_logo(preview)

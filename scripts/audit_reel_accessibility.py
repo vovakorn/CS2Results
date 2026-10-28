@@ -13,7 +13,7 @@ from PIL import Image, ImageColor, ImageDraw
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from cs2bot import media_cards as m, schedule_reels as r
-from scripts.preview_reel_safety_zone import demo_fixtures, demo_logo, render as safety_render
+from scripts.reel_demo_fixtures import demo_fixtures, demo_logo
 
 
 @lru_cache(maxsize=100000)
@@ -80,12 +80,9 @@ def main():
                     fixtures[0] = fixtures[0].model_copy(update={"team1_name": "Gaimin Gladiators Academy",
                         "team2_name": "Natus Vincere Junior", "team1_logo_url": None, "team2_logo_url": None})
                 for scene in r.storyboard(fixtures):
-                    for variant, render in (("standard", r.render_scene), ("safety", safety_render)):
-                        if variant == "safety" and scene.kind != "intro":
-                            continue
-                        _, records = audit(render, scene, fixtures, now)
-                        results.append({"event": event, "count": count, "scene": scene.kind,
-                            "page": scene.page, "variant": variant, "text": records})
+                    _, records = audit(r.render_scene, scene, fixtures, now)
+                    results.append({"event": event, "count": count, "scene": scene.kind,
+                        "page": scene.page, "variant": "standard", "text": records})
     records = [row for case in results for row in case["text"] if not row["preview_only"]]
     summary = {"cases": len(results), "text_runs": len(records),
                "minimum_ratio": min(row["minimum_ratio"] for row in records),

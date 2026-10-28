@@ -96,6 +96,11 @@ class ReelVisualContext:
     shared: ReelTournamentVisual | None
     by_match: dict[str, ReelTournamentVisual]
 
+    @property
+    def single_event(self) -> ReelTournamentVisual | None:
+        events = {id(visual): visual for visual in self.by_match.values()}
+        return next(iter(events.values())) if len(events) == 1 else None
+
 
 @dataclass(frozen=True)
 class ReelIntroTeam:
@@ -184,7 +189,7 @@ def _draw_day_intro(image, draw, fixtures, count, tz, accent, logo_deadline, *, 
         zone = "МСК" if tz.key == "Europe/Moscow" else tz.key
         _draw_text_block(draw, SAFE_CENTER_X, 1468, f"СТАРТ В {_schedule_time(earliest, tz)} {zone}",
                          808, 36, min_size=32, display=True, max_lines=2, fill=_text_accent(accent))
-    _draw_text_block(draw, SAFE_CENTER_X, 1520, "РАСПИСАНИЕ — ДАЛЬШЕ", 808, 26,
+    _draw_text_block(draw, SAFE_CENTER_X, 1520, "СОХРАНИ РАСПИСАНИЕ", 808, 26,
                      display=True, max_lines=1, fill=MUTED)
 
 
@@ -253,8 +258,8 @@ def storyboard(matches: Sequence[UpcomingMatchNormalized]) -> tuple[ReelScene, .
                             context_matches=ordered, intro_teams=teams[offset:offset + MAX_INTRO_TEAMS])
                   for index, offset in enumerate(range(0, len(teams), MAX_INTRO_TEAMS)))
     return (
-        *intro,
         *middle,
+        *intro,
         ReelScene("outro", (), OUTRO_SECONDS, context_matches=ordered),
     )
 
@@ -361,7 +366,8 @@ def _heading(draw: ImageDraw.ImageDraw, local_now: datetime, count: int, visual=
         _draw_text_block(draw, 228, 475, "МАТЧИ СЕГОДНЯ", 244, 24,
                          min_size=24, display=True, fill=NAVY, max_lines=1)
         _draw_text_block(draw, 96, 546, visual.name.upper(), 622 if visual.logo else 808,
-                         42, min_size=30, alignment="left", max_lines=2)
+                         42, min_size=30, alignment="left", max_lines=2,
+                         display=_uses_cyrillic(visual.name))
         _draw_text_block(draw, 96, 600,
                          f"{local_now.day} {MONTHS[local_now.month]} · {count} {_match_noun(count).upper()}",
                          622 if visual.logo else 808, 25, display=True,
@@ -374,7 +380,7 @@ def _heading(draw: ImageDraw.ImageDraw, local_now: datetime, count: int, visual=
 def _match_card(
     image: Image.Image, match: UpcomingMatchNormalized, y: int, tz: ZoneInfo,
     logo_deadline: float | None,
-    visual=None,
+    visual=None, *, show_event=True,
 ) -> None:
     draw = ImageDraw.Draw(image, "RGBA")
     x0, x1, bottom = 96, 904, y + 210
@@ -385,7 +391,7 @@ def _match_card(
     draw.line((x0 + 28, y + 3, x0 + 245, y + 3), fill=(*accent, 210), width=4)
     draw.line((x1 - 245, y + 3, x1 - 28, y + 3), fill=(*(accent if branded else AMBER), 210), width=4)
     title_x = x0 + 30
-    if visual and visual.logo is not None:
+    if show_event and visual and visual.logo is not None:
         tournament_visuals.add_event_watermark(image, visual.logo,
             position=(x0 + 20, y + 18), size=(125, 130), opacity=.05)
         mark = ImageOps.contain(visual.logo, (48, 42))
@@ -398,12 +404,13 @@ def _match_card(
         time_label = scheduled.astimezone(tz).strftime("%H:%M")
     except ValueError as exc:
         raise ScheduleReelError("Schedule Reel contains an invalid match time") from exc
-    tournament = match.tournament_name.upper()
-    title_width = x1 - 28 - title_x
-    tournament_font = _fit(draw, tournament, DISPLAY_FONT, title_width, 26, 21)
-    draw.text((title_x, y + 20), _ellipsis(draw, tournament, tournament_font, title_width), font=tournament_font, fill=MUTED)
+    if show_event:
+        tournament = match.tournament_name.upper()
+        title_width = x1 - 28 - title_x
+        tournament_font = _fit(draw, tournament, DISPLAY_FONT, title_width, 26, 21)
+        draw.text((title_x, y + 20), _ellipsis(draw, tournament, tournament_font, title_width), font=tournament_font, fill=MUTED)
     time_font = _font(LATIN_BOLD_FONT, 48)
-    logo_y = y + 145
+    logo_y = y + (145 if show_event else 105)
     media_cards._centered_text_on_point(draw, SAFE_CENTER_X, logo_y, time_label, time_font,
                                        _text_accent(accent) if branded else AMBER)
     for center, name, url, fallback, accent in (
@@ -443,27 +450,29 @@ def render_scene(
         fixtures = scene.context_matches or scene.matches
         visuals = _resolve_reel_visuals(fixtures, logo_deadline)
     shared = visuals.shared
+    single_event = visuals.single_event
     accent = shared.accent if shared else CYAN
     image = _base(shared, intro=scene.kind == "intro")
     draw = ImageDraw.Draw(image, "RGBA")
     if scene.kind == "intro":
         # Unknown single events may still have a confirmed name or provider logo;
         # a mixed day must never borrow one tournament's identity.
-        event_visuals = {id(visual): visual for visual in visuals.by_match.values()}
-        intro_visual = next(iter(event_visuals.values())) if len(event_visuals) == 1 else None
-        _intro_heading(image, draw, local_now, count, intro_visual, accent)
+        _intro_heading(image, draw, local_now, count, single_event, accent)
         _draw_day_intro(image, draw, scene.context_matches or scene.matches, count, tz, accent, logo_deadline,
                        branding=shared.branding if shared else None, teams=scene.intro_teams or None,
                        page=scene.page, pages=scene.pages)
     elif scene.kind == "matches":
-        _heading(draw, local_now, count, shared)
+        _heading(draw, local_now, count, single_event)
+        if single_event and shared is None and single_event.logo is not None:
+            mark = ImageOps.contain(single_event.logo, (128, 96))
+            image.alpha_composite(mark, (820 - mark.width // 2, 546 - mark.height // 2))
         card_height, gap = 210, 16
         group_height = len(scene.matches) * card_height + (len(scene.matches) - 1) * gap
         start_y = 626 + (888 - group_height) // 2
         for index, match in enumerate(scene.matches):
             if not hide_matches:
                 _match_card(image, match, start_y + index * (card_height + gap), tz, logo_deadline,
-                            visuals.by_match.get(match.match_id))
+                            visuals.by_match.get(match.match_id), show_event=single_event is None)
         draw = ImageDraw.Draw(image, "RGBA")
         _center(draw, 1528, f"{scene.page} / {scene.pages}  ·  ИСТОЧНИК: PANDASCORE", _font(DISPLAY_FONT, 22), MUTED)
     elif scene.kind == "outro":
@@ -503,16 +512,17 @@ def animated_scene_frames(scene, local_now, count, timezone_name, *, elapsed_bef
         visuals = _resolve_reel_visuals(fixtures, logo_deadline)
     full = render_scene(scene, local_now, count, timezone_name,
                         preview_watermark=preview_watermark, logo_deadline=logo_deadline, visuals=visuals)
+    reveal_rows = scene.kind == "matches" and elapsed_before > 0
     background = (render_scene(scene, local_now, count, timezone_name,
                    preview_watermark=preview_watermark, hide_matches=True, visuals=visuals)
-                  if scene.kind == "matches" else full)
+                  if reveal_rows else full)
     frames = math.ceil(scene.duration * ANIMATION_FPS)
     group_height = len(scene.matches) * 210 + max(0, len(scene.matches) - 1) * 16
     top = 626 + (888 - group_height) // 2
     for index in range(frames):
         elapsed = index / ANIMATION_FPS
-        frame = full.copy() if elapsed >= .75 or scene.kind != "matches" else background.copy()
-        if scene.kind == "matches" and elapsed < .75:
+        frame = full.copy() if elapsed >= .75 or not reveal_rows else background.copy()
+        if reveal_rows and elapsed < .75:
             for row in range(len(scene.matches)):
                 y = top + row * 226
                 box = (95, y - 1, 906, y + 212)

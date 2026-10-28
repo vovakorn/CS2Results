@@ -1394,7 +1394,8 @@ def _fixture_canvas(branding, size):
         return _background(size, header_accent_y=90).convert("RGBA")
     if branding.background:
         from .tournament_theme_patterns import preview_background
-        return preview_background(size, branding)
+        motif_opacity = .5 if branding.motif in ("diagonal", "ember", "metal") else 1.0
+        return preview_background(size, branding, motif_opacity=motif_opacity)
     accent = accent_color(branding)
     canvas = _background(size, header_accent_colors=(accent, accent)).convert("RGBA")
     add_event_glow(canvas, accent)

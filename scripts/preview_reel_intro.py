@@ -69,7 +69,8 @@ def main():
             sheet.paste(tile, (360 * index, 0))
         sheet.save(args.output / "intro-comparison.png")
         for name, kwargs in (("missing", {"missing": True}), ("long", {"long": True}), ("mixed", {"mixed": True})):
-            image = r.render_scene(r.storyboard(fixtures(4, **kwargs))[0], NOW, 4, preview_watermark=True)
+            intro_scene = next(scene for scene in r.storyboard(fixtures(4, **kwargs)) if scene.kind == "intro")
+            image = r.render_scene(intro_scene, NOW, 4, preview_watermark=True)
             image.save(args.output / f"intro-{name}.png")
         for count in args.encode_counts:
             data = r.render_schedule_reel(fixtures(count), NOW,
