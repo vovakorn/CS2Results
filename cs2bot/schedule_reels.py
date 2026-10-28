@@ -27,7 +27,7 @@ from .match_sources.models import UpcomingMatchNormalized
 from .match_sources.config import TOURNAMENT_PREVIEW_PROFILES_PATH
 from .tournament_identity import event_for_match
 from .tournament_preview import PreviewBranding
-from .tournament_theme_patterns import panel_color
+from .tournament_theme_patterns import panel_color, runtime_motif_opacity
 from .media_cards import (
     AMBER,
     MediaCardError,
@@ -308,9 +308,8 @@ def _ellipsis(draw: ImageDraw.ImageDraw, value: str, font: ImageFont.FreeTypeFon
 def _base(visual=None, *, intro=False) -> Image.Image:
     if visual and visual.branding and visual.branding.background:
         from .tournament_theme_patterns import preview_background
-        motif_opacity = .5 if visual.branding.motif in ("diagonal", "ember", "metal") else 1.0
         image = preview_background(REEL_SIZE, visual.branding, frame=False, header=False,
-                                   motif_opacity=motif_opacity)
+                                   motif_opacity=runtime_motif_opacity(visual.branding))
     else:
         image = Image.new("RGBA", REEL_SIZE, (*NAVY, 255))
         draw = ImageDraw.Draw(image, "RGBA")
