@@ -1,5 +1,9 @@
 # Релиз подложек и первого экрана Reel — 28 октября 2026
 
+Позднее пользователь добавил в состав выпуска новую центровку из
+«А · Предложение». Candidate ниже её не содержит и больше не соответствует
+согласованному составу; его не продвигать. [Продолжение выпуска](schedule-alignment-release-2026-10-28.md).
+
 Пользователь разрешил выпуск сообщением «Заливай» после итоговой сводки.
 Согласован основной центрированный вариант с панелями и общей рамкой:
 полное название PGL, официальный знак справа и большой фоновый знак сохранены.
@@ -31,16 +35,60 @@ Safety Zone/Align Left и сетка 3×3 не включены в рабочи�
 ## GitHub
 
 [PR #169](https://github.com/vovakorn/CS2Results/pull/169) создан из отдельной
-ветки `codex/schedule-panel-reel-20261028`. CI выполняется; merge и candidate
-разрешены только после зелёного итогового CI.
+ветки `codex/schedule-panel-reel-20261028`, слит в
+`884364d8b39f41c0aa6cc61a07e1f7d83e8444fc` 28 октября в 14:52:36 МСК.
+[Итоговый CI](https://github.com/vovakorn/CS2Results/actions/runs/40682642575)
+успешен: **1 385 Python-тестов** на каждой версии 3.11/3.12, **27 Node-тестов**,
+dependency consistency/audit, сборки ZIP и Linux render/decode Americas/monthly.
+Нерешённых review threads перед merge не было.
 
-## Следующие обязательные этапы
+## Точный кандидат и облачная проверка
 
-Один PR → полный CI → merge → один candidate из точного merge SHA → облачный
-render-probe на 20 матчей / 40 команд → штатный promote и production dry-run.
-Production-конфигурация, приватность и таймеры должны сохраниться; предыдущая
-версия закрепляется как rollback. Startup-логи проверяются штатно: разовые
-исключения прежних релизов к новому кандидату не применяются.
+- Создан один candidate **`d4ep6970qo8ifcva2k8f`**, ACTIVE, из чистого merge SHA.
+- Основная private-функция: `d4e6e13rlrl7go01m2q2`.
+- Предыдущая и пока действующая production: **`d4e40kgvrkgv4s1p7rnj`**.
+- ZIP с Xray: 17 196 970 bytes, SHA-256
+  `13d3319b5a7440dd1aff188730c5da54854c8931564e35d90eb80fb6bb134063`.
+- Candidate smoke: HTTP 200, `dry_run=true`; чтение логов — `Unavailable`.
+- Обязательный candidate render-probe: HTTP 200, `dry_run=true`, 20 матчей /
+  40 уникальных команд / **38 секунд**, **64 663 ms**, **2 987 003 bytes**,
+  максимальный RSS процесса Python **115 868 KiB**. Видео не публиковалось.
+- Независимо сверены точный version ID, описание с Git/hash, ACTIVE/private,
+  весь runtime/configuration hash (включая environment и pinned secret
+  references), полный снимок девяти таймеров и access bindings. Всё совпало;
+  production остался на прежней версии. Значения Lockbox не извлекались.
 
-Candidate и production этой задачей пока не изменены. Ручные социальные
-публикации не выполнялись.
+## Остановка перед promote
+
+Штатный deploy сохранил `candidate_failed`, `error=log_read_failed`.
+Повторное read-only чтение error/fatal логов этого же кандидата за интервал
+с его создания до 14:56:53 МСК снова вернуло `RPC Unavailable`.
+**Startup-ошибки остаются непроверенными**; поле
+`startup_error_detected=false` исходного smoke не доказывает их отсутствие.
+
+Регламент [deploy](yandex-cloud-deploy.md) считает непрочитанные логи
+неуспехом smoke. Production не переключался; штатный скрипт не ослаблялся.
+Разовые исключения прежних релизов к этому кандидату не применяются.
+После добавления центровки этот кандидат исключён из состава выпуска:
+**`d4ep6970qo8ifcva2k8f` не продвигать, даже при разрешении исключения по логам.**
+Следующий шаг — новый PR/CI/merge с центровкой и новый candidate из точного
+merge SHA, его собственный render-probe и startup-log gate. Актуальные
+действия фиксируются в [продолжении выпуска](schedule-alignment-release-2026-10-28.md).
+
+Ручные социальные публикации не выполнялись. Проверка реального UI площадок
+остаётся отдельным ограничением.
+
+## Локальные доказательства
+
+В этом release checkout:
+
+- `dist/releases/d4ep6970qo8ifcva2k8f.json` — штатный failed manifest;
+- `dist/schedule-panel-release/original-candidate-manifest.json` — его
+  неизменённая копия с исходным logging error;
+- `dist/schedule-panel-release/baseline.json` — исходный снимок и hashes;
+- `dist/schedule-panel-release/candidate-verification.json` — все проверки true;
+- `dist/schedule-panel-release/candidate-render-probe.json` — ответ и проверки;
+- `dist/schedule-panel-release/startup-log-recheck.json` — повторный `Unavailable`.
+
+Эта итоговая запись и указатели обновлены локально после merge; runtime
+кандидата соответствует указанному merge SHA и ZIP, пересборка не выполнялась.

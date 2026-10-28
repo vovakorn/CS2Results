@@ -403,8 +403,9 @@ def _match_card(
     tournament_font = _fit(draw, tournament, DISPLAY_FONT, title_width, 26, 21)
     draw.text((title_x, y + 20), _ellipsis(draw, tournament, tournament_font, title_width), font=tournament_font, fill=MUTED)
     time_font = _font(LATIN_BOLD_FONT, 48)
-    _center(draw, y + 64, time_label, time_font, accent if branded else AMBER)
     logo_y = y + 145
+    media_cards._centered_text_on_point(draw, SAFE_CENTER_X, logo_y, time_label, time_font,
+                                       _text_accent(accent) if branded else AMBER)
     for center, name, url, fallback, accent in (
         ((x0 + 72, logo_y), match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url, CYAN),
         ((x1 - 72, logo_y), match.team2_name, match.team2_logo_url, match.team2_logo_fallback_url, AMBER),
@@ -418,9 +419,11 @@ def _match_card(
             subtle=branded,
         )
     draw = ImageDraw.Draw(image, "RGBA")
+    name_size = media_cards._shared_fixture_name_size(
+        draw, [match.team1_name.upper(), match.team2_name.upper()], 210, 38, 30, 1)
     for left, name in ((True, match.team1_name), (False, match.team2_name)):
-        _draw_text_block(draw, x0 + 120 if left else x1 - 120, y + 157,
-                         name.upper(), 250, 38, min_size=30,
+        _draw_text_block(draw, x0 + 120 if left else x1 - 120, logo_y,
+                         name.upper(), 210, name_size, min_size=name_size, max_lines=3,
                          display=_uses_cyrillic(name), alignment="left" if left else "right")
 
 
