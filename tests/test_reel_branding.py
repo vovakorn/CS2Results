@@ -91,7 +91,7 @@ def test_expired_logo_budget_skips_provider_download(monkeypatch):
     assert r._resolve_reel_visuals(matches, logo_deadline=0).shared.logo is None
 
 
-def test_shared_and_row_watermarks_leave_original_logo_unchanged(monkeypatch):
+def test_homogeneous_reel_only_keeps_global_watermark_and_original_logo(monkeypatch):
     matches = fixtures()
     visuals = r._resolve_reel_visuals(matches)
     original = visuals.shared.logo.tobytes()
@@ -103,7 +103,7 @@ def test_shared_and_row_watermarks_leave_original_logo_unchanged(monkeypatch):
     monkeypatch.setattr(tv, "add_event_watermark", capture)
     r.render_scene(next(scene for scene in r.storyboard(matches) if scene.kind == "matches"), NOW, 4, visuals=visuals)
     assert calls[0]["position"] == (704, 352)
-    assert len(calls) == 5
+    assert len(calls) == 1
     assert visuals.shared.logo.tobytes() == original
 
 

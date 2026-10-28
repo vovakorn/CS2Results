@@ -1,5 +1,14 @@
 # Центровка расписания и Reel — дополнение выпуска 28 октября 2026
 
+После согласования всех рекомендаций состав изменён: расписание показывается
+с кадра 0, повторы турнира внутри однородных строк удалены, статичные полосы
+приглушены. Описанный ниже candidate больше не соответствует составу и не
+продвигается. [Актуальная итерация](information-first-reel-2026-10-28.md).
+
+Позднее по запросу пользователя локально удалены альтернативные Align Left
+генераторы/превью и зависимые тесты. Рабочий renderer и ZIP кандидата ниже
+не менялись; safe-zone и контраст основного варианта перепроверены отдельно.
+
 После просмотра состава PR #169 пользователь разрешил добавить и выпустить
 центровку из «А · Предложение» с тематическими подложками.
 Старый candidate `d4ep6970qo8ifcva2k8f` этой правки не содержит и больше
@@ -40,14 +49,51 @@
 
 ## Выпуск
 
-[PR #170](https://github.com/vovakorn/CS2Results/pull/170) открыт;
-итоговый CI выполняется. По ревью устранены противоречивое указание
+[PR #170](https://github.com/vovakorn/CS2Results/pull/170) слит в
+`f2955edb9772dbda449c746915dcd19e2607069a` в 16:41:36 МСК.
+[Итоговый CI](https://github.com/vovakorn/CS2Results/actions/runs/40693437516)
+успешен: 1 403 Python-теста на каждой версии 3.11/3.12, 27 Node-тестов,
+dependency audit/consistency, ZIP-сборки и Linux render/decode Americas/monthly.
+По ревью устранены противоречивое указание
 продвигать прежний кандидат и отсутствие отдельной открытой задачи
-render-probe для нового кандидата.
+render-probe для нового кандидата; оба review threads закрыты. Перед merge
+повторно проверены head SHA, неизменность base и отсутствие нерешённых threads.
 
-Нужны PR/CI/merge и новый immutable candidate из нового merge SHA, затем
-облачный render-probe 20 матчей / 40 команд / 38 секунд, штатные startup-логи,
-promote и production smoke. Исключение по логам пользователем не разрешено.
-Production до этой итерации — `d4e40kgvrkgv4s1p7rnj`.
-Конфигурация, приватность и все девять таймеров сохраняются.
+## Новый кандидат с центровкой
+
+- Candidate **`d4em4l41f98iin9v62so`**, ACTIVE, private main-функция
+  `d4e6e13rlrl7go01m2q2`; создан один раз из чистого merge SHA выше.
+- ZIP: 17 197 344 bytes; SHA-256
+  `d21cd6ee6e56651336da5106c586a661644ce124194c0f4716a49706ee730122`.
+- Штатный candidate smoke: HTTP 200, `dry_run=true`; `log_read_failed`.
+- Собственный render-probe: HTTP 200, `dry_run=true`, 20 матчей / 40 команд /
+  38 секунд, **79 472 ms**, **2 967 686 bytes**, максимальный RSS процесса
+  Python **115 992 KiB**. Candidate-тег сверен до и после invocation.
+- Source/Git/hash и ACTIVE подтверждены; конфигурация, environment/pinned
+  secret references, приватность и полный снимок девяти таймеров неизменны.
+  Production не переключён. Видео не загружалось и не публиковалось.
+
+## Остановка перед promote
+
+Штатное чтение логов и повторная проверка после рендера до 16:48:12 МСК
+вернули `RPC Unavailable`; альтернативный `yc logging group list` — тоже.
+Manifest сохранил `candidate_failed`, `error=log_read_failed`.
+Отсутствие startup-ошибок **не подтверждено**; поле
+`startup_error_detected=false` при непрочитанных логах не означает PASS.
+
+По [регламенту](yandex-cloud-deploy.md) непрочитанные логи — неуспех smoke.
+Разовое исключение пользователем не разрешено, скрипт не ослаблялся.
+Production на момент проверки — **`d4e40kgvrkgv4s1p7rnj`**.
+**`d4em4l41f98iin9v62so` не продвигать:** позже пользователь согласовал
+дополнительные runtime-изменения. Нужен новый PR/CI/merge/candidate с
+собственным render-probe и startup-log gate, затем promote и production smoke.
+[Текущий процесс](information-first-reel-2026-10-28.md).
+
+Доказательства: `dist/releases/d4em4l41f98iin9v62so.json` и каталог
+`dist/schedule-alignment-release/`: `original-candidate-manifest.json`,
+`baseline.json`, `candidate-verification.json`, `candidate-render-probe.json`,
+`startup-log-recheck.json`, `logging-alternative.json`.
+Запись обновлена локально после merge; runtime и ZIP не менялись.
+Ручных социальных публикаций не было; реальный UI площадок не проверен.
+
 Предыдущая история: [выпуск подложек](schedule-panel-release-2026-10-28.md).

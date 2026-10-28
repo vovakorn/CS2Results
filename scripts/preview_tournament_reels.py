@@ -55,23 +55,23 @@ def main():
             for count in args.counts:
                 matches = fixtures(count, choices)
                 scenes = r.storyboard(matches)
-                tiles = []
+                tiles = {}
                 for index, scene in enumerate(scenes):
                     image = r.render_scene(scene, now, count, preview_watermark=True)
                     image.save(args.output / f"{label}-{count}-{index}.png")
                     tile = image.resize((360, 640), Image.Resampling.LANCZOS)
                     tile.save(args.output / f"{label}-{count}-{index}-360.png")
-                    if (scene.kind == "matches" and len(tiles) == 1) or (scene.kind == "intro" and not tiles):
-                        tiles.append(tile)
+                    if scene.kind in ("intro", "matches"):
+                        tiles.setdefault(scene.kind, tile)
                 if count == 4:
                     sheet = Image.new("RGB", (720, 680), m.NAVY)
                     draw = ImageDraw.Draw(sheet)
                     draw.text((12, 10), label.upper(), font=m._font(22), fill=m.WHITE)
-                    for column, tile in enumerate(tiles):
-                        sheet.paste(tile, (column * 360, 40))
+                    for column, kind in enumerate(("intro", "matches")):
+                        sheet.paste(tiles[kind], (column * 360, 40))
                     sheet.save(args.output / f"{label}-comparison.png")
                     if label != "mixed":
-                        sheets.append(tiles[1])
+                        sheets.append(tiles["matches"])
                 output = args.output / f"{label}-{count}.mp4"
                 output.write_bytes(r.render_schedule_reel(matches, now,
                     preview_watermark=True, audio_style=args.audio_style))

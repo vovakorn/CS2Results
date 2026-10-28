@@ -168,10 +168,11 @@ def test_vrs_all_pages_use_brand_and_draw_both_absolute_ranks(monkeypatch):
 
 def test_reel_intro_uses_full_day_without_duplicating_storyboard_data():
     scenes = r.storyboard([event_match(1), event_match()])
-    assert scenes[0].matches == ()
-    assert [match.match_id for match in scenes[0].context_matches] == ["0", "1"]
+    intro = next(scene for scene in scenes if scene.kind == "intro")
+    assert scenes[0].kind == "matches" and intro.matches == ()
+    assert [match.match_id for match in intro.context_matches] == ["0", "1"]
     assert [match.match_id for scene in scenes for match in scene.matches] == ["0", "1"]
-    assert r.render_scene(scenes[0], NOW, 2).size == (1080, 1920)
+    assert r.render_scene(intro, NOW, 2).size == (1080, 1920)
 
 
 def test_reel_animation_is_staggered_and_progress_reaches_end():

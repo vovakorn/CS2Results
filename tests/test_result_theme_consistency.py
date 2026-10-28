@@ -119,7 +119,9 @@ def test_mixed_reel_uses_event_panels_and_neutral_intro_and_unknown_rows(monkeyp
     monkeypatch.setattr(media, "fetch_team_logo", lambda *args, **kwargs: None)
     events = [EVENTS[0], EVENTS[3], "Unknown Community Cup"]
     fixtures = [upcoming(event, index) for index, event in enumerate(events)]
-    intro, matches, outro = schedule_reels.storyboard(fixtures)
+    scenes = schedule_reels.storyboard(fixtures)
+    intro = next(scene for scene in scenes if scene.kind == "intro")
+    matches = next(scene for scene in scenes if scene.kind == "matches")
     assert all(pixel == media.PANEL for pixel in reel_panel_pixels(intro, fixtures))
     assert reel_panel_pixels(matches, fixtures) == [announcement_panel(event) for event in events[:2]] + [media.PANEL]
 

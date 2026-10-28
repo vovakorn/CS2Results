@@ -11,7 +11,7 @@ from . import media_cards as media
 from .tournament_preview import TournamentPreview, date_range, prize_split_text
 from .tournament_visuals import accent_color, event_logo, add_event_glow, add_event_watermark
 from .tournament_branding import resolve_branding
-from .tournament_theme_patterns import panel_color, preview_background
+from .tournament_theme_patterns import panel_color, preview_background, runtime_motif_opacity
 
 SIZE = media.STATIC_CARD_SIZE
 TEAMS_PER_PAGE = 16
@@ -62,7 +62,8 @@ def _event_logo(preview):
 
 def _canvas(preview, label, card_format="portrait"):
     accent = _accent(preview)
-    image = preview_background(media.static_card_size(card_format), preview.branding)
+    image = preview_background(media.static_card_size(card_format), preview.branding,
+                               motif_opacity=runtime_motif_opacity(preview.branding))
     if not preview.branding.background:
         add_event_glow(image, accent)
     logo = _event_logo(preview)

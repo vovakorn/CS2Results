@@ -1,4 +1,4 @@
-"""Team-day opener: complete input, bounded grid, safe logo paths and no hero."""
+"""Team-day pages: complete input, bounded grid, safe logo paths and no hero."""
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -18,6 +18,10 @@ def fixtures(count):
         for index in range(count)]
 
 
+def intro_scene(matches):
+    return next(scene for scene in r.storyboard(matches) if scene.kind == "intro")
+
+
 def capture_intro(monkeypatch, matches, **kwargs):
     texts, logos = [], []
     original_text, original_logo = r._draw_text_block, r._draw_logo
@@ -29,7 +33,7 @@ def capture_intro(monkeypatch, matches, **kwargs):
         return original_logo(*args, **kw)
     monkeypatch.setattr(r, "_draw_text_block", text)
     monkeypatch.setattr(r, "_draw_logo", logo)
-    scene = r.storyboard(matches)[0]
+    scene = intro_scene(matches)
     image = r.render_scene(scene, NOW, len(matches), **kwargs)
     return scene, image, texts, logos
 
@@ -45,6 +49,8 @@ def test_intro_shows_all_unique_teams_across_pages_without_changing_the_day(monk
     assert "ТВОЯ КОМАНДА" in texts and "ИГРАЕТ СЕГОДНЯ?" in texts
     assert f"4 ОКТЯБРЯ · {count} {r._match_noun(count).upper()}" in texts
     assert "СТАРТ В 10:00 МСК" in texts
+    assert "СОХРАНИ РАСПИСАНИЕ" in texts
+    assert "РАСПИСАНИЕ — ДАЛЬШЕ" not in texts
     assert not any("БЛИЖАЙШИЙ" in text for text in texts)
     intro = [part for part in r.storyboard(matches) if part.kind == "intro"]
     assert len(intro) == (count * 2 + 5) // 6
@@ -101,7 +107,10 @@ def test_parallel_starts_keep_all_teams_and_a_stable_non_editorial_order(monkeyp
 def test_intro_pagination_updates_duration_for_distinct_teams(count, duration):
     scenes = r.storyboard(fixtures(count))
     assert sum(scene.duration for scene in scenes) == duration
-    assert scenes[0].kind == "intro" and scenes[-1].kind == "outro"
+    assert scenes[0].kind == "matches" and scenes[-1].kind == "outro"
+    match_pages = [index for index, scene in enumerate(scenes) if scene.kind == "matches"]
+    team_pages = [index for index, scene in enumerate(scenes) if scene.kind == "intro"]
+    assert max(match_pages) < min(team_pages)
 
 
 def test_start_uses_real_earliest_instant_in_display_timezone(monkeypatch):
@@ -110,7 +119,7 @@ def test_start_uses_real_earliest_instant_in_display_timezone(monkeypatch):
     later = later.model_copy(update={"scheduled_at": "2026-10-04T10:00:00+03:00"})
     _, _, texts, _ = capture_intro(monkeypatch, [later, early])
     assert "СТАРТ В 09:00 МСК" in texts
-    scene = r.storyboard([later, early])[0]
+    scene = intro_scene([later, early])
     texts.clear()
     assert r.render_scene(scene, NOW, 2, "UTC").size == (1080, 1920)
     assert "СТАРТ В 06:00 UTC" in texts
@@ -126,7 +135,7 @@ def test_intro_centers_event_summary_and_places_event_mark_beside_channel_emblem
         calls.append((text, x, y))
         return original(draw, x, y, text, width, size, **kwargs)
     monkeypatch.setattr(r, "_draw_text_block", capture)
-    image = r.render_scene(r.storyboard(matches)[0], NOW, 4)
+    image = r.render_scene(intro_scene(matches), NOW, 4)
     assert ("МАТЧИ СЕГОДНЯ", 220, 330) in calls
     assert ("PGL MASTERS BUCHAREST", 500, 460) in calls
     assert ("4 ОКТЯБРЯ · 4 МАТЧА", 500, 535) in calls
@@ -191,7 +200,7 @@ def test_long_intro_names_fit_their_tile_without_truncation_or_logo_overlap(monk
         return original_logo(image, draw, center, diameter, name, *args, **kwargs)
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
     monkeypatch.setattr(r, "_draw_logo", logo)
-    r.render_scene(r.storyboard(matches)[0], NOW, 4)
+    r.render_scene(intro_scene(matches), NOW, 4)
     assert any(value == "ACADEMY" for value, _ in text_boxes)
     assert not any("…" in value for value, _ in text_boxes)
     _, (x, y), diameter = next(item for item in logos if item[0] == "Gaimin Gladiators Academy")
@@ -209,7 +218,7 @@ def test_deadline_skips_network_and_splits_budget_between_logo_attempts(monkeypa
     assert all(call[0][5] is None and call[0][7] is None for call in logos)
     monkeypatch.setattr(m, "fetch_team_logo", lambda *args, **kwargs: None)
     logos.clear()
-    r.render_scene(r.storyboard([match])[0], NOW, 1, logo_deadline=100.8)
+    r.render_scene(intro_scene([match]), NOW, 1, logo_deadline=100.8)
     assert logos[0][1]["download_timeout"] == pytest.approx(.4)
 
 
@@ -218,9 +227,11 @@ def test_intro_content_is_visible_immediately_and_cached_across_frames(monkeypat
     calls = []
     original = r._draw_logo
     monkeypatch.setattr(r, "_draw_logo", lambda *args, **kwargs: calls.append(args[4]) or original(*args, **kwargs))
-    scene = r.storyboard(matches)[0]
+    scenes = r.storyboard(matches)
+    scene = next(scene for scene in scenes if scene.kind == "intro")
+    preceding_seconds = sum(part.duration for part in scenes[:scenes.index(scene)])
     frames = list(r.animated_scene_frames(scene, NOW, 4, "Europe/Moscow",
-        elapsed_before=0, total_seconds=8))
+        elapsed_before=preceding_seconds, total_seconds=sum(part.duration for part in scenes)))
     assert len(calls) == 6 and len(frames) == 18
     assert sum(duration for _, duration in frames) == pytest.approx(1.5)
     assert frames[0][0].crop((80, 620, 920, 1548)).tobytes() == frames[-1][0].crop((80, 620, 920, 1548)).tobytes()

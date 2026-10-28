@@ -40,6 +40,11 @@ def draw_result_panel(canvas, box, branding, fallback, *, radius, alpha=245):
                                                      outline=(*edge, 255), width=1)
 
 
+def runtime_motif_opacity(branding) -> float:
+    """Quiet stripe motifs consistently without changing the reference atlas."""
+    return .5 if branding and branding.motif in ("diagonal", "ember", "metal") else 1.0
+
+
 def preview_background(size, branding, *, frame=True, header=True, motif_opacity=1.0):
     """Scale the approved 600x480 atlas artwork beneath the full-size layout."""
     from . import media_cards as media
