@@ -365,6 +365,16 @@ def _draw_fixture_score(draw, center_x, center_y, score1, score2, *, size, width
             _centered_foil_text_on_point(foil_canvas, x, center_y, value, font)
 
 
+def _shared_fixture_name_size(draw, names, width, size, minimum, preferred_lines):
+    """Use one readable size for the pair, including mixed-script names."""
+    while size > minimum and any(
+        len(_wrap_text(draw, name, _font(size, display=_uses_cyrillic(name)), width, 10000)) > preferred_lines
+        for name in names
+    ):
+        size -= 1
+    return size
+
+
 def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, show_format=True,
                       panel_branding=None):
     from .tournament_theme_patterns import draw_result_panel
@@ -373,7 +383,12 @@ def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, 
     from .tournament_visuals import accent_color
     row_accent = accent_color(panel_branding) if panel_branding else CYAN
     draw.line((x0, y0 + 18, x0, y1 - 18), fill=(*row_accent, 180), width=3)
-    center_y = y0 + (y1 - y0) * .43
+    match_format = f"BO{match.best_of}" if show_format and match.best_of else ""
+    label = " · ".join(part for part in (match_format, event) if part)
+    center_y = (round((y0 + y1 - (48 if label else 0)) / 2)
+                if time_label is not None else y0 + (y1 - y0) * .43)
+    name_size = (_shared_fixture_name_size(draw, [match.team1_name.upper(), match.team2_name.upper()],
+                                         268, 38, 36, 3) if time_label is not None else 38)
     for left, center_x, name, url, fallback in (
         (True, x0 + 52, match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url),
         (False, x1 - 52, match.team2_name, match.team2_logo_url, match.team2_logo_fallback_url),
@@ -382,7 +397,8 @@ def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, 
                    CYAN if left else AMBER, fallback, subtle=True)
         winner = _winner_side(match) if time_label is None else None
         _draw_text_block(draw, x0 + 111 if left else x1 - 111, center_y,
-                         name.upper(), 268, 38, min_size=36, alignment="left" if left else "right",
+                         name.upper(), 268, name_size, min_size=name_size if time_label is not None else 36,
+                         alignment="left" if left else "right",
                          max_lines=3,
                          display=_uses_cyrillic(name),
                          fill=AMBER if winner == ("left" if left else "right") else WHITE)
@@ -391,9 +407,7 @@ def _draw_fixture_row(canvas, draw, match, box, *, time_label=None, event=None, 
                             size=76, width=166)
     else:
         _centered_text_on_point(draw, (x0 + x1) // 2, round(center_y), time_label, _font(64), AMBER)
-    match_format = f"BO{match.best_of}" if show_format and match.best_of else ""
     # Keep the format visible even when a long event label is shortened.
-    label = " · ".join(part for part in (match_format, event) if part)
     if label:
         _draw_text_block(draw, (x0 + x1) // 2, y1 - 22, label.upper(), x1 - x0 - 70,
                          23 if _uses_cyrillic(label) else 28, display=_uses_cyrillic(label),
@@ -457,6 +471,19 @@ def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None,
     center_x = (x0 + x1) // 2
     logo_y = y0 + 135
     diameter = 200 if prominent else 182
+    names = [match.team1_name.upper(), match.team2_name.upper()]
+    shared_size = _shared_fixture_name_size(draw, names, 360, 66 if prominent else 60, 48, 2)
+    caption_y = None
+    if time_label is not None:
+        heights = []
+        for text in names:
+            font = _font(shared_size, display=_uses_cyrillic(text))
+            lines = _wrap_text(draw, text, font, 360, 3)
+            bounds = [draw.textbbox((0, 0), line, font=font) for line in lines]
+            heights.append(sum(b[3] - b[1] for b in bounds) + 6 * (len(bounds) - 1))
+        name_height = max(heights)
+        logo_y = round((y0 + y1 - (45 if event else 0) - 23 - name_height) / 2)
+        caption_y = logo_y + diameter / 2 + 23 + name_height / 2
     winner = _winner_side(match) if time_label is None and value_label is None else None
     for left, x, name, url, fallback in (
         (True, x0 + 180, match.team1_name, match.team1_logo_url, match.team1_logo_fallback_url),
@@ -467,18 +494,18 @@ def _draw_fixture_hero(canvas, draw, match, box, *, time_label=None, event=None,
             url = fallback = None
         _draw_logo(canvas, draw, (x, logo_y), diameter, name, url, CYAN if left else AMBER, fallback,
                    subtle=subtle, download_timeout=min(.75, remaining) if remaining is not None and remaining >= .1 else None)
-        text, size, name_width = name.upper(), 66 if prominent else 60, 360
-        while size > 48 and len(_wrap_text(draw, text, _font(size), name_width, 10000)) > 2:
+        text, size, name_width = name.upper(), shared_size if time_label is not None else 66 if prominent else 60, 360
+        while time_label is None and size > 48 and len(_wrap_text(draw, text, _font(size), name_width, 10000)) > 2:
             size -= 1
-        font = _font(size)
+        font = _font(size, display=_uses_cyrillic(text) if time_label is not None else False)
         max_lines = 3 if len(_wrap_text(draw, text, font, name_width, 10000)) > 2 else 2
         lines = _wrap_text(draw, text, font, name_width, max_lines)
         boxes = [draw.textbbox((0, 0), line, font=font) for line in lines]
         text_height = sum(b[3] - b[1] for b in boxes) + 6 * (len(lines) - 1)
         # Keep the first line 23 px below the logo, including for a three-line name.
-        name_center_y = logo_y + diameter / 2 + 23 + text_height / 2
+        name_center_y = caption_y if caption_y is not None else logo_y + diameter / 2 + 23 + text_height / 2
         _draw_text_block(draw, x, name_center_y, text, name_width, size, min_size=48,
-                         max_lines=max_lines, gap=6,
+                         max_lines=max_lines, gap=6, display=_uses_cyrillic(text) if time_label is not None else False,
                          fill=AMBER if winner == ("left" if left else "right") else WHITE)
     value = value_label if value_label is not None else time_label if time_label is not None else f"{match.score1 if match.score1 is not None else '—'}:{match.score2 if match.score2 is not None else '—'}"
     _centered_text_on_point(draw, center_x, logo_y, value, _font(72 if value_label is not None else 104 if time_label is not None else 176 if prominent else 164),
