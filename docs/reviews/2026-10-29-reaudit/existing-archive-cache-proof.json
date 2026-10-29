@@ -1,0 +1,18 @@
+{
+  "old_script_ref": "b363ac0",
+  "old_script_sha256": "45960204e03a70db57df97631e58daaba288449e3ec83b75d2d272ce035284b9",
+  "cache_creation": "ordinary import of match_sources.models with Python bytecode enabled",
+  "old_zip_cache": [
+    "cs2bot/match_sources/__pycache__/__init__.cpython-312.pyc",
+    "cs2bot/match_sources/__pycache__/config.cpython-312.pyc",
+    "cs2bot/match_sources/__pycache__/models.cpython-312.pyc"
+  ],
+  "rebuilt_zip_cache": [
+    "cs2bot/match_sources/__pycache__/__init__.cpython-312.pyc",
+    "cs2bot/match_sources/__pycache__/config.cpython-312.pyc",
+    "cs2bot/match_sources/__pycache__/models.cpython-312.pyc"
+  ],
+  "main_in_either_zip": false,
+  "severity": "P3",
+  "reproduced": true
+}

@@ -104,7 +104,7 @@ def test_existing_reel_state_is_not_rerendered(monkeypatch):
     monkeypatch.setattr(main, "load_pending_reel", lambda day: state)
     monkeypatch.setattr(main, "next_reel_audio_style", lambda *args: (_ for _ in ()).throw(AssertionError("changed sound on retry")))
     monkeypatch.setattr(main, "render_schedule_reel", lambda *args: (_ for _ in ()).throw(AssertionError("rerendered")))
-    monkeypatch.setattr(main, "advance_pending_reel", lambda *args: "processing")
+    monkeypatch.setattr(main, "advance_pending_reel", lambda *args, **kwargs: "processing")
 
     response = main._handle_schedule_reel_job(False, None)
 
@@ -129,6 +129,6 @@ def test_new_reel_renders_and_persists_selected_sound(monkeypatch):
         selected.append(kwargs["audio_style"])
         return PendingReel(day, container, count, NOW.isoformat(), kwargs["audio_style"])
     monkeypatch.setattr(main, "save_pending_reel", save)
-    monkeypatch.setattr(main, "advance_pending_reel", lambda *args: "processing")
+    monkeypatch.setattr(main, "advance_pending_reel", lambda *args, **kwargs: "processing")
     assert main._handle_schedule_reel_job(False, None)["statusCode"] == 200
     assert selected == ["minimal", "minimal"]

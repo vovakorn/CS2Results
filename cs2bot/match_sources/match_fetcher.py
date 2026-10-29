@@ -12,7 +12,7 @@ from typing import Literal
 from . import config as source_config
 from .filters import is_tier1_lan, is_valid_match
 from .final_wait import list_waits, observe_primary, observe_resolution
-from .models import MatchNormalized, SourceUnavailableError
+from .models import MatchNormalized, SourceUnavailableError, confirmed_result_maps
 from .storage import StorageUnavailableError
 from .storage import (
     claim_liquipedia_shadow_hour,
@@ -70,8 +70,7 @@ def _has_complete_final_card(match: MatchNormalized) -> bool:
         and match.is_final
         and match.final_identity_confirmed
         and match.winner_prize_usd is not None
-        and 3 <= len(match.maps) <= 5
-        and all(item.score1 is not None and item.score2 is not None for item in match.maps)
+        and 3 <= len(confirmed_result_maps(match)) <= 5
     )
 
 

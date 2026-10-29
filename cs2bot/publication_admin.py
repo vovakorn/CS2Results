@@ -182,24 +182,37 @@ async def record_publication(
         raise StorageUnavailableError("publication journal write failed") from exc
 
 
-async def list_publications(*, client: Any | None = None, bucket: str | None = None, limit: int = 500) -> list[dict[str, Any]]:
+class PublicationRecords(list[dict[str, Any]]):
+    """A compatible record list with the unread tail of its bounded selection."""
+
+    def __init__(self, records: Iterable[dict[str, Any]] = (), *, unexamined_count: int = 0):
+        super().__init__(records)
+        self.unexamined_count = unexamined_count
+
+
+async def list_publications(*, client: Any | None = None, bucket: str | None = None,
+                            limit: int = 500, since: datetime | None = None) -> PublicationRecords:
+    """Read at most ``limit`` recent bodies after scanning available metadata."""
     s3, bucket_name = client or _client(), bucket or _bucket()
-    keys: list[str] = []
-    seen_keys: set[str] = set()
+    if limit <= 0:
+        return PublicationRecords()
+    since_utc = since.astimezone(timezone.utc) if since is not None else None
+    start_after = f"{JOURNAL_PREFIX}{since_utc.date().isoformat()}/" if since_utc is not None else None
+    candidates: dict[str, tuple[float, str]] = {}
     seen_tokens: set[str] = set()
     token: str | None = None
-    while len(keys) < limit:
-        kwargs: dict[str, Any] = {"Bucket": bucket_name, "Prefix": JOURNAL_PREFIX, "MaxKeys": min(1000, limit - len(keys))}
+    while True:
+        kwargs: dict[str, Any] = {"Bucket": bucket_name, "Prefix": JOURNAL_PREFIX, "MaxKeys": 1000}
+        if start_after is not None:
+            kwargs["StartAfter"] = start_after
         if token: kwargs["ContinuationToken"] = token
         try: page = await asyncio.to_thread(s3.list_objects_v2, **kwargs)
         except ClientError as exc: raise StorageUnavailableError("publication journal list failed") from exc
         for entry in page.get("Contents", []):
             key = entry.get("Key")
-            if isinstance(key, str) and key not in seen_keys:
-                keys.append(key)
-                seen_keys.add(key)
-                if len(keys) == limit:
-                    break
+            if isinstance(key, str) and (start_after is None or key > start_after):
+                modified = entry.get("LastModified")
+                candidates[key] = (modified.timestamp() if isinstance(modified, datetime) else 0.0, key)
         if not page.get("IsTruncated"):
             break
         token = page.get("NextContinuationToken")
@@ -207,13 +220,22 @@ async def list_publications(*, client: Any | None = None, bucket: str | None = N
             raise StorageUnavailableError("publication journal pagination incomplete")
         seen_tokens.add(token)
 
+    keys = sorted(candidates, key=candidates.__getitem__, reverse=True)[:limit]
+
     def read_item(key: str) -> dict[str, Any] | None:
         try: response = s3.get_object(Bucket=bucket_name, Key=key)
-        except ClientError: return None
+        except ClientError as exc:
+            if _is_not_found(exc):
+                return None
+            raise StorageUnavailableError("publication journal item read failed") from exc
         body = response["Body"]
         try:
             item = json.loads(body.read())
             if isinstance(item, dict) and isinstance(item.get("publication_id"), str):
+                if since_utc is not None:
+                    confirmed = datetime.fromisoformat(str(item.get("confirmed_at", "")).replace("Z", "+00:00"))
+                    if confirmed < since_utc:
+                        return None
                 return item
         except (ValueError, TypeError, json.JSONDecodeError):
             pass
@@ -230,7 +252,10 @@ async def list_publications(*, client: Any | None = None, bucket: str | None = N
         for item in items:
             if item is not None:
                 result[item["publication_id"]] = item
-    return sorted(result.values(), key=lambda item: str(item.get("confirmed_at", "")), reverse=True)
+    return PublicationRecords(
+        sorted(result.values(), key=lambda item: str(item.get("confirmed_at", "")), reverse=True),
+        unexamined_count=len(candidates) - len(keys),
+    )
 
 
 def period_start(period: str, *, now: datetime | None = None) -> datetime:

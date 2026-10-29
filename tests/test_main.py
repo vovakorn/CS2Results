@@ -96,7 +96,7 @@ def test_reel_read_failure_cannot_report_an_idle_retry(monkeypatch):
     monkeypatch.setattr(main, "instagram_reels_enabled", lambda: True)
     monkeypatch.setattr(main, "publication_delivery_allowed", lambda *args: (True, 0))
     monkeypatch.setattr(main, "_notify_admin", lambda *args: None)
-    def unavailable(*args):
+    def unavailable(*args, **kwargs):
         raise StorageUnavailableError("Reel state unavailable")
     monkeypatch.setattr(main, "advance_today_reel", unavailable)
     response = main.handler({"retry_only": True}, None)

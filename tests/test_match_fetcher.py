@@ -162,11 +162,13 @@ def _incident_profile():
                 date=date,
                 start_date=date,
                 winner_prize_usd=500_000 if match_id == "aurora-vitality-final" else None,
+                # Synthetic map details, consistent with the fixture's 1:3 series.
                 maps=(
                     [
                         MapResult(name="Mirage", score1=13, score2=9),
                         MapResult(name="Nuke", score1=10, score2=13),
                         MapResult(name="Ancient", score1=8, score2=13),
+                        MapResult(name="Inferno", score1=6, score2=13),
                     ]
                     if match_id == "aurora-vitality-final"
                     else []

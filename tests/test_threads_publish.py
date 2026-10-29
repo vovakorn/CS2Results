@@ -124,7 +124,7 @@ def test_meta_transport_error_is_uncertain(monkeypatch):
     )
 
     with pytest.raises(threads_publish.ThreadsDeliveryUncertainError, match="outcome is unknown"):
-        threads_publish._meta_post("https://graph.threads.net/v1.0/user/threads", {}, None)
+        threads_publish._meta_post("https://graph.threads.net/v1.0/user/threads_publish", {}, None)
 
 
 def test_missing_publish_acknowledgement_is_uncertain():

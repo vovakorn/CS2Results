@@ -67,7 +67,9 @@ XRAY_ENABLED=1 scripts/build_function_zip.sh
 - After Meta confirms publication, the delivery claim becomes `sent`, then the
   processed marker is written. A process crash between these operations is
   reconciled without another post.
-- Network errors, HTTP 5xx, malformed successful responses and a missing publish
-  acknowledgement become `uncertain` and alert the administrator. For a final
+- Network errors, HTTP 5xx and malformed responses during container creation
+  remain definite pre-publication failures: the existing result outbox can retry.
+  Those failures on the final `media_publish` request, or a missing publish
+  acknowledgement, become `uncertain` and alert the administrator. For a final
   result the outbox item is removed; any retry is manual after checking
   Instagram, because Meta may already have created a post.

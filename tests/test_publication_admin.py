@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from botocore.exceptions import ClientError
+import pytest
 
 from cs2bot.publication_admin import (POLICY_KEY, PolicySnapshot, list_publications,
                                       pending_delivery_status, policy_status, publication_allowed, publications_in_period,
@@ -43,6 +44,33 @@ def test_policy_cas_and_queue_generation_hold_old_items():
     except ValueError as exc:
         assert str(exc) == "stale_policy_revision"
     else: raise AssertionError("stale callback changed policy")
+
+
+@pytest.mark.parametrize("destination,publication_type", [
+    ("global", "schedule"), ("instagram", "schedule"), ("threads", "schedule"),
+    ("global", "schedule_context"), ("global", "radar"), ("threads", "radar"),
+])
+def test_new_material_resumes_after_reenable_but_old_queue_stays_held(
+    monkeypatch, destination, publication_type,
+):
+    from cs2bot import main
+
+    s3 = FakeS3()
+    monkeypatch.setattr(main, "publication_delivery_allowed", lambda dest, kind: asyncio.run(
+        publication_allowed(dest, kind, control_enabled=True, client=s3, bucket="bucket")))
+    asyncio.run(update_policy(
+        destination, publication_type, False, actor_user_id=7, operation_id="off",
+        expected_revision=0, client=s3, bucket="bucket"))
+    assert not main._daily_delivery_is_current(destination, publication_type)
+
+    asyncio.run(update_policy(
+        destination, publication_type, True, actor_user_id=7, operation_id="on",
+        expected_revision=1, client=s3, bucket="bucket"))
+    assert main._daily_delivery_is_current(destination, publication_type)
+    assert not main._delivery_is_current(destination, publication_type, generation=0)
+    assert main._delivery_is_current(destination, publication_type, generation=1)
+    assert not main._daily_delivery_is_current(destination, publication_type, {destination: 0})
+    assert main._daily_delivery_is_current(destination, publication_type, {destination: 1})
 
 
 def test_confirmed_journal_is_idempotent_and_paged_readable():

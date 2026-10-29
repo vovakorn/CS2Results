@@ -1,0 +1,27 @@
+{
+  "claim_reclaim_race": {
+    "other_attempting_claim_overwritten": true,
+    "final_state": "sending"
+  },
+  "held_queue_starvation": {
+    "loaded": 200,
+    "eligible_generation_1": 0,
+    "same_items_on_next_retry": true
+  },
+  "cross_midnight_dedup": {
+    "canonical_uid_equal": false,
+    "bridge_uid_equal": false,
+    "late_primary_seen_processed": false
+  },
+  "online_spec_consistency": {
+    "unknown_venue": [
+      true,
+      null
+    ],
+    "explicit_online": [
+      false,
+      "explicitly_not_lan"
+    ],
+    "qualification": "documented behavior: requirements says is_lan=false always rejected"
+  }
+}

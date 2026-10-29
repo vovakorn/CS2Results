@@ -67,7 +67,9 @@ not add an API Gateway route for this function.
   is no longer reclaimable after the normal lease expires.
 - The scheduler records `sent` before the processed marker. A crash in between
   is reconciled without another Threads post.
-- Network errors, HTTP 5xx and malformed successful POST responses are treated as
+- Network errors, HTTP 5xx and malformed POST responses during container creation
+  are definite pre-publication failures and release the existing claim/chain
+  reservation for retry. The same failures on final `threads_publish` are treated as
   `uncertain`: the claim is retained and an administrator alert is raised. A
   final-result outbox item is removed, so a retry is manual only after checking
   Threads. Definite pre-publication errors release the claim for a later retry.

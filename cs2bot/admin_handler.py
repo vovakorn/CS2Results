@@ -16,7 +16,7 @@ from .config import (CHANNELS, PUBLICATION_CONTROL_ENABLED, TELEGRAM_ADMIN_ENABL
                      TELEGRAM_ADMIN_USER_ID, TELEGRAM_ADMIN_WEBHOOK_SECRET,
                      TELEGRAM_PROXY_URL, TELEGRAM_TOKEN)
 from .match_sources.storage import list_pending_result_deliveries
-from .publication_admin import (PUBLICATION_TYPES, PolicySnapshot, list_publications, pending_delivery_status,
+from .publication_admin import (PUBLICATION_TYPES, PolicySnapshot, list_publications, pending_delivery_status, period_start,
                                 policy_status, publications_in_period, queue_counts, read_policy,
                                 update_policy)
 
@@ -174,6 +174,11 @@ STATUS_LABELS = {"sent": "опубликовано", "pending": "ожидает 
                  "error": "ошибка", "skipped": "пропущено"}
 
 
+def _journal_limit_note(records: list[dict[str, Any]]) -> str:
+    return ("\nСчётчики рассчитаны по последним 500 доступным записям периода "
+            "и могут быть неполными.") if getattr(records, "unexamined_count", 0) > 0 else ""
+
+
 def _overview(records: list[dict[str, Any]], pending: list[Any], policy: Any, period: str) -> str:
     visible = publications_in_period(records, period)
     destinations: dict[str, int] = {}
@@ -188,7 +193,8 @@ def _overview(records: list[dict[str, Any]], pending: list[Any], policy: Any, pe
                   f"приостановлены: {queue['suspended']}; ручная проверка: {queue['manual_review']}")
     return (f"<b>Обзор · {PERIODS[period].lower()}</b>\nПодтверждённые публикации: <b>{len(visible)}</b>\n"
             f"По назначениям: {destination_text}\nПо форматам: {format_text}\n\n"
-            f"Очередь сейчас: {queue_text}.\nИстория до включения новой версии неполная.")
+            f"Очередь сейчас: {queue_text}.\nИстория до включения новой версии неполная."
+            + _journal_limit_note(records))
 
 
 def _journal_text(records: list[dict[str, Any]], pending: list[Any], policy: Any, period: str, page: int) -> str:
@@ -204,7 +210,9 @@ def _journal_text(records: list[dict[str, Any]], pending: list[Any], policy: Any
     rows.sort(reverse=True)
     start = max(0, page) * 10
     page_rows = rows[start:start + 10]
-    return "<b>Журнал · " + PERIODS[period].lower() + "</b>\n" + ("\n".join(f"{when} · {detail}" for when, detail in page_rows) if page_rows else "Записей нет.")
+    return ("<b>Журнал · " + PERIODS[period].lower() + "</b>\n"
+            + ("\n".join(f"{when} · {detail}" for when, detail in page_rows) if page_rows else "Записей нет.")
+            + _journal_limit_note(records))
 
 
 def _pending() -> list[Any]:
@@ -220,15 +228,16 @@ def _pair_detail(records: list[dict[str, Any]], pending: list[Any], policy: Any,
                  and item.get("destination_id") == destination_id
                  and item.get("publication_type") == publication_type]
     in_period = publications_in_period(confirmed, period)
-    last = str(confirmed[0].get("confirmed_at")) if confirmed else "нет подтверждённой публикации"
+    last = str(in_period[0].get("confirmed_at")) if in_period else "нет подтверждённой публикации"
     related = [item for item in pending
                if str(getattr(item, "channel_id", "")) == destination_id
                and {"result": "results"}.get(str(getattr(item, "content_type", "result")), str(getattr(item, "content_type", "result"))) == publication_type]
     queue = ", ".join(STATUS_LABELS[pending_delivery_status(item, policy)] for item in related) or "нет"
     problem = next((STATUS_LABELS[pending_delivery_status(item, policy)] for item in related
                     if pending_delivery_status(item, policy) in {"suspended", "manual_review"}), "нет")
-    return (f"\n\nПоследняя публикация: {last}\nЗа {PERIODS[period].lower()}: {len(in_period)}\n"
-            f"Очередь: {queue}\nПоследняя существенная проблема: {problem}")
+    return (f"\n\nПоследняя публикация в выбранном периоде: {last}\nЗа {PERIODS[period].lower()}: {len(in_period)}\n"
+            f"Очередь: {queue}\nПоследняя существенная проблема: {problem}"
+            + _journal_limit_note(records))
 
 
 def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
@@ -264,7 +273,7 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
                 destination_id, _, platform = destinations[dest_index]
                 publication_type = types[type_index]
                 if platform in PUBLICATION_TYPES[publication_type][1]:
-                    text += _pair_detail(asyncio.run(list_publications(limit=500)), _pending(), policy,
+                    text += _pair_detail(asyncio.run(list_publications(limit=500, since=period_start("today"))), _pending(), policy,
                                          destination_id, publication_type)
             _send_or_edit(update, text, markup)
             return {"statusCode": 200, "body": json.dumps({"ok": True})}
@@ -293,7 +302,7 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
         elif parts[1] == "o":
             policy = asyncio.run(read_policy())
             period = parts[2] if len(parts) > 2 and parts[2] in PERIODS else "today"
-            records = asyncio.run(list_publications(limit=500))
+            records = asyncio.run(list_publications(limit=500, since=period_start(period)))
             _send_or_edit(update, _overview(records, _pending(), policy, period), _keyboard([
                 [(label, f"a:o:{key}") for key, label in PERIODS.items()],
                 [('Журнал', f'a:j:0:{period}')], [('Главное меню', 'a:h')]]))
@@ -302,7 +311,7 @@ def handler(event: dict[str, Any] | None, context: Any) -> dict[str, Any]:
             policy = asyncio.run(read_policy())
             page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
             period = parts[3] if len(parts) > 3 and parts[3] in PERIODS else "today"
-            text = _journal_text(asyncio.run(list_publications(limit=500)), _pending(), policy, period, page)
+            text = _journal_text(asyncio.run(list_publications(limit=500, since=period_start(period))), _pending(), policy, period, page)
             navigation = [("←", f"a:j:{max(0, page - 1)}:{period}"), ("→", f"a:j:{page + 1}:{period}")]
             _send_or_edit(update, text, _keyboard([navigation, [('Обзор', f'a:o:{period}')], [('Главное меню', 'a:h')]]))
             return {"statusCode": 200, "body": json.dumps({"ok": True})}

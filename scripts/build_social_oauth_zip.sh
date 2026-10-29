@@ -28,7 +28,8 @@ fi
 
 (
   cd "${BUILD_DIR}"
-  zip -qr "${OUTPUT_PATH}" "${ZIP_CONTENT[@]}"
+  zip -qr "${BUILD_DIR}/package.zip" "${ZIP_CONTENT[@]}"
 )
+mv "${BUILD_DIR}/package.zip" "${OUTPUT_PATH}"
 
 echo "Built ${OUTPUT_PATH}"

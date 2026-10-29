@@ -135,7 +135,7 @@ def test_publish_cards_keeps_ambiguous_network_outcome_distinct(monkeypatch):
     )
 
     with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
-        instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+        instagram_publish._meta_post("https://graph.instagram.com/user/media_publish", {}, None)
 
 
 @pytest.mark.parametrize("status_code", [500, 503])
@@ -150,7 +150,7 @@ def test_meta_server_error_is_uncertain(monkeypatch, status_code):
     monkeypatch.setattr(instagram_publish.requests, "post", lambda *args, **kwargs: Response())
 
     with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
-        instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+        instagram_publish._meta_post("https://graph.instagram.com/user/media_publish", {}, None)
 
 
 @pytest.mark.parametrize("payload", [[], "invalid"])
@@ -164,7 +164,7 @@ def test_meta_malformed_success_data_is_uncertain(monkeypatch, payload):
     monkeypatch.setattr(instagram_publish.requests, "post", lambda *args, **kwargs: Response())
 
     with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
-        instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+        instagram_publish._meta_post("https://graph.instagram.com/user/media_publish", {}, None)
 
 
 def test_meta_invalid_success_json_is_uncertain(monkeypatch):
@@ -177,7 +177,7 @@ def test_meta_invalid_success_json_is_uncertain(monkeypatch):
     monkeypatch.setattr(instagram_publish.requests, "post", lambda *args, **kwargs: Response())
 
     with pytest.raises(instagram_publish.InstagramDeliveryUncertainError):
-        instagram_publish._meta_post("https://graph.instagram.com/test", {}, None)
+        instagram_publish._meta_post("https://graph.instagram.com/user/media_publish", {}, None)
 
 
 def test_missing_publish_acknowledgement_is_uncertain():

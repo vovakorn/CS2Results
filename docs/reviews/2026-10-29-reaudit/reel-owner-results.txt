@@ -1,0 +1,5 @@
+event="delivery_claim_reclaim_started" key="claims/content_instagram_schedule_reel_2026-10-29.json" expired_at="0" attempt="1"
+event="delivery_claim_reclaimed" key="claims/content_instagram_schedule_reel_2026-10-29.json" attempt="1" etag_attempt="1"
+{"before_pause": "processing", "during_pause": "held", "generation_after_resume": 1, "old_container": "123456", "after_resume": {"2026-10-29": "published"}, "recorded_external_publishes": ["123456"], "real_network_requests": 0}
+.
+1 passed in 0.34s
