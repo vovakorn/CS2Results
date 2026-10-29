@@ -1,5 +1,33 @@
 # CS2 Results Bot — production-состояние
 
+## Выпуск аудита завершён с разовым исключением — 29 октября, 12:45:22 МСК
+
+[PR #172](https://github.com/vovakorn/CS2Results/pull/172) слит в `d72ad0b`.
+CI последнего head: 1 574 Python-теста на 3.11/3.12, 27 Node, dependency audit,
+ZIP и Linux render/decode прошли. Четыре private функции переведены на версии
+из `d72ad0b`; нелоговые handler/dry-run/source проверки прошли,
+post-deploy smoke приняты с исключением.
+Startup-логи вернули `Unavailable`. Пользователь отдельно разрешил завершить
+именно этот выпуск с исключением для четырёх версий ниже; обычный log gate
+не объявляется пройденным: `startupLogsChecked=false`, `startupErrorDetected=null`.
+
+| Стабильный тег | Действующая версия | Rollback |
+| --- | --- | --- |
+| Main production | `d4etf4npp6b3un02k908` | `d4emhni9lbclf7ifgsb6` |
+| Admin production | `d4edre14e6im4hhslt56` | `d4e7i3o4bjdfqp529jvu` |
+| Monthly production | `d4emfnntuhrp3ie3d1gb` | `d4e4lkpierd7dq7fa7ae` |
+| Threads test threads-test | `d4es9onilcqcvt5q7r9d` | `d4e9gt9ch9gugvltco43` |
+
+Профили, pinned references, ACL, девять таймеров (radar PAUSED) и Gateway
+сверены после promote и не изменились. Основной candidate Reel render-probe: 20 матчей/40 команд, 38 s,
+68 434 ms, 2 716 972 bytes, тема включена. Внешние тестовые посты не отправлялись.
+Непрочитанные логи не подтверждают отсутствие startup-ошибок. Оригинальные failed
+manifests сохранены; штатный deploy-скрипт и его gate не изменялись. Разрешение
+не переносится на будущие кандидаты. Реальные UI телефона/desktop не проверялись.
+[Итоговая сверка](docs/reviews/2026-10-29/release-promotion.json).
+[Полный этап и доказательства](docs/audit-release-2026-10-29.md).
+Следующие записи — история подготовки, они не заменяют этот снимок.
+
 ## Повторный аудит — 29 октября 2026
 
 Основной production по последней read-only сверке — `d4emhni9lbclf7ifgsb6` из

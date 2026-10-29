@@ -1,0 +1,230 @@
+{
+  "checked_at": "2026-10-29T09:32:34.702792+00:00",
+  "git_sha": "d72ad0bf8664b15c392a12c8aef847fba382cbd3",
+  "pull_request": "https://github.com/vovakorn/CS2Results/pull/172",
+  "ci_run": "https://github.com/vovakorn/CS2Results/actions/runs/40848076407",
+  "status": "blocked_on_startup_logs",
+  "checks_except_startup_logs": true,
+  "startup_logs_checked": false,
+  "startup_error_detected": null,
+  "release_accepted": false,
+  "accepted_with_log_exception": false,
+  "stable_tags_unchanged": true,
+  "timers_unchanged": true,
+  "gateway_unchanged": true,
+  "functions": [
+    {
+      "name": "main",
+      "function_id": "d4e6e13rlrl7go01m2q2",
+      "stable_tag": "production",
+      "previous_version_id": "d4emhni9lbclf7ifgsb6",
+      "candidate_version_id": "d4etf4npp6b3un02k908",
+      "candidate_tag": "candidate",
+      "git_sha": "d72ad0bf8664b15c392a12c8aef847fba382cbd3",
+      "archive_sha256": "51c20b09626ba3727fc9f9943633a663ffeb737d7ea0eac9db0465916187ffdf",
+      "profile_sha256": "29dc48cae694f5464fe1c0cc2e60c1f38f60447729f54e99850751423db09155",
+      "environment_count": 30,
+      "pinned_reference_count": 7,
+      "checks": {
+        "stable_tag_unchanged": true,
+        "baseline_profile_unchanged": true,
+        "profile_matches": true,
+        "acl_unchanged": true,
+        "candidate_tag_matches": true,
+        "candidate_active": true,
+        "candidate_function_matches": true,
+        "description_matches_source": true,
+        "invokes_passed": true
+      },
+      "startup_logs_checked": false,
+      "startup_error_detected": null,
+      "release_accepted": false,
+      "probes": [
+        {
+          "status_code": 200,
+          "invoke_passed": true,
+          "startup_logs_checked": false,
+          "startup_error_detected": null,
+          "error": "rpc error: code = Unavailable desc = Unavailable"
+        }
+      ]
+    },
+    {
+      "name": "admin",
+      "function_id": "d4erm6ek4ph9qegng4gb",
+      "stable_tag": "production",
+      "previous_version_id": "d4e7i3o4bjdfqp529jvu",
+      "candidate_version_id": "d4edre14e6im4hhslt56",
+      "candidate_tag": "candidate-admin",
+      "git_sha": "d72ad0bf8664b15c392a12c8aef847fba382cbd3",
+      "archive_sha256": "947f360520ed857e030b3cdfca113b412410999c63f82addd369a736bce81e48",
+      "profile_sha256": "f17cd5d66d0c120e3d2b407c8df4c15a39f493a6981072b2d64ec7bc31c08273",
+      "environment_count": 5,
+      "pinned_reference_count": 6,
+      "checks": {
+        "stable_tag_unchanged": true,
+        "baseline_profile_unchanged": true,
+        "profile_matches": true,
+        "acl_unchanged": true,
+        "candidate_tag_matches": true,
+        "candidate_active": true,
+        "candidate_function_matches": true,
+        "description_matches_source": true,
+        "invokes_passed": true
+      },
+      "startup_logs_checked": false,
+      "startup_error_detected": null,
+      "release_accepted": false,
+      "probes": [
+        {
+          "payload": {},
+          "status_code": 403,
+          "invoke_passed": true,
+          "response": null,
+          "startup_logs_checked": false,
+          "startup_error_detected": null,
+          "error": "rpc error: code = Unavailable desc = Unavailable"
+        }
+      ]
+    },
+    {
+      "name": "monthly",
+      "function_id": "d4es8uk4gjgioi5n7lek",
+      "stable_tag": "production",
+      "previous_version_id": "d4e4lkpierd7dq7fa7ae",
+      "candidate_version_id": "d4emfnntuhrp3ie3d1gb",
+      "candidate_tag": "candidate",
+      "git_sha": "d72ad0bf8664b15c392a12c8aef847fba382cbd3",
+      "archive_sha256": "2973c24ada9b8502a0c76fe900868908bf0ffd074a399978f82592eb637fb298",
+      "profile_sha256": "f029c5edbf1a1b058564ec041e3371520dba4cd4034bab9c05bba0123dbad94c",
+      "environment_count": 8,
+      "pinned_reference_count": 3,
+      "checks": {
+        "stable_tag_unchanged": true,
+        "baseline_profile_unchanged": true,
+        "profile_matches": true,
+        "acl_unchanged": true,
+        "candidate_tag_matches": true,
+        "candidate_active": true,
+        "candidate_function_matches": true,
+        "description_matches_source": true,
+        "invokes_passed": true
+      },
+      "startup_logs_checked": false,
+      "startup_error_detected": null,
+      "release_accepted": false,
+      "probes": [
+        {
+          "payload": {
+            "job": "monthly_vrs",
+            "month": "2026-09",
+            "dry_run": true
+          },
+          "status_code": 200,
+          "invoke_passed": true,
+          "response": {
+            "month": "2026-09",
+            "scope": "world",
+            "dry_run": true,
+            "readiness": null
+          },
+          "startup_logs_checked": false,
+          "startup_error_detected": null,
+          "error": "rpc error: code = Unavailable desc = Unavailable"
+        },
+        {
+          "payload": {
+            "job": "monthly_vrs",
+            "month": "2026-09",
+            "dry_run": true,
+            "inspect_source": true
+          },
+          "status_code": 200,
+          "invoke_passed": true,
+          "response": {
+            "month": "2026-09",
+            "scope": "world",
+            "dry_run": true,
+            "readiness": {
+              "publishing_enabled": true,
+              "owner_allowed": true,
+              "generation": 0
+            },
+            "sourceMonth": "2026-09",
+            "sourceDryRun": true
+          },
+          "startup_logs_checked": false,
+          "startup_error_detected": null,
+          "error": "rpc error: code = Unavailable desc = Unavailable"
+        }
+      ]
+    },
+    {
+      "name": "threads-test",
+      "function_id": "d4e7l0puleo82h5p61gj",
+      "stable_tag": "threads-test",
+      "previous_version_id": "d4e9gt9ch9gugvltco43",
+      "candidate_version_id": "d4es9onilcqcvt5q7r9d",
+      "candidate_tag": "candidate-audit",
+      "git_sha": "d72ad0bf8664b15c392a12c8aef847fba382cbd3",
+      "archive_sha256": "2517870db790616bb13528e89b7600ec4e1cc12c62597be47cc501437008b698",
+      "profile_sha256": "85fa9d46f9fd1d901c2739b3ba5a241bdb8df5bff9a712a6f2873dd6a27ef1c1",
+      "environment_count": 4,
+      "pinned_reference_count": 3,
+      "checks": {
+        "stable_tag_unchanged": true,
+        "baseline_profile_unchanged": true,
+        "profile_matches": true,
+        "acl_unchanged": true,
+        "candidate_tag_matches": true,
+        "candidate_active": true,
+        "candidate_function_matches": true,
+        "description_matches_source": true,
+        "invokes_passed": true
+      },
+      "startup_logs_checked": false,
+      "startup_error_detected": null,
+      "release_accepted": false,
+      "probes": [
+        {
+          "payload": {},
+          "status_code": 404,
+          "invoke_passed": true,
+          "response": null,
+          "startup_logs_checked": false,
+          "startup_error_detected": null,
+          "error": "rpc error: code = Unavailable desc = Unavailable"
+        }
+      ]
+    }
+  ],
+  "render_probe": {
+    "started_at": "2026-10-29T09:23:53.073527+00:00",
+    "finished_at": "2026-10-29T09:25:05.426259+00:00",
+    "version_id": "d4etf4npp6b3un02k908",
+    "git_sha": "d72ad0bf8664b15c392a12c8aef847fba382cbd3",
+    "payload": {
+      "job": "schedule_reel",
+      "dry_run": true,
+      "render_probe": true
+    },
+    "checks": {
+      "http_200": true,
+      "dry_run": true,
+      "exact_candidate": true,
+      "duration_38": true,
+      "tournament_theme": true,
+      "mp4_nonempty": true,
+      "under_timeout": true,
+      "python_rss_under_limit": true
+    },
+    "passed": true,
+    "metrics": {
+      "render_ms": 68434,
+      "mp4_bytes": 2716972,
+      "duration_seconds": 38.0,
+      "tournament_theme": true,
+      "process_max_rss_kib": 115944
+    }
+  }
+}

@@ -1,0 +1,265 @@
+{
+  "git_sha": "d72ad0bf8664b15c392a12c8aef847fba382cbd3",
+  "pull_request": "https://github.com/vovakorn/CS2Results/pull/172",
+  "ci_run": "https://github.com/vovakorn/CS2Results/actions/runs/40848076407",
+  "started_at": "2026-10-29T09:43:33.830041+00:00",
+  "finished_at": "2026-10-29T09:45:22.311985+00:00",
+  "status": "promoted_with_log_exception",
+  "approval": "Да, завершить этот выпуск с разовым исключением",
+  "release_accepted": true,
+  "accepted_with_log_exception": true,
+  "startup_logs_checked": false,
+  "startup_error_detected": null,
+  "all_non_log_checks_passed": true,
+  "infrastructure_unchanged": true,
+  "profiles_unchanged": true,
+  "functions": [
+    {
+      "name": "main",
+      "function_id": "d4e6e13rlrl7go01m2q2",
+      "stable_tag": "production",
+      "candidate_version_id": "d4etf4npp6b3un02k908",
+      "previous_version_id": "d4emhni9lbclf7ifgsb6",
+      "archive_sha256": "51c20b09626ba3727fc9f9943633a663ffeb737d7ea0eac9db0465916187ffdf",
+      "profile_sha256": "29dc48cae694f5464fe1c0cc2e60c1f38f60447729f54e99850751423db09155",
+      "environment_count": 30,
+      "pinned_reference_count": 7
+    },
+    {
+      "name": "admin",
+      "function_id": "d4erm6ek4ph9qegng4gb",
+      "stable_tag": "production",
+      "candidate_version_id": "d4edre14e6im4hhslt56",
+      "previous_version_id": "d4e7i3o4bjdfqp529jvu",
+      "archive_sha256": "947f360520ed857e030b3cdfca113b412410999c63f82addd369a736bce81e48",
+      "profile_sha256": "f17cd5d66d0c120e3d2b407c8df4c15a39f493a6981072b2d64ec7bc31c08273",
+      "environment_count": 5,
+      "pinned_reference_count": 6
+    },
+    {
+      "name": "monthly",
+      "function_id": "d4es8uk4gjgioi5n7lek",
+      "stable_tag": "production",
+      "candidate_version_id": "d4emfnntuhrp3ie3d1gb",
+      "previous_version_id": "d4e4lkpierd7dq7fa7ae",
+      "archive_sha256": "2973c24ada9b8502a0c76fe900868908bf0ffd074a399978f82592eb637fb298",
+      "profile_sha256": "f029c5edbf1a1b058564ec041e3371520dba4cd4034bab9c05bba0123dbad94c",
+      "environment_count": 8,
+      "pinned_reference_count": 3
+    },
+    {
+      "name": "threads-test",
+      "function_id": "d4e7l0puleo82h5p61gj",
+      "stable_tag": "threads-test",
+      "candidate_version_id": "d4es9onilcqcvt5q7r9d",
+      "previous_version_id": "d4e9gt9ch9gugvltco43",
+      "archive_sha256": "2517870db790616bb13528e89b7600ec4e1cc12c62597be47cc501437008b698",
+      "profile_sha256": "85fa9d46f9fd1d901c2739b3ba5a241bdb8df5bff9a712a6f2873dd6a27ef1c1",
+      "environment_count": 4,
+      "pinned_reference_count": 3
+    }
+  ],
+  "post_deploy_smokes": [
+    {
+      "function": "admin",
+      "version_id": "d4edre14e6im4hhslt56",
+      "started_at": "2026-10-29T09:43:53.141924+00:00",
+      "invocations": [
+        {
+          "payload": {},
+          "status_code": 403,
+          "passed": true
+        }
+      ],
+      "startupLogsChecked": false,
+      "startupErrorDetected": null,
+      "acceptedWithLogException": true,
+      "logs_until": "2026-10-29T09:44:00.833599+00:00",
+      "logError": "rpc error: code = Unavailable desc = Unavailable",
+      "nonLogChecksPassed": true
+    },
+    {
+      "function": "monthly",
+      "version_id": "d4emfnntuhrp3ie3d1gb",
+      "started_at": "2026-10-29T09:44:10.794084+00:00",
+      "invocations": [
+        {
+          "payload": {
+            "job": "monthly_vrs",
+            "month": "2026-09",
+            "dry_run": true
+          },
+          "status_code": 200,
+          "passed": true
+        },
+        {
+          "payload": {
+            "job": "monthly_vrs",
+            "month": "2026-09",
+            "dry_run": true,
+            "inspect_source": true
+          },
+          "status_code": 200,
+          "passed": true
+        }
+      ],
+      "startupLogsChecked": false,
+      "startupErrorDetected": null,
+      "acceptedWithLogException": true,
+      "logs_until": "2026-10-29T09:44:24.581173+00:00",
+      "logError": "rpc error: code = Unavailable desc = Unavailable",
+      "nonLogChecksPassed": true
+    },
+    {
+      "function": "threads-test",
+      "version_id": "d4es9onilcqcvt5q7r9d",
+      "started_at": "2026-10-29T09:44:33.763524+00:00",
+      "invocations": [
+        {
+          "payload": {},
+          "status_code": 404,
+          "passed": true
+        }
+      ],
+      "startupLogsChecked": false,
+      "startupErrorDetected": null,
+      "acceptedWithLogException": true,
+      "logs_until": "2026-10-29T09:44:41.487940+00:00",
+      "logError": "rpc error: code = Unavailable desc = Unavailable",
+      "nonLogChecksPassed": true
+    },
+    {
+      "function": "main",
+      "version_id": "d4etf4npp6b3un02k908",
+      "started_at": "2026-10-29T09:44:51.196622+00:00",
+      "invocations": [
+        {
+          "payload": {
+            "job": "analytics",
+            "analytics_operation": "import_metrics",
+            "channel_id": "smoke",
+            "message_id": 1,
+            "views": 0,
+            "reactions": 0,
+            "dry_run": true
+          },
+          "status_code": 200,
+          "passed": true
+        }
+      ],
+      "startupLogsChecked": false,
+      "startupErrorDetected": null,
+      "acceptedWithLogException": true,
+      "logs_until": "2026-10-29T09:44:59.732931+00:00",
+      "logError": "rpc error: code = Unavailable desc = Unavailable",
+      "nonLogChecksPassed": true
+    }
+  ],
+  "tag_actions": [
+    {
+      "function": "admin",
+      "version_id": "d4e7i3o4bjdfqp529jvu",
+      "tag": "rollback",
+      "started_at": "2026-10-29T09:43:49.318038+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4e7i3o4bjdfqp529jvu",
+      "verified": true
+    },
+    {
+      "function": "admin",
+      "version_id": "d4edre14e6im4hhslt56",
+      "tag": "production",
+      "started_at": "2026-10-29T09:43:51.614968+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4edre14e6im4hhslt56",
+      "verified": true
+    },
+    {
+      "function": "monthly",
+      "version_id": "d4e4lkpierd7dq7fa7ae",
+      "tag": "rollback",
+      "started_at": "2026-10-29T09:44:06.776532+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4e4lkpierd7dq7fa7ae",
+      "verified": true
+    },
+    {
+      "function": "monthly",
+      "version_id": "d4emfnntuhrp3ie3d1gb",
+      "tag": "production",
+      "started_at": "2026-10-29T09:44:09.121599+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4emfnntuhrp3ie3d1gb",
+      "verified": true
+    },
+    {
+      "function": "threads-test",
+      "version_id": "d4e9gt9ch9gugvltco43",
+      "tag": "rollback",
+      "started_at": "2026-10-29T09:44:30.077324+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4e9gt9ch9gugvltco43",
+      "verified": true
+    },
+    {
+      "function": "threads-test",
+      "version_id": "d4es9onilcqcvt5q7r9d",
+      "tag": "threads-test",
+      "started_at": "2026-10-29T09:44:32.258788+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4es9onilcqcvt5q7r9d",
+      "verified": true
+    },
+    {
+      "function": "main",
+      "version_id": "d4emhni9lbclf7ifgsb6",
+      "tag": "rollback",
+      "started_at": "2026-10-29T09:44:47.030353+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4emhni9lbclf7ifgsb6",
+      "verified": true
+    },
+    {
+      "function": "main",
+      "version_id": "d4etf4npp6b3un02k908",
+      "tag": "production",
+      "started_at": "2026-10-29T09:44:49.470906+00:00",
+      "command_returncode": 0,
+      "observed_version_id": "d4etf4npp6b3un02k908",
+      "verified": true
+    }
+  ],
+  "raw_candidate_manifests_preserved": true,
+  "final_stable_tags_verification": {
+    "checked_at": "2026-10-29T09:47:48.699402+00:00",
+    "passed": true,
+    "functions": [
+      {
+        "name": "main",
+        "function_id": "d4e6e13rlrl7go01m2q2",
+        "stable_version": "d4etf4npp6b3un02k908",
+        "rollback_version": "d4emhni9lbclf7ifgsb6"
+      },
+      {
+        "name": "admin",
+        "function_id": "d4erm6ek4ph9qegng4gb",
+        "stable_version": "d4edre14e6im4hhslt56",
+        "rollback_version": "d4e7i3o4bjdfqp529jvu"
+      },
+      {
+        "name": "monthly",
+        "function_id": "d4es8uk4gjgioi5n7lek",
+        "stable_version": "d4emfnntuhrp3ie3d1gb",
+        "rollback_version": "d4e4lkpierd7dq7fa7ae"
+      },
+      {
+        "name": "threads-test",
+        "function_id": "d4e7l0puleo82h5p61gj",
+        "stable_version": "d4es9onilcqcvt5q7r9d",
+        "rollback_version": "d4e9gt9ch9gugvltco43"
+      }
+    ]
+  },
+  "passed": false,
+  "normal_smoke_gate_passed": false
+}
