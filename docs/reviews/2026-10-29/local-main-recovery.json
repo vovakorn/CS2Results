@@ -1,0 +1,28 @@
+{
+  "checked_at": "2026-10-29T10:15:16.555667+00:00",
+  "source": "/Users/user/Projects/CS2results",
+  "before_head": "0cddf485961369195bd54ec6f866250798034e5c",
+  "after_head": "e485790535ec3cb46efaa62a98f41bf1c1b71462",
+  "tracked_changes_preserved_then_restored": 35,
+  "untracked_entries_retained": 1342,
+  "untracked_nested_repositories_retained": 5,
+  "backup_archive_sha256": "517b8aff033c526cf3424e4ceebfcc36ecef111f5ed8081b1524f73b89e973ff",
+  "primary_branch": "main",
+  "primary_clean": true,
+  "primary_matches_origin_main": true,
+  "git_directory_preserved": true,
+  "other_worktree_metadata_unchanged": true,
+  "linked_worktrees_total": 13,
+  "backup_directory": "/Users/user/Documents/CS2results-backups/2026-10-29-130615-MSK",
+  "archive_bytes": 3234375680,
+  "archive_members": 25655,
+  "verified_working_files": 21403,
+  "archive_includes_git_untracked_ignored": true,
+  "historical_documents_retained": 7,
+  "selected_salvage": [
+    "assets/channel-avatar.png",
+    "README.md avatar section"
+  ],
+  "avatar_sha256": "324b9ef9552d631bcb69949ec61f08739418f73530f40b01cbdc20bd4dce60b5",
+  "runtime_files_changed": false
+}
