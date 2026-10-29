@@ -182,12 +182,20 @@ async def record_publication(
         raise StorageUnavailableError("publication journal write failed") from exc
 
 
+class PublicationRecords(list[dict[str, Any]]):
+    """A compatible record list with the unread tail of its bounded selection."""
+
+    def __init__(self, records: Iterable[dict[str, Any]] = (), *, unexamined_count: int = 0):
+        super().__init__(records)
+        self.unexamined_count = unexamined_count
+
+
 async def list_publications(*, client: Any | None = None, bucket: str | None = None,
-                            limit: int = 500, since: datetime | None = None) -> list[dict[str, Any]]:
+                            limit: int = 500, since: datetime | None = None) -> PublicationRecords:
     """Read at most ``limit`` recent bodies after scanning available metadata."""
     s3, bucket_name = client or _client(), bucket or _bucket()
     if limit <= 0:
-        return []
+        return PublicationRecords()
     since_utc = since.astimezone(timezone.utc) if since is not None else None
     start_after = f"{JOURNAL_PREFIX}{since_utc.date().isoformat()}/" if since_utc is not None else None
     candidates: dict[str, tuple[float, str]] = {}
@@ -244,7 +252,10 @@ async def list_publications(*, client: Any | None = None, bucket: str | None = N
         for item in items:
             if item is not None:
                 result[item["publication_id"]] = item
-    return sorted(result.values(), key=lambda item: str(item.get("confirmed_at", "")), reverse=True)
+    return PublicationRecords(
+        sorted(result.values(), key=lambda item: str(item.get("confirmed_at", "")), reverse=True),
+        unexamined_count=len(candidates) - len(keys),
+    )
 
 
 def period_start(period: str, *, now: datetime | None = None) -> datetime:

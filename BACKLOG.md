@@ -18,7 +18,8 @@
 - [x] Локально исправить F01–F12 аудита production-кода `b363ac0`;
   [состав и проверки](docs/review-fixes-2026-10-29.md). В production ещё не выпущено.
 - [ ] Завершить согласованный release-цикл исправлений: полный pytest —
-  1 537 passed; PR/CI/candidates и production gates ещё впереди.
+  1 537 passed; [PR #172](https://github.com/vovakorn/CS2Results/pull/172)
+  открыт, первый CI успешен. Итоговый head требует своего CI и cloud gates.
   Не переносить прежние исключения startup-логов на новый candidate.
   [Состав и этап](docs/audit-release-2026-10-29.md).
 

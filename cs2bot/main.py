@@ -1209,6 +1209,7 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
                           error=_safe_error_message(exc))
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
         attempting = True
+        media_accepted = False
         if cards:
             try:
                 if len(cards) > 1:
@@ -1217,6 +1218,7 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
                 else:
                     send_photo_to_telegram(channel["chat_id"], cards[0], _truncate_telegram_html(text, MAX_TELEGRAM_CAPTION_LENGTH),
                                            filename=f"cs2-vrs-{pending.match.match_id or 'final'}.png")
+                media_accepted = True
             except TelegramDeliveryUncertainError:
                 raise
             except TelegramDeliveryError:
@@ -1228,7 +1230,7 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
         asyncio.run(mark_content_processed(content_uid, "tournament_vrs_standings"))
         asyncio.run(delete_result_delivery(pending))
         _record_post_analytics(pending.channel_id, content_uid, "tournament_vrs_standings",
-                               media_card=bool(cards), generation=pending.generation)
+                               media_card=media_accepted, generation=pending.generation)
         log_event(logger, logging.INFO, "vrs_delivery_succeeded", channel=channel_name, match_uid=pending.match.match_uid)
         return "sent"
     except TelegramDeliveryUncertainError as exc:
@@ -1330,6 +1332,7 @@ def _deliver_tournament_standings(
                     error=_safe_error_message(exc),
                 )
         claim = asyncio.run(mark_delivery_claim_attempting(claim))
+        media_accepted = False
         if cards:
             caption = _truncate_telegram_html(text, MAX_TELEGRAM_CAPTION_LENGTH)
             try:
@@ -1354,6 +1357,7 @@ def _deliver_tournament_standings(
                         timeout=RESULT_TELEGRAM_TIMEOUT_SECONDS,
                         max_attempts=RESULT_TELEGRAM_MAX_ATTEMPTS,
                     )
+                media_accepted = True
             except TelegramDeliveryUncertainError:
                 raise
             except TelegramDeliveryError as exc:
@@ -1380,9 +1384,9 @@ def _deliver_tournament_standings(
         asyncio.run(mark_content_processed(content_uid, "tournament_standings"))
         asyncio.run(delete_result_delivery(pending))
         _record_post_analytics(channel_id, content_uid, "tournament_standings",
-                               media_card=bool(cards), generation=pending.generation)
+                               media_card=media_accepted, generation=pending.generation)
         log_event(logger, logging.INFO, "tournament_standings_delivery_succeeded", channel=channel_name,
-                  match_uid=match.match_uid, media_card=bool(cards))
+                  match_uid=match.match_uid, media_card=media_accepted)
         return "sent"
     except (TelegramDeliveryError, StorageUnavailableError) as exc:
         uncertain = isinstance(exc, TelegramDeliveryUncertainError)
@@ -3396,15 +3400,18 @@ def _handle_radar_discovery_job(dry_run: bool) -> Dict[str, Any]:
 def _retry_reel_worker(context: Any) -> dict[str, str]:
     """Advance today's persisted Reel once, independently of result work."""
     states: dict[str, str] = {}
+
+    def record_confirmed_reel(state) -> None:
+        _record_post_analytics("instagram", state.content_uid, "schedule_reel",
+                               media_video=True, generation=state.generation)
+
     try:
         if instagram_publishing_enabled() and instagram_reels_enabled():
             allowed, generation = publication_delivery_allowed("instagram", "schedule_reel")
-            states = (advance_today_reel(context, current_generation=generation)
+            states = (advance_today_reel(context, current_generation=generation,
+                                         on_published=record_confirmed_reel)
                       if allowed else {})
             for day, state in states.items():
-                if state == "published":
-                    _record_post_analytics("instagram", f"instagram_schedule_reel_{day}", "schedule_reel",
-                                           media_video=True, generation=generation)
                 if state in {"processing_failed", "publish_uncertain"}:
                     _notify_admin("schedule_reel_delivery_blocked", f"Reel за {day}: исход публикации требует ручной проверки.")
     except (InstagramPublishError, StorageUnavailableError) as exc:

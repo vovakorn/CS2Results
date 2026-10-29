@@ -176,7 +176,7 @@ STATUS_LABELS = {"sent": "опубликовано", "pending": "ожидает 
 
 def _journal_limit_note(records: list[dict[str, Any]]) -> str:
     return ("\nСчётчики рассчитаны по последним 500 доступным записям периода "
-            "и могут быть неполными.") if len(records) >= 500 else ""
+            "и могут быть неполными.") if getattr(records, "unexamined_count", 0) > 0 else ""
 
 
 def _overview(records: list[dict[str, Any]], pending: list[Any], policy: Any, period: str) -> str:

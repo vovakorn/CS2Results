@@ -5,7 +5,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from botocore.exceptions import ClientError
 
@@ -201,7 +201,8 @@ def advance_pending_reel(state: PendingReel, context: Any, *, allowed: bool = Tr
 
 
 def advance_today_reel(context: Any, now: datetime | None = None, *, allowed: bool = True,
-                       current_generation: int = 0) -> dict[str, str]:
+                       current_generation: int = 0,
+                       on_published: Callable[[PendingReel], None] | None = None) -> dict[str, str]:
     """The existing five-minute worker never publishes a stale day's schedule."""
     from zoneinfo import ZoneInfo
 
@@ -209,6 +210,9 @@ def advance_today_reel(context: Any, now: datetime | None = None, *, allowed: bo
     state = load_pending_reel(local_date.isoformat())
     if state is None:
         return {}
-    return {local_date.isoformat(): advance_pending_reel(
+    result = advance_pending_reel(
         state, context, allowed=allowed, current_generation=current_generation,
-    )}
+    )
+    if result == "published" and on_published is not None:
+        on_published(state)
+    return {local_date.isoformat(): result}

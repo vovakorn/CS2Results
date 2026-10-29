@@ -8,7 +8,9 @@
 Сборки main/social/admin/OAuth, compileall, pip check, bash -n и diff check успешны.
 Полный release-набор прошёл: **1 537 passed, 268,12 s** (Python 3.12,
 точные runtime-пины). Пользователь согласовал единый release-цикл; CI и
-cloud gates ещё впереди, production пока не менялся.
+cloud gates проверяются отдельно, production пока не менялся.
+Первый CI `9fa8861` в [PR #172](https://github.com/vovakorn/CS2Results/pull/172)
+успешен; перед merge обязательны исправления замечаний и CI итогового head.
 [Состав и текущий этап выпуска](docs/audit-release-2026-10-29.md).
 [Следующий план и проверки](docs/next-plan-2026-10-29.md).
 Версии пяти функций и исходные воспроизведения — в [повторном аудите](docs/re-audit-2026-10-29.md).
