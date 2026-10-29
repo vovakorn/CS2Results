@@ -220,8 +220,8 @@ class MatchNormalized(BaseModel):
 
     @property
     def final_bridge_uid(self) -> str | None:
-        """Strong cross-provider bridge for a final: event, day, teams and exact score."""
-        match_datetime = self.end_date or self.date or self.start_date
+        """Bridge a final by its start day, event, teams and exact score."""
+        match_datetime = self.start_date or self.end_date or self.date
         match_day = match_datetime[:10] if match_datetime and len(match_datetime) >= 10 else ""
         if not match_day or not self.competition_key or self.score1 is None or self.score2 is None:
             return None
@@ -253,6 +253,20 @@ class MatchNormalized(BaseModel):
     @property
     def match_uid(self) -> str:
         return self.canonical_match_uid
+
+
+def confirmed_result_maps(match: MatchNormalized) -> list[MapResult]:
+    """Return complete, nontechnical maps consistent with the series result."""
+    maps = match.maps
+    if match.forfeit or match.result_type in {"forfeit", "walkover"} or not 1 <= len(maps) <= 5:
+        return []
+    if any(item.score1 is None or item.score2 is None or item.score1 == item.score2 for item in maps):
+        return []
+    wins = (sum(item.score1 > item.score2 for item in maps),
+            sum(item.score2 > item.score1 for item in maps))
+    if match.best_of and (len(maps) > match.best_of or max(wins) != match.best_of // 2 + 1):
+        return []
+    return maps if wins == (match.score1, match.score2) else []
 
 
 class UpcomingMatchNormalized(BaseModel):

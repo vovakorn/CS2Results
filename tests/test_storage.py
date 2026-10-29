@@ -969,6 +969,43 @@ def test_fail_closed_delivery_state_is_never_reclaimed_after_lease_expiry(
     assert reclaimed is None
 
 
+@pytest.mark.parametrize("state", ["attempting", "uncertain", "sent"])
+@pytest.mark.parametrize("claim_type", ["channel", "content"])
+def test_reclaim_rechecks_non_reclaimable_state_after_cas_conflict(state, claim_type):
+    class ChangedDuringReclaimS3(FakeS3):
+        armed = False
+
+        def put_object(self, **kwargs):
+            if self.armed and kwargs.get("IfMatch"):
+                self.armed = False
+                # The winner entered a final delivery state after our stale HEAD.
+                super().put_object(
+                    Bucket=kwargs["Bucket"], Key=kwargs["Key"], Body=b"{}",
+                    ContentType="application/json",
+                    Metadata={"delivery-state": state, "expires-at": "0",
+                              "claim-id": "other-invocation"},
+                )
+            return super().put_object(**kwargs)
+
+    s3 = ChangedDuringReclaimS3()
+    now = datetime(2026, 10, 29, tzinfo=timezone.utc)
+
+    def acquire(reference):
+        if claim_type == "channel":
+            return asyncio.run(claim_channel_delivery(
+                _match(), "global", client=s3, bucket="bucket", now=reference))
+        return asyncio.run(claim_content_delivery(
+            "audit-race", client=s3, bucket="bucket", now=reference))
+
+    original = acquire(now)
+    assert original is not None
+    s3.armed = True
+    assert acquire(now + timedelta(days=1)) is None
+    assert s3.objects[original.key]["Metadata"] == {
+        "delivery-state": state, "expires-at": "0", "claim-id": "other-invocation",
+    }
+
+
 def test_failed_sent_write_leaves_attempting_claim_fail_closed():
     s3 = FailedSentStateS3()
     match = _match()

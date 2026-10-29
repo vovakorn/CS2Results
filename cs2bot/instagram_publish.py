@@ -187,6 +187,14 @@ def upload_public_reel(publication_key: str, video: bytes) -> str:
 
 
 def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> dict[str, Any]:
+    # Container creation cannot publish a post. Only media_publish needs the
+    # fail-closed delivery outcome when its response cannot be confirmed.
+    publishing = url.endswith("/media_publish")
+    error_type = InstagramDeliveryUncertainError if publishing else InstagramPublishError
+    failure_message = (
+        "Instagram publish request outcome is unknown" if publishing
+        else "Instagram media container request failed before publication"
+    )
     try:
         response = requests.post(
             url,
@@ -197,17 +205,17 @@ def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> 
             allow_redirects=False,
         )
     except requests.RequestException as exc:
-        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown") from exc
+        raise error_type(failure_message) from exc
     if response.status_code >= 500:
-        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown")
+        raise error_type(failure_message)
     if response.status_code >= 300:
         raise InstagramPublishError(f"Instagram publish endpoint returned HTTP {response.status_code}")
     try:
         payload = response.json()
     except requests.JSONDecodeError as exc:
-        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown") from exc
+        raise error_type(failure_message) from exc
     if not isinstance(payload, dict):
-        raise InstagramDeliveryUncertainError("Instagram publish request outcome is unknown")
+        raise error_type(failure_message)
     return payload
 
 

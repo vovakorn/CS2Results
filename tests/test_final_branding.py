@@ -13,7 +13,8 @@ def final(count=4):
         tournament_name="PGL Masters Bucharest 2026", tournament_parent="PGL/2026/Masters",
         team1_name="Team Spirit International", team2_name="FUT Esports",
         score1=3, score2=count - 3, is_final=True, final_identity_confirmed=True, winner_prize_usd=300000,
-        maps=[MapResult(name=f"Map {index + 1}", score1=13, score2=8)
+        maps=[MapResult(name=f"Map {index + 1}", score1=13 if index < 3 else 8,
+                       score2=8 if index < 3 else 13)
               for index in range(count)])
 
 

@@ -130,6 +130,14 @@ def upload_public_cards(publication_key: str, cards: Sequence[bytes]) -> list[st
 
 
 def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> dict[str, Any]:
+    # Creating a container is safe to repeat; only threads_publish can leave
+    # the external publication outcome uncertain.
+    publishing = url.endswith("/threads_publish")
+    error_type = ThreadsDeliveryUncertainError if publishing else ThreadsPublishError
+    failure_message = (
+        "Threads publish request outcome is unknown" if publishing
+        else "Threads media container request failed before publication"
+    )
     try:
         response = requests.post(
             url,
@@ -140,17 +148,17 @@ def _meta_post(url: str, data: dict[str, str], proxy: dict[str, str] | None) -> 
             allow_redirects=False,
         )
     except requests.RequestException as exc:
-        raise ThreadsDeliveryUncertainError("Threads publish request outcome is unknown") from exc
+        raise error_type(failure_message) from exc
     if response.status_code >= 500:
-        raise ThreadsDeliveryUncertainError("Threads publish request outcome is unknown")
+        raise error_type(failure_message)
     if response.status_code >= 300:
         raise ThreadsPublishError(f"Threads publish endpoint returned HTTP {response.status_code}")
     try:
         payload = response.json()
     except requests.JSONDecodeError as exc:
-        raise ThreadsDeliveryUncertainError("Threads publish request outcome is unknown") from exc
+        raise error_type(failure_message) from exc
     if not isinstance(payload, dict):
-        raise ThreadsDeliveryUncertainError("Threads publish request outcome is unknown")
+        raise error_type(failure_message)
     return payload
 
 

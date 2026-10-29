@@ -8,5 +8,6 @@ trap 'rm -rf "${BUILD_DIR}"' EXIT
 mkdir -p "${BUILD_DIR}" "$(dirname "${OUTPUT_PATH}")"
 cp -R "${ROOT_DIR}/cs2bot" "${BUILD_DIR}/cs2bot"
 cp "${ROOT_DIR}/requirements.txt" "${BUILD_DIR}/requirements.txt"
-(cd "${BUILD_DIR}" && zip -qr "${OUTPUT_PATH}" cs2bot requirements.txt -x '*/__pycache__/*' '*.pyc')
+(cd "${BUILD_DIR}" && zip -qr "${BUILD_DIR}/package.zip" cs2bot requirements.txt -x '*/__pycache__/*' '*.pyc')
+mv "${BUILD_DIR}/package.zip" "${OUTPUT_PATH}"
 echo "${OUTPUT_PATH}"

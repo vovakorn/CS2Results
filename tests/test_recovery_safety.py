@@ -10,7 +10,8 @@ def unconfirmed_final():
         source="liquipedia", match_id="unconfirmed", tournament_name="Test 2026",
         tournament_parent="Test/2026", team1_name="NAVI", team2_name="FaZe",
         score1=3, score2=1, is_final=True, winner_prize_usd=100,
-        maps=[MapResult(name=str(i), score1=13, score2=9) for i in range(4)],
+        maps=[MapResult(name=str(i), score1=13 if i < 3 else 9,
+                        score2=9 if i < 3 else 13) for i in range(4)],
         tournament_placements=[TournamentPlacement(placement=str(i), team_name=f"Team {i}", prize_usd=100) for i in range(1, 5)],
     )
 

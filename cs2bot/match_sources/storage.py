@@ -438,14 +438,14 @@ async def _enrich_existing_result_delivery(
 async def list_pending_result_deliveries(
     client: Any | None = None,
     bucket: str | None = None,
-    limit: int = 200,
+    limit: int | None = 200,
 ) -> list[PendingDelivery]:
-    """Load durable result deliveries, ordered by least recent attempt first."""
+    """Load sorted deliveries; None allows caller-side filtering before a limit."""
     s3 = client or _client()
     bucket_name = bucket or _bucket()
     pending: list[PendingDelivery] = []
     continuation_token: str | None = None
-    result_limit = max(1, limit)
+    result_limit = max(1, limit) if limit is not None else None
     invalid_keys: set[str] = set()
     seen_tokens: set[str] = set()
 
@@ -753,7 +753,10 @@ async def _reclaim_expired_claim(
     current = existing
     reference_timestamp = int(reference.timestamp())
     for attempt in range(1, CLAIM_RECLAIM_MAX_ATTEMPTS + 1):
-        raw_expiry = _object_metadata(current).get("expires-at")
+        metadata = _object_metadata(current)
+        if metadata.get("delivery-state") in DELIVERY_NON_RECLAIMABLE_STATES:
+            return None
+        raw_expiry = metadata.get("expires-at")
         try:
             current_expiry = int(raw_expiry)
         except (TypeError, ValueError):

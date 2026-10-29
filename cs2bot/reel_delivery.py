@@ -25,6 +25,7 @@ class PendingReel:
     match_count: int
     created_at: str
     audio_style: str | None = None  # Missing on containers created before the two-beat release.
+    generation: int = 0  # Legacy prepared containers belong to the original owner generation.
 
     @property
     def content_uid(self) -> str:
@@ -57,6 +58,7 @@ def load_pending_reel(day_key: str, *, client: Any | None = None, bucket: str | 
             match_count=payload["match_count"],
             created_at=payload["created_at"],
             audio_style=payload.get("audio_style"),
+            generation=payload.get("generation", 0),
         )
         if (
             state.day_key != day_key
@@ -67,6 +69,8 @@ def load_pending_reel(day_key: str, *, client: Any | None = None, bucket: str | 
             or not 1 <= state.match_count <= 20
             or not isinstance(state.created_at, str)
             or state.audio_style not in (None, "esports", "minimal")
+            or type(state.generation) is not int
+            or state.generation < 0
         ):
             raise ValueError("invalid Reel state")
         return state
@@ -120,14 +124,17 @@ def next_reel_audio_style(
 
 def save_pending_reel(
     day_key: str, container_id: str, match_count: int,
-    *, audio_style: str = "esports", client: Any | None = None, bucket: str | None = None,
+    *, audio_style: str = "esports", generation: int = 0,
+    client: Any | None = None, bucket: str | None = None,
 ) -> PendingReel:
     """The first persisted container wins; later invocations never publish theirs."""
     if not container_id.isdecimal() or not 1 <= match_count <= 20:
         raise ValueError("invalid Reel container state")
     if audio_style not in ("esports", "minimal"):
         raise ValueError("invalid Reel audio style")
-    state = PendingReel(day_key, container_id, match_count, datetime.now(timezone.utc).isoformat(), audio_style)
+    if type(generation) is not int or generation < 0:
+        raise ValueError("invalid Reel generation")
+    state = PendingReel(day_key, container_id, match_count, datetime.now(timezone.utc).isoformat(), audio_style, generation)
     s3 = client or storage._client()
     bucket_name = bucket or storage._bucket()
     try:
@@ -148,9 +155,10 @@ def save_pending_reel(
         raise storage.StorageUnavailableError("Reel state write failed") from exc
 
 
-def advance_pending_reel(state: PendingReel, context: Any, *, allowed: bool = True) -> str:
+def advance_pending_reel(state: PendingReel, context: Any, *, allowed: bool = True,
+                         current_generation: int = 0) -> str:
     """Advance one persisted container safely; never retry an ambiguous publish."""
-    if not allowed:
+    if not allowed or state.generation < current_generation:
         return "held"
     if asyncio.run(storage.reconcile_content_delivery(state.content_uid, "schedule_reel")):
         return "reconciled"
@@ -192,7 +200,8 @@ def advance_pending_reel(state: PendingReel, context: Any, *, allowed: bool = Tr
         raise
 
 
-def advance_today_reel(context: Any, now: datetime | None = None, *, allowed: bool = True) -> dict[str, str]:
+def advance_today_reel(context: Any, now: datetime | None = None, *, allowed: bool = True,
+                       current_generation: int = 0) -> dict[str, str]:
     """The existing five-minute worker never publishes a stale day's schedule."""
     from zoneinfo import ZoneInfo
 
@@ -200,4 +209,6 @@ def advance_today_reel(context: Any, now: datetime | None = None, *, allowed: bo
     state = load_pending_reel(local_date.isoformat())
     if state is None:
         return {}
-    return {local_date.isoformat(): advance_pending_reel(state, context, allowed=allowed)}
+    return {local_date.isoformat(): advance_pending_reel(
+        state, context, allowed=allowed, current_generation=current_generation,
+    )}

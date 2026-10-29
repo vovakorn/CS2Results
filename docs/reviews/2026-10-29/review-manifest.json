@@ -1,0 +1,8 @@
+{
+  "python": "3.12.14",
+  "pillow": "13.0.0",
+  "standard_renders": 36,
+  "cyrillic_renders": 6,
+  "network": "disabled",
+  "published": false
+}

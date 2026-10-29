@@ -124,6 +124,10 @@ scripts/build_function_zip.sh
 Скрипт создаёт `dist/function.zip` и не включает `.venv`, `.git`, `.pytest_cache` и локальные секреты.
 Архив содержит исходники и `requirements.txt`; зависимости устанавливаются в Linux-среде Cloud Functions, поэтому локальные platform-specific wheels в него не попадают.
 
+Небольшие builders admin/social OAuth/social publish создают новый ZIP в своём
+временном каталоге и затем заменяют OUTPUT_PATH. Пересборка не сохраняет старые
+pyc или удалённые из состава файлы; поддерживаются относительные пути и пробелы.
+
 Прямая загрузка архива в Cloud Functions ограничена 3,5 МБ. Deploy-скрипт
 измеряет готовый ZIP до обращения к Cloud Functions и для архива больше
 3 500 000 байт требует `YC_FUNCTION_PACKAGE_BUCKET`. Архив загружается под

@@ -108,6 +108,7 @@ def test_schedule_context_cover_keeps_full_tournament_name_when_key_is_only_a_ci
 def test_final_card_requires_confirmed_final_data_and_is_square_png():
     match = _result().model_copy(update={
         "is_final": True,
+        "score1": 2, "score2": 1,
         "winner_prize_usd": 500_000,
         "maps": [
             MapResult(name="Mirage", score1=13, score2=9),
@@ -124,12 +125,16 @@ def test_final_card_requires_confirmed_final_data_and_is_square_png():
 
 @pytest.mark.parametrize("map_count", [3, 4, 5])
 def test_final_card_adapts_to_three_four_and_five_maps(map_count):
+    wins = 2 if map_count == 3 else 3
     maps = [
-        MapResult(name=name, score1=13, score2=9 + index)
+        MapResult(name=name, score1=13 if index < wins else 9,
+                  score2=9 if index < wins else 13)
         for index, name in enumerate(("Mirage", "Dust II", "Nuke", "Ancient", "Inferno")[:map_count])
     ]
     match = _result().model_copy(update={
         "is_final": True,
+        "score1": wins, "score2": map_count - wins,
+        "best_of": 3 if map_count == 3 else 5,
         "winner_prize_usd": 500_000,
         "maps": maps,
     })
@@ -156,11 +161,15 @@ def test_final_prize_label_and_amount_are_centered_in_their_cells(
         return original_panel(canvas, box, **kwargs)
 
     monkeypatch.setattr(media_cards, "_draw_final_foil_panel", capture_panel)
+    wins = 2 if map_count == 3 else 3
     match = _result().model_copy(update={
         "source": "liquipedia", "is_final": True,
         "final_identity_confirmed": True, "winner_prize_usd": prize_usd,
-        "maps": [MapResult(name=name, score1=13, score2=9)
-                 for name in ("Mirage", "Dust II", "Nuke", "Ancient", "Inferno")[:map_count]],
+        "score1": wins, "score2": map_count - wins,
+        "best_of": 3 if map_count == 3 else 5,
+        "maps": [MapResult(name=name, score1=13 if index < wins else 9,
+                          score2=9 if index < wins else 13)
+                 for index, name in enumerate(("Mirage", "Dust II", "Nuke", "Ancient", "Inferno")[:map_count])],
     })
     image = Image.open(io.BytesIO(media_cards.render_final_card(match)))
     measure = ImageDraw.Draw(image)
@@ -183,10 +192,11 @@ def test_final_prize_label_and_amount_are_centered_in_their_cells(
 def test_final_card_places_compact_logos_above_team_names(monkeypatch):
     match = _result().model_copy(update={
         "is_final": True,
+        "score1": 2, "score2": 1,
         "winner_prize_usd": 500_000,
         "maps": [
             MapResult(name="Mirage", score1=13, score2=9),
-            MapResult(name="Nuke", score1=13, score2=11),
+            MapResult(name="Nuke", score1=11, score2=13),
             MapResult(name="Ancient", score1=13, score2=10),
         ],
         "team1_logo_url": "https://cdn.pandascore.co/images/team/image/1/left.png",
@@ -222,10 +232,11 @@ def test_final_card_places_compact_logos_above_team_names(monkeypatch):
 def test_final_card_renders_when_team_logos_are_unavailable(monkeypatch):
     match = _result().model_copy(update={
         "is_final": True,
+        "score1": 2, "score2": 1,
         "winner_prize_usd": 500_000,
         "maps": [
             MapResult(name="Mirage", score1=13, score2=9),
-            MapResult(name="Nuke", score1=13, score2=11),
+            MapResult(name="Nuke", score1=11, score2=13),
             MapResult(name="Ancient", score1=13, score2=10),
         ],
         "team1_logo_url": "https://cdn.pandascore.co/images/team/image/1/left.png",
@@ -242,10 +253,11 @@ def test_final_card_uses_one_gold_foil_header_accent(monkeypatch):
     match = _result().model_copy(update={
         "tournament_name": "Unknown Cup",
         "is_final": True,
+        "score1": 2, "score2": 1,
         "winner_prize_usd": 500_000,
         "maps": [
             MapResult(name="Mirage", score1=13, score2=9),
-            MapResult(name="Nuke", score1=13, score2=11),
+            MapResult(name="Nuke", score1=11, score2=13),
             MapResult(name="Ancient", score1=13, score2=10),
         ],
     })

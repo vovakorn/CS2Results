@@ -26,7 +26,7 @@ from .config import (
     PUBLICATION_CONTROL_ENABLED,
 )
 from .analytics import record_manual_post_metrics, record_post, record_subscriber_snapshot
-from .publication_admin import publication_allowed, record_publication
+from .publication_admin import policy_status, publication_allowed, read_policy, record_publication
 from .digest_retry import DigestAttempt, DigestRetryQueue, MAX_ATTEMPTS as DIGEST_MAX_ATTEMPTS
 from .instagram_publish import (
     InstagramDeliveryUncertainError,
@@ -295,6 +295,7 @@ def _record_post_analytics(channel_id: str, content_uid: str, job: str, **metada
         platform = channel_id if channel_id in {"instagram", "threads"} else "telegram"
         asyncio.run(record_publication(
             f"{platform}:{channel_id}:{job}:{content_uid}", channel_id, platform, job, content_uid,
+            generation=metadata.get("generation", 0),
             metadata=metadata,
             test="_test_" in content_uid,
         ))
@@ -318,9 +319,31 @@ def _pending_publication_type(content_type: str) -> str:
     return {"result": "results"}.get(content_type, content_type)
 
 
-def _delivery_is_current(destination_id: str, content_type: str, generation: int = 0) -> bool:
+async def _load_result_retry_targets() -> list[PendingDelivery]:
+    """Apply the delivery limit after held generations have been excluded."""
+    pending = await list_pending_result_deliveries(limit=None)
+    if not pending or not PUBLICATION_CONTROL_ENABLED:
+        return pending[:RESULT_OUTBOX_LIMIT]
+    snapshot = await read_policy()
+    if snapshot.revision == 0 and not snapshot.entries:
+        return []
+    eligible = []
+    for item in pending:
+        try:
+            allowed, generation = policy_status(
+                snapshot, item.channel_id, _pending_publication_type(item.content_type),
+            )
+        except ValueError:
+            continue  # Unsupported legacy content remains held for manual review.
+        if allowed and item.generation >= generation:
+            eligible.append(item)
+    return eligible[:RESULT_OUTBOX_LIMIT]
+
+
+def _delivery_is_current(destination_id: str, content_type: str, generation: int | None = None) -> bool:
+    """Fresh material follows current policy; queued material keeps its generation."""
     allowed, current_generation = publication_delivery_allowed(destination_id, _pending_publication_type(content_type))
-    return allowed and generation >= current_generation
+    return allowed and (generation is None or generation >= current_generation)
 
 
 def _daily_delivery_is_current(destination_id: str, job: str,
@@ -1204,6 +1227,8 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
         claim = asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_content_processed(content_uid, "tournament_vrs_standings"))
         asyncio.run(delete_result_delivery(pending))
+        _record_post_analytics(pending.channel_id, content_uid, "tournament_vrs_standings",
+                               media_card=bool(cards), generation=pending.generation)
         log_event(logger, logging.INFO, "vrs_delivery_succeeded", channel=channel_name, match_uid=pending.match.match_uid)
         return "sent"
     except TelegramDeliveryUncertainError as exc:
@@ -1354,6 +1379,8 @@ def _deliver_tournament_standings(
         claim = asyncio.run(mark_delivery_claim_sent(claim))
         asyncio.run(mark_content_processed(content_uid, "tournament_standings"))
         asyncio.run(delete_result_delivery(pending))
+        _record_post_analytics(channel_id, content_uid, "tournament_standings",
+                               media_card=bool(cards), generation=pending.generation)
         log_event(logger, logging.INFO, "tournament_standings_delivery_succeeded", channel=channel_name,
                   match_uid=match.match_uid, media_card=bool(cards))
         return "sent"
@@ -2408,11 +2435,15 @@ def _send_schedule_context_to_telegram(
     channel_id = str(channel.get("id") or channel.get("name", "unknown"))
     # Context is an independent publication.  It still depends on the schedule
     # having been confirmed by the caller, but the owner can pause it alone.
-    if not _delivery_is_current(channel_id, "schedule_context"):
+    allowed, generation = publication_delivery_allowed(channel_id, "schedule_context")
+    if not allowed:
         log_event(logger, logging.INFO, "publication_held_by_owner_policy",
                   destination=channel_id, publication_type="schedule_context")
         return
     pending_messages = list(messages)
+    day_key = local_now.date().isoformat()
+    media_confirmed = False
+    delivery_failed = False
     covers: list[bytes] = []
     if TELEGRAM_MEDIA_CARDS and 1 <= len(matches) <= MAX_SCHEDULE_TOTAL_MATCHES:
         try:
@@ -2436,7 +2467,6 @@ def _send_schedule_context_to_telegram(
             and len(prefix + messages[0]) <= MAX_TELEGRAM_CAPTION_LENGTH
         )
         caption = prefix + (messages[0] if attach_context else "🔎 <b>Контекст к матчам дня</b>")
-        day_key = local_now.date().isoformat()
         try:
             if len(covers) == 1:
                 send_photo_to_telegram(
@@ -2456,6 +2486,7 @@ def _send_schedule_context_to_telegram(
                         for index in range(1, len(covers) + 1)
                     ],
                 )
+            media_confirmed = True
             if attach_context:
                 pending_messages = []
         except TelegramDeliveryUncertainError:
@@ -2474,6 +2505,7 @@ def _send_schedule_context_to_telegram(
         try:
             send_to_telegram(channel["chat_id"], message)
         except Exception as exc:
+            delivery_failed = True
             log_event(
                 logger,
                 logging.WARNING,
@@ -2482,6 +2514,14 @@ def _send_schedule_context_to_telegram(
                 error_type=type(exc).__name__,
                 error=_safe_error_message(exc),
             )
+    if not delivery_failed:
+        content_uid = f"schedule_context_{day_key}_{channel_id}"
+        if test_run_id:
+            content_uid = f"{content_uid}_test_{test_run_id}"
+        _record_post_analytics(
+            channel_id, content_uid, "schedule_context",
+            generation=generation, media_card=media_confirmed,
+        )
 
 
 def _select_schedule_matches(matches: Sequence[UpcomingMatchNormalized]) -> list[UpcomingMatchNormalized]:
@@ -2511,8 +2551,11 @@ def _handle_schedule_reel_job(dry_run: bool, context: Any, render_probe: bool = 
         return _error_response(503, "instagram_reels_configuration_invalid")
     if not dry_run and not enabled:
         return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "skipped_reason": "disabled"})}
-    if not dry_run and not publication_delivery_allowed("instagram", "schedule_reel")[0]:
-        return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "skipped_reason": "held_by_owner_policy"})}
+    generation = 0
+    if not dry_run:
+        allowed, generation = publication_delivery_allowed("instagram", "schedule_reel")
+        if not allowed:
+            return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "skipped_reason": "held_by_owner_policy"})}
     start, end, local_now = _local_day_window()
     day_key = local_now.date().isoformat()
     try:
@@ -2547,16 +2590,18 @@ def _handle_schedule_reel_job(dry_run: bool, context: Any, render_probe: bool = 
             video = render_schedule_reel(selected, local_now, DISPLAY_TIMEZONE, audio_style=audio_style)
             public_url = upload_public_reel(f"schedule_reel_{day_key}", video)
             container_id = create_reel_container(public_url, reel_caption(local_now, count), context)
-            state = save_pending_reel(day_key, container_id, count, audio_style=audio_style)
-        result = (advance_pending_reel(state, context)
-                  if publication_delivery_allowed("instagram", "schedule_reel")[0] else "held")
+            state = save_pending_reel(day_key, container_id, count, audio_style=audio_style, generation=generation)
+        allowed, current_generation = publication_delivery_allowed("instagram", "schedule_reel")
+        result = (advance_pending_reel(state, context, current_generation=current_generation)
+                  if allowed else "held")
     except (InstagramPublishError, ScheduleReelError, StorageUnavailableError) as exc:
         log_event(logger, logging.ERROR, "schedule_reel_failed", error_type=type(exc).__name__)
         _notify_admin("schedule_reel_failed", f"Не удалось подготовить Reel за {day_key}; проверьте логи.")
         return _error_response(502, "schedule_reel_failed")
     log_event(logger, logging.INFO, "schedule_reel_state", day=day_key, result=result, matches_selected=count)
     if result == "published":
-        _record_post_analytics("instagram", state.content_uid, "schedule_reel", matches_selected=count, media_video=True)
+        _record_post_analytics("instagram", state.content_uid, "schedule_reel", matches_selected=count,
+                               media_video=True, generation=state.generation)
     if result in {"processing_failed", "publish_uncertain"}:
         _notify_admin("schedule_reel_delivery_blocked", f"Reel за {day_key}: исход публикации требует ручной проверки.")
     return {"statusCode": 200, "body": json.dumps({"job": "schedule_reel", "day": day_key, "matches_selected": count, "state": result})}
@@ -3353,11 +3398,13 @@ def _retry_reel_worker(context: Any) -> dict[str, str]:
     states: dict[str, str] = {}
     try:
         if instagram_publishing_enabled() and instagram_reels_enabled():
-            states = (advance_today_reel(context)
-                      if publication_delivery_allowed("instagram", "schedule_reel")[0] else {})
+            allowed, generation = publication_delivery_allowed("instagram", "schedule_reel")
+            states = (advance_today_reel(context, current_generation=generation)
+                      if allowed else {})
             for day, state in states.items():
                 if state == "published":
-                    _record_post_analytics("instagram", f"instagram_schedule_reel_{day}", "schedule_reel", media_video=True)
+                    _record_post_analytics("instagram", f"instagram_schedule_reel_{day}", "schedule_reel",
+                                           media_video=True, generation=generation)
                 if state in {"processing_failed", "publish_uncertain"}:
                     _notify_admin("schedule_reel_delivery_blocked", f"Reel за {day}: исход публикации требует ручной проверки.")
     except (InstagramPublishError, StorageUnavailableError) as exc:
@@ -3608,7 +3655,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     retry_targets: list[PendingDelivery] | None = None
     if retry_only:
         try:
-            retry_targets = asyncio.run(list_pending_result_deliveries(limit=RESULT_OUTBOX_LIMIT))
+            retry_targets = asyncio.run(_load_result_retry_targets())
         except Exception as exc:
             log_event(logger, logging.ERROR, "result_outbox_load_failed", error_type=type(exc).__name__)
             _notify_admin("result_outbox_unavailable", "Не удалось прочитать очередь доставки; повтор будет выполнен автоматически.")
@@ -3895,7 +3942,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         outbox_enqueue_finished_at = _monotonic()
         try:
             stored_targets = retry_targets if retry_targets is not None else asyncio.run(
-                list_pending_result_deliveries(limit=RESULT_OUTBOX_LIMIT)
+                _load_result_retry_targets()
             )
         except Exception as exc:
             failed_messages += 1

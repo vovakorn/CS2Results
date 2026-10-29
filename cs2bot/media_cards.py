@@ -24,6 +24,7 @@ from .match_sources.models import (
     TournamentVRSImpact,
     TournamentRadar,
     UpcomingMatchNormalized,
+    confirmed_result_maps,
 )
 from .match_sources.storage import read_cached_logo, write_cached_logo
 
@@ -198,6 +199,7 @@ def _background(
 
 
 def _fit_font(draw, text, max_width, max_size, min_size, *, display=False, medium=False):
+    display = display or _uses_cyrillic(text)
     # The font carries a width bound so drawing remains safe at the size floor.
     for size in range(max(max_size, min_size), min_size - 1, -1):
         font = _font(size, display=display, medium=medium)
@@ -265,6 +267,7 @@ def _wrap_text(draw, text, font, width, max_lines=2):
 def _draw_text_block(draw, anchor_x, center_y, text, width, size=38, *, display=False,
                      medium=False, fill=WHITE, alignment="center", max_lines=2, gap=5, min_size=None,
                      foil_canvas=None):
+    display = display or _uses_cyrillic(text)
     font = _font(size, display=display, medium=medium)
     if min_size is not None:
         while size > min_size and len(_wrap_text(draw, text, font, width, 10000)) > max_lines:
@@ -716,6 +719,10 @@ def fetch_team_logo(
                 if total > MAX_LOGO_BYTES:
                     raise MediaCardError("Team logo is too large")
                 chunks.append(chunk)
+        except requests.RequestException as exc:
+            last_error = MediaCardError("Team logo response failed")
+            last_error.__cause__ = exc
+            continue
         except MediaCardError as exc:
             last_error = exc
             continue
@@ -1346,16 +1353,7 @@ def render_result_card(match, *, card_format: StaticCardFormat = "portrait"):
 
 def _confirmed_result_maps(match):
     """Do not display partial, tied or technically awarded map results."""
-    maps = match.maps
-    if match.forfeit or match.result_type in {"forfeit", "walkover"} or not 1 <= len(maps) <= 5:
-        return []
-    if any(item.score1 is None or item.score2 is None or item.score1 == item.score2 for item in maps):
-        return []
-    wins = (sum(item.score1 > item.score2 for item in maps),
-            sum(item.score2 > item.score1 for item in maps))
-    if match.best_of and (len(maps) > match.best_of or max(wins) != match.best_of // 2 + 1):
-        return []
-    return maps if wins == (match.score1, match.score2) else []
+    return confirmed_result_maps(match)
 
 
 def _draw_single_result_body(canvas, draw, match, *, show_format=True):
@@ -1537,8 +1535,7 @@ def can_render_final_card(match: MatchNormalized) -> bool:
         match.is_final
         and (match.source != "liquipedia" or match.final_identity_confirmed)
         and match.winner_prize_usd is not None
-        and 3 <= len(match.maps) <= 5
-        and all(item.score1 is not None and item.score2 is not None for item in match.maps)
+        and 3 <= len(confirmed_result_maps(match)) <= 5
     )
 
 

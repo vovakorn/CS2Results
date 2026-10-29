@@ -1,0 +1,69 @@
+{
+  "final_cases": [
+    {
+      "bo": 3,
+      "score": [
+        2,
+        0
+      ],
+      "special": false
+    },
+    {
+      "bo": 3,
+      "score": [
+        2,
+        1
+      ],
+      "special": true
+    },
+    {
+      "bo": 5,
+      "score": [
+        3,
+        0
+      ],
+      "special": true
+    },
+    {
+      "bo": 5,
+      "score": [
+        3,
+        1
+      ],
+      "special": true
+    },
+    {
+      "bo": 5,
+      "score": [
+        3,
+        2
+      ],
+      "special": true
+    },
+    {
+      "bo": null,
+      "score": [
+        3,
+        2
+      ],
+      "special": true
+    }
+  ],
+  "late_stream": {
+    "responses": 3,
+    "all_closed": true,
+    "cache_writes": 1
+  },
+  "reel_glyphs": {
+    "scenes": 28,
+    "checked_letters": 4430,
+    "text_fragments": 752,
+    "safe_bounds": true
+  },
+  "packaging": {
+    "exact_profile_logo_render": true,
+    "stale_main_entry_retained": true,
+    "stale_entry_note": "pre-existing zip update behavior, not introduced by F11",
+    "stale_cache_entry_retained": true
+  }
+}
