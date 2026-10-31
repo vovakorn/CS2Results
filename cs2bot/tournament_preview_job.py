@@ -15,6 +15,7 @@ from .tournament_preview_cards import render_preview_cards
 from .tournament_identity import event_key
 from .preview_coverage import audit_preview_coverage
 from .tournament_calendar import audit_calendar_plan
+from .vrs_baseline_job import run_vrs_baseline_job
 
 
 def _deliver(runtime, uid, platform, send, uncertain_error, *, media_card):
@@ -72,6 +73,9 @@ def run_preview_job(preview_key: str | None, dry_run: bool, runtime, *, now=None
     now = now or datetime.now(timezone.utc)
     body = {"job": "tournament_preview" if preview_key else "preview_discovery", "dry_run": dry_run,
             "messages_sent": 0, "duplicates_skipped": 0, "delivery_failures": 0, "previews": []}
+    if preview_key is None:
+        # This preparation also runs with previews disabled or an invalid/empty profile registry.
+        body["vrs_baselines"] = json.loads(run_vrs_baseline_job(dry_run, runtime, now=now)["body"])
     if not dry_run and not runtime.ENABLE_TOURNAMENT_PREVIEWS:
         body["skipped_reason"] = "disabled"
         return {"statusCode": 200, "body": json.dumps(body)}

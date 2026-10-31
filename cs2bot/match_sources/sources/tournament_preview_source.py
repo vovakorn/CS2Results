@@ -243,7 +243,7 @@ class PreviewCalendarScan:
     row_issues: list[dict]
 
 
-def _calendar_event(row, today):
+def _calendar_event(row, today, *, require_prize_pool=True):
     if not {"liquipediatier", "type"}.issubset(row):
         raise PreviewUnavailable("preview_calendar_invalid")
     if (str(row.get("liquipediatier", "")) not in {"1", "2"}
@@ -255,9 +255,10 @@ def _calendar_event(row, today):
     start = _date(row.get("startdate"))
     if not today <= start <= today + timedelta(days=7):
         return None
-    pool = _integer(row.get("prizepool"), "preview_calendar_prize_invalid")
-    if pool < config.TIER1_PRIZE_POOL_THRESHOLD_USD:
-        return None
+    if require_prize_pool:
+        pool = _integer(row.get("prizepool"), "preview_calendar_prize_invalid")
+        if pool < config.TIER1_PRIZE_POOL_THRESHOLD_USD:
+            return None
     end = _date(row.get("enddate"))
     name, page_name = row.get("name"), row.get("pagename")
     if (not isinstance(name, str) or not name.strip() or len(name) > 300
@@ -268,7 +269,7 @@ def _calendar_event(row, today):
             "end": end.isoformat(), "source_url": liquipedia_url(page_name)}
 
 
-async def fetch_preview_calendar(now: datetime) -> PreviewCalendarScan:
+async def fetch_preview_calendar(now: datetime, *, require_prize_pool: bool = True) -> PreviewCalendarScan:
     """Audit today and the next seven Moscow dates, including unscheduled events."""
     today = now.astimezone(ZoneInfo("Europe/Moscow")).date()
     conditions = (
@@ -289,7 +290,7 @@ async def fetch_preview_calendar(now: datetime) -> PreviewCalendarScan:
             raise PreviewUnavailable("preview_calendar_invalid")
         for index, row in enumerate(rows):
             try:
-                event = _calendar_event(row, today)
+                event = _calendar_event(row, today, require_prize_pool=require_prize_pool)
             except PreviewUnavailable as exc:
                 row_issues.append({"row": page * CALENDAR_PAGE_SIZE + index,
                                    "reason": str(exc)})
