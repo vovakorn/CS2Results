@@ -94,6 +94,7 @@ from .match_sources.sources.pandascore_context import (
 )
 from .match_sources.sources.vrs_source import VRSUnavailableError, fetch_snapshot as fetch_vrs_snapshot
 from .match_sources.vrs import VRSDataError, calculate_impacts
+from .vrs_baseline_job import calendar_baseline_id, run_vrs_baseline_job, validate_before
 from .match_sources.sources.pandascore_source import (
     fetch_finished_matches as fetch_pandascore_finished_matches,
     fetch_upcoming_matches,
@@ -259,7 +260,7 @@ RUSSIAN_MONTHS = (
     "декабря",
 )
 CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics",
-                "tournament_preview", "preview_discovery", "tournament_recovery"}
+                "tournament_preview", "preview_discovery", "tournament_recovery", "vrs_baselines"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -1096,20 +1097,20 @@ def _capture_preview_vrs_baseline(profile, preview, *, dry_run: bool = False) ->
         return {"status": "dry_run" if dry_run else "disabled"}
     tournament_id = event_key(profile)
     snapshot = asyncio.run(read_vrs_snapshot(tournament_id, "before", "initial"))
+    start = datetime.combine(preview.start, datetime_time.min, tzinfo=ZoneInfo("Europe/Moscow"))
     status = "existing"
     if snapshot is None:
-        snapshot = asyncio.run(fetch_vrs_snapshot())
-        start = datetime.combine(preview.start, datetime_time.min, tzinfo=ZoneInfo("Europe/Moscow"))
-        for value in (snapshot.effective_at, snapshot.fetched_at):
-            timestamp = _parse_datetime(value)
-            if timestamp is None or timestamp >= start:
-                raise VRSDataError("initial VRS snapshot must be captured before the tournament")
+        snapshot = asyncio.run(read_vrs_snapshot(calendar_baseline_id(profile.liquipedia_page), "before", "initial"))
+        if snapshot is None:
+            snapshot = asyncio.run(fetch_vrs_snapshot())
+        validate_before(snapshot, start)
         created = asyncio.run(write_vrs_snapshot(tournament_id, "before", snapshot, initial=True))
         status = "saved" if created else "existing"
         # A concurrent invocation may have won with a different version.
         snapshot = asyncio.run(read_vrs_snapshot(tournament_id, "before", "initial"))
         if snapshot is None:
             raise StorageUnavailableError("initial VRS snapshot was not confirmed")
+    validate_before(snapshot, start)
     log_event(logger, logging.INFO, "vrs_baseline_saved", tournament_id=tournament_id,
               version=snapshot.version, status=status)
     return {"status": status, "version": snapshot.version, "effective_at": snapshot.effective_at}
@@ -1130,6 +1131,9 @@ def _enqueue_tournament_vrs(match: MatchNormalized, channel_id: str, channel_nam
             before = asyncio.run(read_vrs_snapshot(tournament_id, "before", "initial"))
         else:
             before = asyncio.run(read_latest_vrs_snapshot(tournament_id, "before"))
+        if before is None and match.tournament_parent:
+            before = asyncio.run(read_vrs_snapshot(
+                calendar_baseline_id(match.tournament_parent), "before", "initial"))
         if before is None:
             raise VRSDataError("baseline snapshot is missing")
         after = asyncio.run(fetch_vrs_snapshot())
@@ -3573,6 +3577,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         log_event(logger, logging.WARNING, "invalid_request", error=_safe_error_message(exc))
         return _error_response(400, "invalid_request")
 
+    if job == "vrs_baselines" and not ENABLE_VRS:
+        return run_vrs_baseline_job(dry_run, sys.modules[__name__])
+
     if job in {"tournament_preview", "preview_discovery"} and not dry_run and not ENABLE_TOURNAMENT_PREVIEWS:
         return run_preview_job(preview_key, dry_run, sys.modules[__name__], context=context)
 
@@ -3581,7 +3588,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         analytics_snapshot = job == "analytics" and (
             not isinstance(event, dict) or event.get("analytics_operation", "snapshot") == "snapshot"
         )
-        if (job != "analytics" or analytics_snapshot) and job != "schedule_reel":
+        if (job != "analytics" or analytics_snapshot) and job not in {"schedule_reel", "vrs_baselines"}:
             if not TELEGRAM_TOKEN:
                 missing_config.append("telegram_credentials")
             if not any(True for _ in _iter_channels()):
@@ -3590,7 +3597,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             missing_config.append("object_storage_bucket")
         if job == "analytics":
             pass
-        elif job in {"tournament_preview", "preview_discovery"}:
+        elif job in {"tournament_preview", "preview_discovery", "vrs_baselines"}:
             if not LIQUIPEDIA_API_KEY:
                 missing_config.append("preview_source_credentials")
         elif retry_only:
@@ -3614,6 +3621,9 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             )
             _notify_admin("configuration_invalid", "Конфигурация функции неполна.")
             return _error_response(503, "configuration_error")
+
+    if job == "vrs_baselines":
+        return run_vrs_baseline_job(dry_run, sys.modules[__name__])
 
     if job in {"tournament_preview", "preview_discovery"}:
         return run_preview_job(preview_key, dry_run, sys.modules[__name__], context=context)
