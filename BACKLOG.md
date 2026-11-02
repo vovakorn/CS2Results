@@ -9,10 +9,17 @@
 
 ## Now
 
+- [x] По отдельному разрешению владельца повторно опубликовать новую версию
+  октябрьского VRS с хуком в Instagram:
+  [Reels](https://www.instagram.com/reel/DfPUcNDjhXZ/), 2 ноября, 15:36 МСК.
+  Подпись/API readback, journal и processed подтверждены; прежний пост сохранён.
+  Runtime и другие площадки не обновлялись.
+
 - [x] Локально доработать месячную обложку: хук «КТО ВЗЛЕТЕЛ В РЕЙТИНГЕ CS2?»,
   Counter-Strike 2, видимый с frame 0 рейтинг и fade к 1,2 s.
   32 Node / 21 Python, square/portrait crops и 22 s full decode прошли.
-  [Превью](docs/monthly-vrs-reels.md); в production не выпущено.
+  [Превью](docs/monthly-vrs-reels.md); MP4 опубликован отдельно в Instagram,
+  renderer в production ещё не обновлён.
 
 - [ ] Внедрить правило владельца от 2 ноября: месячный VRS автоматически
   выходит в Telegram, Instagram и Threads с одной короткой подписью.

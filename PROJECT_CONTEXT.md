@@ -39,7 +39,10 @@
   Counter-Strike 2, настоящий рейтинг с frame 0 и переход к компактной CS2-шапке.
   Проверены 32 Node / 21 Python, full decode 22 s и square/portrait обрезки.
   [Превью и границы выпуска](docs/monthly-vrs-reels.md).
-  Ветка `codex/monthly-vrs-hook-20261102`; нового deploy/публикаций нет.
+  Ветка `codex/monthly-vrs-hook-20261102`; новый MP4 отдельно опубликован
+  в [Instagram](https://www.instagram.com/reel/DfPUcNDjhXZ/) 2 ноября, 15:36 МСК
+  по прямому разрешению владельца. Caption/readback, journal и processed
+  подтверждены; deploy и остальные площадки не менялись.
 
 
 - Правило владельца от 2 ноября: месячный VRS выходит в Telegram, Instagram

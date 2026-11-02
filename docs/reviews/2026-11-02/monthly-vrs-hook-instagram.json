@@ -1,0 +1,28 @@
+{
+  "uid": "instagram_vrs_monthly_world_2026-10_hook_c68d00f8dc18",
+  "instagramMediaId": "18230521855326911",
+  "confirmedAt": "2026-11-02T12:36:01.251785+00:00",
+  "videoSha256": "c68d00f8dc18c000f6202297d572a923dd7847c95f027d851930b60ed66f3666",
+  "caption": "VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.",
+  "coverOffsetMs": 500,
+  "previousPostPreserved": true,
+  "status": "sent",
+  "test": false,
+  "readback": {
+    "id": "18230521855326911",
+    "permalink": "https://www.instagram.com/reel/DfPUcNDjhXZ/",
+    "caption": "VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.",
+    "media_type": "VIDEO",
+    "media_product_type": "REELS",
+    "timestamp": "2026-11-02T12:35:55+0000"
+  },
+  "captionReadbackVerified": true,
+  "journalVerified": true,
+  "processedVerified": true,
+  "previousPostMarkerPreserved": true,
+  "sourceGitSha": "71fc9e1b8fb9d71c5eed198f95fd8bf394d7f345",
+  "ownerAuthorizedRepeat": true,
+  "mode": "one-off new Instagram post with approved local hook MP4",
+  "runtimeDeploymentChanged": false,
+  "otherPlatformsChanged": false
+}
