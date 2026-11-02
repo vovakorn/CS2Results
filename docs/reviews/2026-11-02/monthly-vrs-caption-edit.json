@@ -6,20 +6,29 @@
     "caption": "VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.",
     "titleBold": true,
     "confirmedAt": "2026-11-02T11:58:11.910335+00:00",
-    "apiReadbackVerified": true
+    "apiReadbackVerified": true,
+    "restoration": {
+      "platform": "telegram",
+      "messageId": 425,
+      "originalCaptionRestored": true,
+      "confirmedAt": "2026-11-02T12:01:29.636784+00:00",
+      "caption": "VRS — итоги октября 2026\n\nКак менялся мировой топ-20 за месяц: логотипы команд, места и очки VRS за 22 секунды.\n\nИсточник: LiquipediaDB. Последнее доступное обновление октября — 26.10.2026.\n\nCS2 Results · #CS2 #VRS"
+    },
+    "currentState": "original_caption_restored"
   },
   "instagram": {
-    "state": "pending",
-    "reason": "Published-caption edit requires website UI; Mac locked"
+    "state": "unchanged",
+    "editRequired": false
   },
   "threads": {
-    "state": "pending",
-    "reason": "Published-text edit requires website UI; Mac locked; platform edit window may apply"
+    "state": "unchanged",
+    "editRequired": false
   },
   "futureTemplate": "VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.",
   "localSourceChecks": {
     "pythonMonthlyPublisher": 21,
     "nodeMonthly": 8
   },
-  "newCodeDeployed": false
+  "newCodeDeployed": false,
+  "userClarification": "New template is for future monthly posts only; do not edit existing publications"
 }
