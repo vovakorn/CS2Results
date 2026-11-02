@@ -69,7 +69,7 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
   c.save();c.beginPath();c.arc(size/2,size/2,size/2-2,0,Math.PI*2);c.clip();
   if(images[logoName]){const padding=data.scoreOnly?4:6;fittedLogo(c,images[logoName],padding,padding,size-2*padding);}
   else{
-   c.font=`700 ${size/2}px Arial`;c.fillStyle=data.palette[name];c.textAlign='center';c.textBaseline='middle';
+   c.font=`700 ${size/2}px Arial`;c.fillStyle=data.scoreOnly?(plate==='#eaf0f5'?'#111b25':WHITE):data.palette[name];c.textAlign='center';c.textBaseline='middle';
    c.fillText(logoName.slice(0,2),size/2,size/2);
   }
   c.restore();sprites.set(key,canvas);return canvas;
@@ -93,7 +93,7 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
  b.save();b.beginPath();b.arc(150,brandY,brandRadius-1,0,Math.PI*2);b.clip();imageFit(b,projectLogo,150-brandRadius,brandY-brandRadius,brandRadius*2,brandRadius*2);b.restore();
  if(data.compactHeader){
   text(b,222,294,34,data.headline,WHITE,'left',true,672);
-  text(b,222,365,16,'МИРОВОЙ ТОП-20 · LIQUIPEDIA VRS',MUTED,'left',false,440);
+  text(b,222,365,16,`${data.period.label.toUpperCase()} · LIQUIPEDIA`,MUTED,'left',false,650);
  }else{
  text(b,222,282,22,'CS2 RESULTS');text(b,894,284,18,'@CS2RESULTS',MUTED,'right');
  text(b,222,329,34,data.headline||'ДОРОГА К MAJOR',WHITE,'left',true,672);
@@ -141,8 +141,26 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
   c.drawImage(base,690,dateTop,208,50,0,0,208,50);
   text(c,204,9,30,fullDate(data.snapshots[index].date),WHITE,'right');dates.set(index,canvas);return canvas;
  }
- // The cover occupies the initial hold; ranking movement still starts at 1.8 s.
- const cover=makeCanvas(SAFE.width,SAFE.height),c=cover.getContext('2d');
+ // Monthly opens on the actual ranking. Its small hook card stays between
+ // the starting logos and scores, never replacing the whole first frame.
+ const hook=data.introHook?makeCanvas(SAFE.width,SAFE.height):null;
+ if(hook){
+  const h=hook.getContext('2d');
+  const fill=h.createLinearGradient(226,600,800,1210);
+  fill.addColorStop(0,'#183448f5');fill.addColorStop(.6,'#10202ef5');fill.addColorStop(1,'#30271df5');
+  round(h,226,600,574,610,30,fill,'#efba6670');
+  line(h,464,635,562,635,'#efba66',3);
+  text(h,513,665,24,data.hookGame,'#efba66','center',true,530);
+  text(h,513,737,64,data.hookTitle[0],WHITE,'center',true,530);
+  text(h,513,819,50,data.hookTitle[1],WHITE,'center',true,530);
+  const featured=[...data.snapshots[0].rows].sort((a,b)=>a.rank-b.rank).slice(0,3);
+  for(const [index,row] of featured.entries())badge(h,row.name,[{name:row.logoName||row.name,alpha:1}],361+index*152,997,104);
+  text(h,513,1113,22,data.hookPeriod,'#c4d0d8','center',false,530);
+ }
+ // Regional editions retain their existing full-frame cover.
+ const cover=data.compactHeader?null:makeCanvas(SAFE.width,SAFE.height);
+ if(cover){
+ const c=cover.getContext('2d');
  c.fillStyle='#060a10';c.fillRect(0,0,SAFE.width,SAFE.height);
  const glow=c.createRadialGradient(500,900,20,500,900,760);
  glow.addColorStop(0,'#1b3546');glow.addColorStop(1,'#060a10');c.fillStyle=glow;c.fillRect(0,0,SAFE.width,SAFE.height);
@@ -155,6 +173,7 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
  text(c,500,1070,40,data.compactHeader?'МИРОВОЙ ТОП-20':data.subtitle||data.regionLabel,WHITE,'center',true,744);
  if(!data.compactHeader)text(c,500,1150,28,data.cohortLabel||`${data.regionLabel} · ${data.names.length} КОМАНД`,MUTED,'center',false,744);
  text(c,500,1280,26,'@CS2RESULTS',MUTED,'center');
+ }
  return function paint(ctx,seconds){
   const g=geometry(data,seconds);ctx.save();ctx.globalAlpha=1;ctx.drawImage(base,0,0);
   if(!data.hideCurrentDate&&g.i>0&&g.labelMix<1){ctx.drawImage(date(g.i-1),690,dateTop);ctx.globalAlpha=g.labelMix;}
@@ -193,8 +212,13 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
   ctx.save();ctx.beginPath();ctx.rect(104,1544,548,26);ctx.clip();
   if(!data.hideDateTicks)for(const index of g.ticks){ctx.globalAlpha=g.tickOpacity(g.days[index]);text(ctx,g.x(g.days[index]),1546,17,shortDate(data.snapshots[index].date),MUTED,'center');}
   ctx.restore();
-  const coverAlpha=Math.max(0,Math.min(1,(COVER_HOLD+COVER_FADE-seconds)/COVER_FADE));
-  if(coverAlpha>0){ctx.globalAlpha=coverAlpha;ctx.drawImage(cover,0,0);}
+  if(hook){
+   const hookAlpha=Math.max(0,Math.min(1,(1.2-seconds)/.3));
+   if(hookAlpha>0){ctx.globalAlpha=hookAlpha;ctx.drawImage(hook,0,0);}
+  }else if(!data.compactHeader){
+   const coverAlpha=Math.max(0,Math.min(1,(COVER_HOLD+COVER_FADE-seconds)/COVER_FADE));
+   if(coverAlpha>0){ctx.globalAlpha=coverAlpha;ctx.drawImage(cover,0,0);}
+  }
   ctx.restore();
  };
 }

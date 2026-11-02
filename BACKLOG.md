@@ -9,6 +9,11 @@
 
 ## Now
 
+- [x] Локально доработать месячную обложку: хук «КТО ВЗЛЕТЕЛ В РЕЙТИНГЕ CS2?»,
+  Counter-Strike 2, видимый с frame 0 рейтинг и fade к 1,2 s.
+  32 Node / 21 Python, square/portrait crops и 22 s full decode прошли.
+  [Превью](docs/monthly-vrs-reels.md); в production не выпущено.
+
 - [ ] Внедрить правило владельца от 2 ноября: месячный VRS автоматически
   выходит в Telegram, Instagram и Threads с одной короткой подписью.
   [Точный шаблон и текущий статус](docs/monthly-vrs-reels.md).
