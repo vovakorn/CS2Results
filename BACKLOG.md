@@ -9,6 +9,13 @@
 
 ## Now
 
+- [ ] Внедрить правило владельца от 2 ноября: месячный VRS автоматически
+  выходит в Telegram, Instagram и Threads с одной короткой подписью.
+  [Точный шаблон и текущий статус](docs/monthly-vrs-reels.md).
+  Node/Python шаблон исправлен локально (8/21 профильных тестов), не выложен.
+- [ ] Доредактировать подпись октябрьских Instagram/Threads постов в UI;
+  Mac заблокирован. Telegram уже исправлен, повторных публикаций нет.
+
 - [x] Разово опубликовать октябрьский месячный VRS в Telegram и Threads:
   [Telegram](https://t.me/cs2_results/425),
   [Threads](https://www.threads.com/@cs2results/post/DfPKM91Eara);

@@ -1,0 +1,25 @@
+{
+  "telegram": {
+    "platform": "telegram",
+    "messageId": 425,
+    "permalink": "https://t.me/cs2_results/425",
+    "caption": "VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.",
+    "titleBold": true,
+    "confirmedAt": "2026-11-02T11:58:11.910335+00:00",
+    "apiReadbackVerified": true
+  },
+  "instagram": {
+    "state": "pending",
+    "reason": "Published-caption edit requires website UI; Mac locked"
+  },
+  "threads": {
+    "state": "pending",
+    "reason": "Published-text edit requires website UI; Mac locked; platform edit window may apply"
+  },
+  "futureTemplate": "VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.",
+  "localSourceChecks": {
+    "pythonMonthlyPublisher": 21,
+    "nodeMonthly": 8
+  },
+  "newCodeDeployed": false
+}

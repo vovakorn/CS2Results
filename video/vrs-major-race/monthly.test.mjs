@@ -19,7 +19,7 @@ test('one world top-20 uses a real baseline and no rankings outside the reportin
  assert.deepEqual(data.snapshots.map(s=>s.date),['2026-08-31','2026-09-07','2026-09-14','2026-09-21','2026-09-28']);
  assert.deepEqual(data.snapshots.at(-1).rows.map(r=>r.rank),Array.from({length:20},(_,i)=>i+1));
  assert.equal(frameCount(data),1320);
- assert.match(monthlyCaptionFor(data),/^Изменения VRS по итогам сентября 2026 года\./);
+ assert.equal(monthlyCaptionFor(data),'VRS — итоги сентября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.');
  assert.ok(!monthlyCaptionFor(data).includes('#Major'));
 });
 test('every dated ranking contains exactly top 20 and the viewport never extends below place 20',()=>{
@@ -57,7 +57,7 @@ test('October world top-20 includes reviewed 1w Team and 100 Thieves with their 
   assert.match(data.palette[name],/^#[a-f0-9]{6}$/i);
   assert.match(data.logos[row.logoName],/^data:image\/png;base64,/);
  }
- assert.match(monthlyCaptionFor(data),/^Изменения VRS по итогам октября 2026 года\./);
+ assert.equal(monthlyCaptionFor(data),'VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.');
 });
 
 test('monthly logos stay on their traces and advance on a fixed time axis without dodging or rewind',()=>{
