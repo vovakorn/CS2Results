@@ -1,12 +1,17 @@
 # CS2 Results Bot — production-состояние
 
-## Общий выпуск VRS + Beijing разрешён — 2 ноября 2026
+## VRS + Beijing выпущены — 2 ноября 2026, 12:33 МСК
 
-Полные локальные проверки: 1602 Python-теста и 31 Node-тест прошли, версии
-зависимостей закреплены. Состав включает согласованный 22 s VRS, новый receipt
-и жёлтую тему Beijing для `season 2026`. Production пока прежний; чтение
-существующих журналов вернуло `Unavailable`.
-[Состав, исходные версии, проверки и следующий gate](docs/release-vrs-beijing-2026-11-02.md).
+[PR #176](https://github.com/vovakorn/CS2Results/pull/176), runtime `28160a3`.
+Production main `d4eb6521dviu0ieufa5i`, VRS `d4eu39vter6ceq500d7b`,
+monthly `d4ep0kssaoc2t9i648ru`. CI 3.11/3.12, 1602 Python/31 Node,
+полные cloud render/decode и scoped smokes прошли. Владелец отдельно разрешил
+недоступные startup-логи только этим версиям и существующий отказ regional
+current-source вне месячного формата. Normal gate остаётся false; риски не
+переписаны как исправленные. Rollback, профили, ACL, Gateway и 9 таймеров
+сохранены; radar PAUSED. Октябрьский Reel опубликован 2 ноября в 12:38 МСК,
+media ID `18123106912905740`; `published`, journal `sent` и processed подтверждены.
+[Версии, проверки и исключения](docs/release-vrs-beijing-2026-11-02.md).
 
 ## Месячный VRS за октябрь — диагностика 1 ноября
 

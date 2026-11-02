@@ -1,0 +1,113 @@
+{
+  "releaseGitSha": "28160a3619db17a220f359d57bdc6d70b2c374aa",
+  "pr": "https://github.com/vovakorn/CS2Results/pull/176",
+  "ciRun": "https://github.com/vovakorn/CS2Results/actions/runs/41401477927",
+  "localTests": {
+    "python": 1602,
+    "node": 31
+  },
+  "status": "awaiting_explicit_release_exceptions",
+  "productionUnchanged": true,
+  "publicationAttempted": false,
+  "timers": 9,
+  "startupLogsChecked": false,
+  "startupErrorDetected": null,
+  "normalReleaseGatePassed": false,
+  "monthlyScopedNonLogChecksPassed": true,
+  "candidates": [
+    {
+      "name": "main Beijing",
+      "functionId": "d4e6e13rlrl7go01m2q2",
+      "version": "d4eb6521dviu0ieufa5i",
+      "previousVersion": "d4etf4npp6b3un02k908",
+      "packageSha256": "3e09e3bf816ad84c0486af3a7b6ef86348e59e573a33433c1a723b9387a0c75c",
+      "dryRunStatus": 200,
+      "renderProbe": {
+        "http_200": true,
+        "dry_run": true,
+        "exact_candidate": true,
+        "duration_38": true,
+        "tournament_theme": true,
+        "mp4_nonempty": true,
+        "under_timeout": true,
+        "python_rss_under_limit": true
+      },
+      "startupLogsChecked": false
+    },
+    {
+      "name": "monthly publisher",
+      "functionId": "d4es8uk4gjgioi5n7lek",
+      "version": "d4ep0kssaoc2t9i648ru",
+      "previousVersion": "d4emfnntuhrp3ie3d1gb",
+      "packageSha256": "f80008d598fbfd440ac58341193854d87e7fa93926f22acb59d0f8089286e0ab",
+      "dryRunPassed": true,
+      "ownerPolicyAllowed": true,
+      "sourceProbeMonth": "2026-09 (previous renderer still production)",
+      "startupLogsChecked": false
+    },
+    {
+      "name": "VRS renderer",
+      "functionId": "d4e8n07roso4762pf1h4",
+      "version": "d4eu39vter6ceq500d7b",
+      "previousVersion": "d4er62kv5q46lc29a93n",
+      "packageSha256": "09dc0d056443645217f123c94958e2bf307d935a19d0e56c2b22b6755d4dea2b",
+      "monthlySource": [
+        {
+          "region": "world",
+          "teams": 20,
+          "uniqueTeams": 26,
+          "snapshots": 5,
+          "firstDate": "2026-09-28",
+          "lastDate": "2026-10-26",
+          "sourceSha256": "74122a7053f0de0ff81add15a4fa2aa184dab00cb25a6d11ba6e5f4e5620081d"
+        }
+      ],
+      "monthlyRender": {
+        "sha256": "dd9b43a407d080c04dde467af1bd86ff3052695ef33291c98ed666adccd8698f",
+        "bytes": 5808036,
+        "width": 1080,
+        "height": 1920,
+        "fps": 60,
+        "frames": 1320,
+        "duration": 22,
+        "audioPeakDb": -1.9,
+        "musicSha256": "6c5fbb29986398deacd0f3307113d9d3fa86305176aa1177790b1b7ccdc518a9",
+        "fullDecode": "passed",
+        "layoutVersion": "instagram-safe-v1",
+        "coverOffsetMs": 500,
+        "seconds": 64.71
+      },
+      "reviewedRegionalSourceThrough": "2026-10-05",
+      "reviewedRegionalSourcePassed": true,
+      "currentRegionalSourcePassed": false,
+      "startupLogsChecked": false
+    }
+  ],
+  "existingRegionalCurrentSourceFailure": {
+    "oldStatus": 502,
+    "newStatus": 502,
+    "oldBody": {
+      "error": "vrs_major_failed",
+      "stage": "prepare"
+    },
+    "newBody": {
+      "error": "vrs_major_failed",
+      "stage": "prepare"
+    },
+    "causeBeyondPrepareStageVerified": false,
+    "scope": "separate current Major-history capture; not October monthly",
+    "releaseExceptionRequiredForCurrentSourceGate": true
+  },
+  "requiredBeforePromote": [
+    "Explicit exception for unavailable startup logs for these three exact versions",
+    "Explicit acceptance of the existing regional current-source failure outside monthly scope, or separate investigation/fix"
+  ],
+  "afterApproval": [
+    "Recheck exact production/candidate tags, profiles and all timers",
+    "Promote VRS renderer; verify real October monthly source and reviewed regional period",
+    "Verify monthly candidate October inspect_source against promoted renderer before promoting monthly",
+    "Promote main Beijing; dry-run and configuration verification",
+    "Normal monthly publication window days 1-3 at 12:00-15:59 Europe/Moscow; no duplicate publication"
+  ],
+  "evidenceDirectory": "/private/tmp/cs2-release-20261102"
+}
