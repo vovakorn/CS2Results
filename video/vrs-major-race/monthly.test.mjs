@@ -49,7 +49,7 @@ test('October world top-20 includes reviewed 1w Team and 100 Thieves with their 
  const raw=JSON.parse(gunzipSync(fs.readFileSync(new URL('./fixtures/liquipedia-october-2026.json.gz',import.meta.url))));
  const data=prepareMonthlyWorld(raw,{month:'2026-10',collectedOn:'2026-11-01'});
  assert.equal(data.headline,'CS2 · МИРОВОЙ РЕЙТИНГ');
- assert.deepEqual(data.hookTitle,['КТО ВЗЛЕТЕЛ','В РЕЙТИНГЕ CS2?']);
+ assert.deepEqual(data.hookTitle,['КАК ИЗМЕНИЛСЯ','РЕЙТИНГ CS2?']);
  assert.equal(data.hookGame,'COUNTER-STRIKE 2');
  assert.equal(data.hookPeriod,'ОКТЯБРЬ 2026 · МИРОВОЙ ТОП-20');
  assert.equal(data.titlePeriod,'ОКТЯБРЯ 2026');

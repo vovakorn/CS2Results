@@ -35,15 +35,13 @@
 
 ## Следующие задачи и источники
 
-- Локально готов хук месячного VRS: «КТО ВЗЛЕТЕЛ В РЕЙТИНГЕ CS2?»,
-  Counter-Strike 2, настоящий рейтинг с frame 0 и переход к компактной CS2-шапке.
-  Проверены 32 Node / 21 Python, full decode 22 s и square/portrait обрезки.
-  [Превью и границы выпуска](docs/monthly-vrs-reels.md).
-  Ветка `codex/monthly-vrs-hook-20261102`; новый MP4 отдельно опубликован
-  в [Instagram](https://www.instagram.com/reel/DfPUcNDjhXZ/) 2 ноября, 15:36 МСК
-  по прямому разрешению владельца. Caption/readback, journal и processed
-  подтверждены; deploy и остальные площадки не менялись.
-
+- Для будущих месячных выпусков утверждён стандартный хук:
+  «КАК ИЗМЕНИЛСЯ / РЕЙТИНГ CS2?». Шаблон обновлён локально,
+  32 Node-теста и safe-zone/crop проверки прошли; кадр 500 ms просмотрен.
+  [Правило и статус](docs/monthly-vrs-reels.md).
+  Ветка `codex/monthly-vrs-hook-20261102`; production renderer ещё прежний.
+  Опубликованный 2 ноября в 15:36 МСК [Instagram-пост](https://www.instagram.com/reel/DfPUcNDjhXZ/)
+  с прежним хуком «КТО ВЗЛЕТЕЛ» остаётся без изменений.
 
 - Правило владельца от 2 ноября: месячный VRS выходит в Telegram, Instagram
   и Threads с [единой короткой подписью](docs/monthly-vrs-reels.md).

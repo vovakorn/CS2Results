@@ -48,7 +48,7 @@ export function prepareMonthlyWorld(raw,{month,collectedOn,inputSha256}={}){
   graphMarkers:'logos',fixedViewport:true,stableTable:true,scoreOnly:true,hideDateTicks:true,hideCurrentDate:true,plotRight:760,
   soundtrack:'valve-cs2',zoomSeconds:0,endHold:2.8,
   headline:'CS2 · МИРОВОЙ РЕЙТИНГ',introHook:true,
-  hookTitle:['КТО ВЗЛЕТЕЛ','В РЕЙТИНГЕ CS2?'],hookGame:'COUNTER-STRIKE 2',
+  hookTitle:['КАК ИЗМЕНИЛСЯ','РЕЙТИНГ CS2?'],hookGame:'COUNTER-STRIKE 2',
   hookPeriod:`${period.label.toUpperCase()} · МИРОВОЙ ТОП-20`,
   titlePeriod:`${GENITIVE[Number(month.slice(5))-1].toUpperCase()} ${month.slice(0,4)}`,
   subtitle:'ДИНАМИКА МИРОВОГО РЕЙТИНГА',
