@@ -119,7 +119,7 @@ def _receipt(receipt: dict[str, Any], month: str) -> dict[str, Any]:
         or result.get("dry_run") is not False
         or not re.fullmatch(re.escape(prefix) + r"renders/world/[a-f0-9]{64}/[a-f0-9]{64}/reel\.mp4", key)
         or not re.fullmatch(re.escape(prefix) + r"sources/[a-f0-9]{64}\.json", result.get("sourceKey", ""))
-        or media.get("fullDecode") != "passed" or media.get("frames") != 1944
+        or media.get("fullDecode") != "passed" or media.get("frames") != 1320
         or media.get("width") != 1080 or media.get("height") != 1920 or media.get("fps") != 60
         or media.get("layoutVersion") != LAYOUT_VERSION or media.get("coverOffsetMs") != COVER_OFFSET_MS
         or type(media.get("bytes")) is not int or not 0 < media["bytes"] <= MAX_VIDEO_BYTES

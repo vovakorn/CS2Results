@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {createHash} from 'node:crypto';
 import {createPainter} from '../paint-frame.mjs';
-import {FPS,frameCount} from '../timeline.mjs';
+import {FPS,frameCount,duration} from '../timeline.mjs';
 import {SAFE} from '../layout.mjs';
 export const sha256=bytes=>createHash('sha256').update(bytes).digest('hex');
 
@@ -24,9 +24,12 @@ export async function renderVideo(data,directory,{ffmpeg,assetsDir}){
  const images=Object.fromEntries(await Promise.all(Object.entries(data.logos).map(async([name,src])=>[name,await loadImage(src)])));
  const paint=createPainter(data,{images,projectLogo,makeCanvas:createCanvas,makePath:d=>new Path2D(d)});
  const canvas=createCanvas(1080,1920),ctx=canvas.getContext('2d'),frames=frameCount(data);
- if(frames!==1944)throw Error('Unexpected timeline duration');
+ if(frames!==(data.fixedViewport?1320:1944))throw Error('Unexpected timeline duration');
  const silent=path.join(directory,'silent.mp4'),file=path.join(directory,'reel.mp4');
- paint(ctx,17.1);await fs.writeFile(path.join(directory,'preview.png'),canvas.encodeSync('png'));
+ const monthlyMusic=data.soundtrack==='valve-cs2';
+ const soundtrackPath=path.join(assetsDir,monthlyMusic?'valve-cs2.wav':'road-to-major.wav');
+ const manifestPath=path.join(assetsDir,monthlyMusic?'valve-cs2-music-manifest.json':'music-manifest.json');
+ paint(ctx,duration(data)*.53);await fs.writeFile(path.join(directory,'preview.png'),canvas.encodeSync('png'));
  const encoder=spawn(ffmpeg,['-y','-v','error','-f','rawvideo','-pix_fmt','rgba','-s:v','1080x1920','-r',String(FPS),'-i','pipe:0',
   '-an','-c:v','libx264','-threads','2','-preset','veryfast','-crf','17','-pix_fmt','yuv420p',
   '-vf','scale=out_color_matrix=bt709:out_range=tv','-color_primaries','bt709','-color_trc','bt709','-colorspace','bt709','-movflags','+faststart',silent],{stdio:['pipe','ignore','pipe']});
@@ -41,17 +44,17 @@ export async function renderVideo(data,directory,{ffmpeg,assetsDir}){
   }
   encoder.stdin.end();await finished;
  }catch(error){encoder.kill();throw error;}
- await command(ffmpeg,['-y','-v','error','-i',silent,'-i',path.join(assetsDir,'road-to-major.wav'),'-map','0:v:0','-map','1:a:0',
+ await command(ffmpeg,['-y','-v','error','-i',silent,'-i',soundtrackPath,'-map','0:v:0','-map','1:a:0',
   '-c:v','copy','-c:a','aac','-b:a','192k','-ac','2','-ar','48000','-shortest','-movflags','+faststart',file]);
  const checked=await command(ffmpeg,['-v','info','-i',file,'-map','0:v:0','-map','0:a:0','-af','volumedetect','-progress','pipe:1','-f','null','-']);
  const decoded=Number([...checked.output.matchAll(/^frame=(\d+)/gm)].at(-1)?.[1]);
  const peak=Number(checked.error.match(/max_volume: ([\-\d.]+) dB/)?.[1]);
  if(decoded!==frames||!Number.isFinite(peak)||peak>=0||!checked.error.includes('1080x1920')||!checked.error.includes('Audio: aac'))throw Error('Encoded media validation failed');
  const bytes=await fs.readFile(file);
- const soundtrack=await fs.readFile(path.join(assetsDir,'road-to-major.wav'));
- const music=JSON.parse(await fs.readFile(path.join(assetsDir,'music-manifest.json'),'utf8'));
+ const soundtrack=await fs.readFile(soundtrackPath);
+ const music=JSON.parse(await fs.readFile(manifestPath,'utf8'));
  if(sha256(soundtrack)!==music.sha256)throw Error('Soundtrack checksum mismatch');
  return {file,preview:path.join(directory,'preview.png'),sha256:sha256(bytes),bytes:bytes.length,
-  width:1080,height:1920,fps:FPS,frames:decoded,duration:32.4,audioPeakDb:peak,musicSha256:music.sha256,fullDecode:'passed',
+  width:1080,height:1920,fps:FPS,frames:decoded,duration:duration(data),audioPeakDb:peak,musicSha256:music.sha256,fullDecode:'passed',
   layoutVersion:SAFE.version,coverOffsetMs:SAFE.coverOffsetMs};
 }

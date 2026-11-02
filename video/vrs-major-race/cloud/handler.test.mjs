@@ -56,7 +56,7 @@ test('monthly artifacts and captions stay scoped to their own month',async()=>{
  const writes=[];
  const handle=createHandler({...options,storeFactory:()=>({put:async(...a)=>writes.push(a)}),renderer:async(data,dir)=>{
   assert.equal(data.rankMode,'absolute');await fs.writeFile(`${dir}/video.mp4`,'test');await fs.writeFile(`${dir}/preview.png`,'png');
-  return {file:`${dir}/video.mp4`,preview:`${dir}/preview.png`,sha256:'b'.repeat(64),frames:1944};
+  return {file:`${dir}/video.mp4`,preview:`${dir}/preview.png`,sha256:'b'.repeat(64),frames:1320};
  }});
  const response=await handle({job:'monthly',month:'2026-09',dry_run:false});assert.equal(response.statusCode,200);
  assert.equal(writes.length,6);assert.ok(writes.every(([key])=>key.startsWith('vrs-monthly/2026-09/')));

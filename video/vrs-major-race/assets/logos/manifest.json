@@ -160,5 +160,17 @@
     "file": "thunder-downunder.png",
     "sourceUrl": "https://img-cdn.hltv.org/teamlogo/bSRhbVtvK3S64DVmh5XIgi.png?ixlib=java-2.1.0&w=100&s=f10b93580ed7cedd75bb09298d76f6ff",
     "capturedOn": "2026-10-13"
+  },
+  {
+    "name": "1w Team",
+    "file": "1w-team.png",
+    "sourceUrl": "https://cdn.steamstatic.com/apps/dota2/teamlogos/9255039.png",
+    "capturedOn": "2026-11-01"
+  },
+  {
+    "name": "100 Thieves",
+    "file": "100-thieves.png",
+    "sourceUrl": "https://twogpedia.com/images/7/78/100thieves.png?version=2617205c482e0db7f9e7f2af09b6afd2",
+    "capturedOn": "2026-11-01"
   }
 ]

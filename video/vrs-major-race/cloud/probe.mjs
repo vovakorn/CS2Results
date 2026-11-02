@@ -7,7 +7,8 @@ const response=await handler(process.argv[3]==='monthly'?{job:'monthly',month:'2
  {job:'render',region:'americas',dry_run:true,render_probe:true});
 assert.equal(response.statusCode,200,response.body);
 const result=JSON.parse(response.body);
-assert.equal(result.render.frames,1944);assert.equal(result.render.width,1080);assert.equal(result.render.height,1920);
-assert.equal(result.render.fps,60);assert.equal(result.render.duration,32.4);assert.ok(result.render.audioPeakDb<0);
+const monthly=process.argv[3]==='monthly';
+assert.equal(result.render.frames,monthly?1320:1944);assert.equal(result.render.width,1080);assert.equal(result.render.height,1920);
+assert.equal(result.render.fps,60);assert.equal(result.render.duration,monthly?22:32.4);assert.ok(result.render.audioPeakDb<0);
 assert.equal(result.render.layoutVersion,'instagram-safe-v1');assert.equal(result.render.coverOffsetMs,500);
 console.log(JSON.stringify(result));

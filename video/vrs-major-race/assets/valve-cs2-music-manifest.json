@@ -1,0 +1,15 @@
+{
+  "label": "Valve Studio Orchestra - Counter-Strike 2",
+  "artist": "Valve Studio Orchestra",
+  "track": "Counter-Strike 2",
+  "sourceUrl": "https://www.youtube.com/watch?v=Wae5dgajn1E",
+  "sourceRangeSeconds": [
+    0,
+    22
+  ],
+  "duration": 22,
+  "rate": 48000,
+  "channels": 2,
+  "processing": "LUFS -14 / true peak -2 dB target; 150 ms fade-in; 1.2 s fade-out",
+  "sha256": "6c5fbb29986398deacd0f3307113d9d3fa86305176aa1177790b1b7ccdc518a9"
+}

@@ -314,7 +314,8 @@
   "match_rules": [
     {
       "theme_key": "iem-beijing", "scope": "event",
-      "names": ["IEM Beijing 2026", "Intel Extreme Masters Beijing 2026"],
+      "names": ["IEM Beijing 2026", "Intel Extreme Masters Beijing 2026",
+        "IEM Beijing season 2026", "Intel Extreme Masters Beijing season 2026"],
       "paths": ["Intel Extreme Masters/2026/Beijing"]
     },
     {

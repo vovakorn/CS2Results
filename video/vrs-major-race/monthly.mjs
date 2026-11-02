@@ -26,40 +26,40 @@ export function prepareMonthlyWorld(raw,{month,collectedOn,inputSha256}={}){
     Date.parse(period.end)-Date.parse(inside.at(-1).date.slice(0,10))>7*86400000)throw Error('Monthly source coverage is incomplete');
  const records=[before,...inside];
  const sorted=s=>Object.values(s.extradata).sort((a,b)=>a.place-b.place);
- const closing=sorted(records.at(-1)).slice(0,20);
- if(closing.length!==20||closing.some((r,i)=>r.place!==i+1||!canonical(r.opponent.template)))throw Error('Unreviewed world top 20');
- const names=closing.map(r=>canonical(r.opponent.template));
- if(new Set(names).size!==20)throw Error('Ambiguous final world identities');
- const selected=new Set(names),duplicateChoices=[];
- const snapshots=records.map(s=>{
-  const best=new Map();
-  for(const row of sorted(s)){
-   const template=row.opponent.template,name=canonical(template);
-   if(!selected.has(name))continue;
-   if(best.has(name)){duplicateChoices.push({date:s.date.slice(0,10),team:name,other_global_rank:row.place});continue;}
-   const display=identities.names[template];
-   best.set(name,{name,displayName:display,logoName:display,rank:row.place,globalRank:row.place,
-    points:row.points,roster:roster(row.opponent),template});
-  }
-  return {date:s.date.slice(0,10),rows:[...best.values()]};
- });
+ const tops=records.map(s=>sorted(s).slice(0,20));
+ for(const top of tops){
+  if(top.length!==20||top.some((r,i)=>r.place!==i+1||!canonical(r.opponent.template)))throw Error('Unreviewed world top 20');
+  if(new Set(top.map(r=>canonical(r.opponent.template))).size!==20)throw Error('Ambiguous world identities');
+ }
+ const names=[...new Set(tops.flatMap(top=>top.map(r=>canonical(r.opponent.template))))];
+ const duplicateChoices=[];
+ const snapshots=records.map((s,index)=>({date:s.date.slice(0,10),rows:tops[index].map(row=>{
+  const template=row.opponent.template,name=canonical(template),display=identities.names[template];
+  return {name,displayName:display,logoName:display,rank:row.place,globalRank:row.place,
+   points:row.points,roster:roster(row.opponent),template};
+ })}));
  for(const [old,next] of Object.entries(identities.aliases)){
   const a=snapshots.flatMap(s=>s.rows.filter(r=>r.displayName===old));
   const b=snapshots.flatMap(s=>s.rows.filter(r=>r.displayName===next));
   if(a.length&&b.length&&!sameCore(a.at(-1),b[0]))throw Error('Unverified monthly branding bridge');
  }
  return {...catalog,regionCode:'GLOBAL',regionSlug:'world',regionLabel:'МИРОВОЙ РЕЙТИНГ',
-  names,snapshots,duplicateChoices,rankMode:'absolute',period,
-  headline:'VRS · ИТОГИ МЕСЯЦА',subtitle:period.label.toUpperCase(),
+  names,snapshots,duplicateChoices,rankMode:'absolute',period,rankLimit:20,dynamicTop20:true,compactHeader:true,plotTop:454,
+  graphMarkers:'logos',fixedViewport:true,stableTable:true,scoreOnly:true,hideDateTicks:true,hideCurrentDate:true,plotRight:760,
+  soundtrack:'valve-cs2',zoomSeconds:0,endHold:2.8,
+  headline:`VRS · ИТОГИ ${GENITIVE[Number(month.slice(5))-1].toUpperCase()} ${month.slice(0,4)}`,
+  titlePeriod:`${GENITIVE[Number(month.slice(5))-1].toUpperCase()} ${month.slice(0,4)}`,
+  subtitle:'ДИНАМИКА МИРОВОГО РЕЙТИНГА',
   cohortLabel:'МИРОВОЙ РЕЙТИНГ · ТОП-20',sourceLabel:'LIQUIPEDIA VRS',
-  selection:'World top 20 at the last available ranking of the closed month',
+  selection:'World top 20 at each dated ranking of the closed month; entries and exits remain gaps',
   rankDerivation:'Original global rank, never ordinal position within the selected teams',
-  inputSha256,collectedOn,sourceType:'vrs_ranking_live',stepSeconds:25.2/(snapshots.length-1)};
+  inputSha256,collectedOn,sourceType:'vrs_ranking_live',stepSeconds:17.4/(snapshots.length-1)};
 }
 export function monthlyCaptionFor(data){
  return `Изменения VRS по итогам ${data.period.captionLabel}.\n\n`+
-  `Мировой рейтинг: как менялись позиции 20 команд, вошедших в топ-20 на конец месяца. `+
-  `На графике и справа — реальные мировые места.\n\n`+
+  `Мировой рейтинг: как менялся состав топ-20 в течение месяца. `+
+  `На графике — реальные мировые места, справа — очки VRS. `+
+  `Выпавшие команды исчезают, вошедшие появляются. Команды обозначены логотипами; очки округлены до целых.\n\n`+
   `Календарный месяц: ${data.period.start} — ${data.period.end}. `+
   `Начальный рейтинг: ${data.snapshots[0].date}; последний рейтинг месяца: ${data.snapshots.at(-1).date}. `+
   `Показаны доступные датированные рейтинги; пропущенные обновления не восстановлены.\n\n`+

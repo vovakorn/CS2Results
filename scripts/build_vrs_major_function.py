@@ -24,7 +24,7 @@ def build():
     node=shutil.which('node') or str(Path.home()/'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node')
     subprocess.run([node,str(SOURCE/'cloud/build.mjs'),str(OUTPUT)],check=True)
     assets=OUTPUT/'assets';assets.mkdir()
-    for name in ['Arimo-Bold.ttf','Arimo-OFL.txt','road-to-major.wav','music-manifest.json','logos/manifest.json']:
+    for name in ['Arimo-Bold.ttf','Arimo-OFL.txt','road-to-major.wav','music-manifest.json','valve-cs2.wav','valve-cs2-music-manifest.json','logos/manifest.json']:
         target=assets/name;target.parent.mkdir(exist_ok=True);shutil.copyfile(SOURCE/'assets'/name,target)
     for name in ['RussoOne-Regular.ttf','RussoOne-OFL.txt']:
         shutil.copyfile(ROOT/'cs2bot/assets/fonts'/name,assets/name)
