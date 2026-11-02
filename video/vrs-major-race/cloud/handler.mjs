@@ -10,7 +10,7 @@ import {prepareMonthlyWorld,monthlyPeriod,monthlyCaptionFor,MONTHLY_PREFIX} from
 
 const here=path.dirname(fileURLToPath(import.meta.url));
 export const PREFIX=`vrs-major/${CAMPAIGN}/`;
-const summary=data=>({region:data.regionSlug,teams:data.names.length,snapshots:data.snapshots.length,
+const summary=data=>({region:data.regionSlug,teams:data.dynamicTop20?20:data.names.length,...(data.dynamicTop20?{uniqueTeams:data.names.length}:{}),snapshots:data.snapshots.length,
  firstDate:data.snapshots[0].date,lastDate:data.snapshots.at(-1).date,sourceSha256:data.inputSha256});
 
 export function s3Store(env,clientOverride){

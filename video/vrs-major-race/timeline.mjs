@@ -27,14 +27,14 @@ export const positions = (snapshot, names) => {
   return Object.fromEntries(ordered.map(({name}, i) => [name, i + 1]));
 };
 const stepSeconds = data => data.stepSeconds ?? STEP;
-export const duration = (data) => HOLD + stepSeconds(data) * (data.snapshots.length - 1) + ZOOM + END;
+export const duration = (data) => HOLD + stepSeconds(data) * (data.snapshots.length - 1) + (data.zoomSeconds??ZOOM) + (data.endHold??END);
 export const frameCount = (data) => Math.round(duration(data) * FPS);
 const prepared = new WeakMap();
 const prepare = (data) => {
   if (prepared.has(data)) return prepared.get(data);
   const first = Date.parse(`${data.snapshots[0].date}T00:00:00Z`);
   const days = data.snapshots.map((s) => (Date.parse(`${s.date}T00:00:00Z`)-first)/86400000);
-  const rankMax = data.rankMode==='absolute' ? Math.max(...data.snapshots.flatMap(s=>s.rows.map(r=>r.rank))) : data.names.length;
+  const rankMax = data.rankLimit??(data.rankMode==='absolute' ? Math.max(...data.snapshots.flatMap(s=>s.rows.map(r=>r.rank))) : data.names.length);
   const ranks = data.snapshots.map((s) => data.rankMode==='absolute' ?
     Object.fromEntries(data.names.map(name=>[name,s.rows.find(r=>key(r.name)===key(name))?.rank??rankMax+1])) : positions(s,data.names));
   const rows = data.snapshots.map((s) => new Map(s.rows.map((r)=>[key(r.name),r])));
@@ -83,18 +83,19 @@ export const badgePositions = (endpoints, separation, progress) => {
 export const geometry = (data, seconds) => {
   const {days,ranks,row,cores,rankMax} = prepare(data);
   const step=stepSeconds(data);
+  const plot={...PLOT,right:data.plotRight??PLOT.right,top:data.plotTop??PLOT.top};
   const progress = Math.min(data.snapshots.length-1,Math.max(0,(seconds-HOLD)/step));
   const i = Math.min(data.snapshots.length-1,Math.floor(progress+1e-8));
   const fraction = Math.max(0,progress-i);
   const after = Math.min(i+1,data.snapshots.length-1);
   const eased = smooth(fraction);
   const day = days[i]+(days[after]-days[i])*fraction;
-  const zoom = smooth((seconds-HOLD-step*(data.snapshots.length-1))/ZOOM);
-  const left = Math.max(-7,day-35)*(1-zoom);
-  const span = 42*(1-zoom)+days.at(-1)*zoom;
-  const x = (d) => PLOT.left+(PLOT.right-PLOT.left)*(d-left)/span;
-  const y = (position) => PLOT.top+(position-1)*(PLOT.bottom-PLOT.top)/Math.max(1,rankMax-1);
-  const rowY = (position) => PLOT.top+(position-1)*(PLOT.bottom-PLOT.top)/Math.max(1,data.names.length-1);
+  const zoom = data.fixedViewport?0:smooth((seconds-HOLD-step*(data.snapshots.length-1))/ZOOM);
+  const left = data.fixedViewport?0:Math.max(-7,day-35)*(1-zoom);
+  const span = data.fixedViewport?Math.max(1,days.at(-1)):42*(1-zoom)+days.at(-1)*zoom;
+  const x = (d) => plot.left+(plot.right-plot.left)*(d-left)/span;
+  const y = (position) => plot.top+(position-1)*(plot.bottom-plot.top)/Math.max(1,rankMax-1);
+  const rowY = (position) => plot.top+(position-1)*(plot.bottom-plot.top)/Math.max(1,data.names.length-1);
   const animatedRanks = Object.fromEntries(data.names.map((name)=>[name,
     ranks[i][name]+(ranks[after][name]-ranks[i][name])*eased]));
   const endpoints = [];
@@ -102,21 +103,34 @@ export const geometry = (data, seconds) => {
     const beforeRow = row(i,name), afterRow = row(after,name);
     if (beforeRow && (i===after || sameCore(beforeRow,afterRow))) {
       const beforeLogo = beforeRow.logoName || name, afterLogo = afterRow.logoName || name;
-      endpoints.push({id:cores[name][i],name,row:beforeRow,x:x(day),y:y(animatedRanks[name]),y0:y(ranks[i][name]),y1:y(ranks[after][name]),alpha:1,
+      endpoints.push({id:cores[name][i],name,row:beforeRow,points:beforeRow.points+(afterRow.points-beforeRow.points)*eased,x:x(day),y:y(animatedRanks[name]),y0:y(ranks[i][name]),y1:y(ranks[after][name]),alpha:1,
         logoLayers:beforeLogo===afterLogo ? [{name:beforeLogo,alpha:1}] :
           [{name:beforeLogo,alpha:1-eased},{name:afterLogo,alpha:eased}]});
     } else {
-      if (beforeRow) endpoints.push({id:cores[name][i],name,row:beforeRow,x:x(days[i]),
-        y:y(ranks[i][name]),y0:y(ranks[i][name]),y1:y(ranks[i][name]),alpha:1-eased,logoLayers:[{name:beforeRow.logoName||name,alpha:1}]});
-      if (afterRow) endpoints.push({id:cores[name][after],name,row:afterRow,x:x(days[after]),
-        y:y(ranks[after][name]),y0:y(ranks[after][name]),y1:y(ranks[after][name]),alpha:eased,logoLayers:[{name:afterRow.logoName||name,alpha:1}]});
+      if (beforeRow) {
+        const exiting=data.dynamicTop20&&!afterRow,t=Math.min(1,fraction*2);
+        const start=y(ranks[i][name]),target=exiting?plot.bottom+40:start;
+        endpoints.push({id:cores[name][i],name,row:beforeRow,points:beforeRow.points,x:x(data.dynamicTop20?day:days[i]),
+          y:start+(target-start)*smooth(t),y0:start,y1:target,
+          alpha:exiting?1-smooth(Math.max(0,(t-.75)/.25)):1-eased,
+          logoLayers:[{name:beforeRow.logoName||name,alpha:1}]});
+      }
+      if (afterRow) {
+        const entering=data.dynamicTop20&&!beforeRow,t=Math.max(0,fraction*2-1);
+        const target=y(ranks[after][name]),start=entering?plot.bottom+40:target;
+        endpoints.push({id:cores[name][after],name,row:afterRow,points:afterRow.points,x:x(data.dynamicTop20?day:days[after]),
+          y:start+(target-start)*smooth(t),y0:start,y1:target,
+          alpha:entering?smooth(Math.min(1,t/.2)):eased,
+          logoLayers:[{name:afterRow.logoName||name,alpha:1}]});
+      }
     }
   }
-  const offsets = badgePositions(endpoints,data.names.length>20?47:54,eased);
+  const offsets = data.fixedViewport?new Map(endpoints.map(e=>[e.id,e.x])):
+    badgePositions(endpoints,data.names.length>20?47:54,eased);
   const labelMix = i===0?1:smooth((seconds-HOLD-step*i)/.22);
   const ticks = days.map((_,index)=>index).filter((index)=>index%3===0 || index===days.length-1);
   const tickOpacity = (d) => smooth((x(d)-116)/24)*smooth((652-x(d))/24);
-  return {i,fraction,after,days,day,left,span,x,y,rowY,rankMax,ranks,animatedRanks,row,endpoints,offsets,ticks,tickOpacity,labelMix};
+  return {dynamicTop20:data.dynamicTop20,plot,i,fraction,after,days,day,left,span,x,y,rowY,rankMax,ranks,animatedRanks,row,endpoints,offsets,ticks,tickOpacity,labelMix};
 };
 
 // Exact cubic subcurves retain the same shape as the visible end advances.
@@ -136,4 +150,23 @@ export const trace = (g, name) => {
       `${value(x0+dx*limit)} ${value(y0+dy*smooth(limit))} `;
   }
   return path;
+};
+
+// Boundary links animate membership changes without inventing a rank 21+ observation.
+export const boundaryTrace = (g,name) => {
+ if(!g.dynamicTop20)return '';
+ let path='';
+ for(let k=0;k<=g.i&&k+1<g.days.length;k++){
+  const before=g.row(k,name),after=g.row(k+1,name);
+  if(Boolean(before)===Boolean(after))continue;
+  const entry=!before,progress=k===g.i?g.fraction:1;
+  const limit=Math.max(0,Math.min(1,entry?progress*2-1:progress*2));
+  if(limit<=0)continue;
+  const middle=(g.days[k]+g.days[k+1])/2;
+  const x0=g.x(entry?middle:g.days[k]),x1=g.x(entry?g.days[k+1]:middle);
+  const y0=entry?g.plot.bottom+40:g.y(before.rank),y1=entry?g.y(after.rank):g.plot.bottom+40;
+  const dx=x1-x0,dy=y1-y0,v=n=>n.toFixed(3);
+  path+=`M${v(x0)} ${v(y0)} C${v(x0+dx*limit/3)} ${v(y0)} ${v(x0+2*dx*limit/3)} ${v(y0+dy*limit*limit)} ${v(x0+dx*limit)} ${v(y0+dy*smooth(limit))} `;
+ }
+ return path;
 };

@@ -217,3 +217,10 @@ def test_mixed_reel_keeps_shared_header_neutral_and_each_tournament_style():
     visuals = reels._resolve_reel_visuals(matches)
     assert visuals.shared is None
     assert [visuals.by_match[match.match_id].branding.theme_key for match in matches] == ["thunderpick", "fissure"]
+
+@pytest.mark.parametrize("name", ["IEM — Beijing season 2026", "IEM: Beijing season 2026 Playoffs", "Intel Extreme Masters Beijing season 2026"])
+def test_beijing_season_variants_use_the_reviewed_yellow_event_theme(name):
+    brand = branding_for_tournament(name)
+    assert brand.theme_key == "iem-beijing"
+    assert brand.accent == "#FFFF2E"
+    assert branding_for_tournament("IEM Cologne season 2026").theme_key == "iem-base"

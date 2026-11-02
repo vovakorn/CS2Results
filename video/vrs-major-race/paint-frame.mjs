@@ -1,12 +1,13 @@
-import {geometry,trace,fullDate,shortDate,valueLabel} from './timeline.mjs';
+import {geometry,trace,boundaryTrace,fullDate,shortDate,valueLabel,duration} from './timeline.mjs';
 import {SAFE,PLOT,TABLE,COVER_HOLD,COVER_FADE} from './layout.mjs';
 const WHITE='#f2f5f8', MUTED='#92a3b1';
 const rgba=(hex,alpha)=>`rgba(${parseInt(hex.slice(1,3),16)},${parseInt(hex.slice(3,5),16)},${parseInt(hex.slice(5,7),16)},${alpha})`;
 export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
- const dense=data.names.length>20,headSize=dense?36:42;
- const sprites=new Map(),tables=new Map(),dates=new Map();
+ const dense=data.names.length>20,headSize=data.fixedViewport?34:dense?36:42;
+ const sprites=new Map(),tables=new Map(),dates=new Map(),logoCrops=new WeakMap();
  const base=makeCanvas(1080,1920),b=base.getContext('2d');
- const initial=geometry(data,0);
+ const initial=geometry(data,0),plot=initial.plot;
+ const dateTop=data.compactHeader?350:426,labelsTop=data.compactHeader?420:496;
  function text(c,x,y,size,content,color=WHITE,align='left',title=false,maxWidth){
   c.fillStyle=color;
   const setFont=()=>{c.font=title?`${size}px "VRS Russo"`:`700 ${size}px Arial`;};
@@ -39,13 +40,34 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
   const dw=image.width*scale,dh=image.height*scale;
   c.drawImage(image,x+(w-dw)/2,y+(h-dh)/2,dw,dh);
  }
+ function fittedLogo(c,image,x,y,size){
+  if(!data.scoreOnly){imageFit(c,image,x,y,size,size);return;}
+  let crop=logoCrops.get(image);
+  if(!crop){
+   const scan=makeCanvas(image.width,image.height),ctx=scan.getContext('2d');ctx.drawImage(image,0,0);
+   const pixels=ctx.getImageData(0,0,image.width,image.height).data;
+   const corner=[0,image.width-1,(image.height-1)*image.width,image.width*image.height-1].map(i=>[...pixels.slice(i*4,i*4+4)]);
+   const background=corner[0],opaque=corner.every(v=>v[3]>250&&v.slice(0,3).every((value,k)=>Math.abs(value-background[k])<=8));
+   let left=image.width,top=image.height,right=-1,bottom=-1;
+   for(let sy=0;sy<image.height;sy++)for(let sx=0;sx<image.width;sx++){
+    const i=(sy*image.width+sx)*4;
+    if(pixels[i+3]<=16||opaque&&[0,1,2].every(k=>Math.abs(pixels[i+k]-background[k])<=12))continue;
+    left=Math.min(left,sx);top=Math.min(top,sy);right=Math.max(right,sx);bottom=Math.max(bottom,sy);
+   }
+   crop=right>=left?{x:left,y:top,w:right-left+1,h:bottom-top+1}:{x:0,y:0,w:image.width,h:image.height};
+   logoCrops.set(image,crop);
+  }
+  const scale=Math.min(size/crop.w,size/crop.h),w=crop.w*scale,h=crop.h*scale;
+  c.drawImage(image,crop.x,crop.y,crop.w,crop.h,x+(size-w)/2,y+(size-h)/2,w,h);
+ }
  function sprite(name,logoName,size){
   const key=[name,logoName,size].join('|');if(sprites.has(key))return sprites.get(key);
-  const canvas=makeCanvas(size,size),c=canvas.getContext('2d');
+  const ratio=data.scoreOnly?2:1,canvas=makeCanvas(size*ratio,size*ratio),c=canvas.getContext('2d');
+  c.scale(ratio,ratio);c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';
   const plate=data.logoPlates.includes(logoName)?'#eaf0f5':'#111b25';
   circle(c,size/2,size/2,size/2-1,plate,data.palette[name],2);
   c.save();c.beginPath();c.arc(size/2,size/2,size/2-2,0,Math.PI*2);c.clip();
-  if(images[logoName])imageFit(c,images[logoName],6,6,size-12,size-12);
+  if(images[logoName]){const padding=data.scoreOnly?4:6;fittedLogo(c,images[logoName],padding,padding,size-2*padding);}
   else{
    c.font=`700 ${size/2}px Arial`;c.fillStyle=data.palette[name];c.textAlign='center';c.textBaseline='middle';
    c.fillText(logoName.slice(0,2),size/2,size/2);
@@ -55,9 +77,9 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
  function badge(c,name,layers,x,y,size,alpha=1){
   if(alpha<=0)return;
   c.save();c.globalAlpha=alpha;
-  c.drawImage(sprite(name,layers[0].name,size),x-size/2,y-size/2);
+  c.drawImage(sprite(name,layers[0].name,size),x-size/2,y-size/2,size,size);
   for(const layer of layers.slice(1)){
-   c.globalAlpha=alpha*layer.alpha;c.drawImage(sprite(name,layer.name,size),x-size/2,y-size/2);
+   c.globalAlpha=alpha*layer.alpha;c.drawImage(sprite(name,layer.name,size),x-size/2,y-size/2,size,size);
   }c.restore();
  }
  b.fillStyle='#060a10';b.fillRect(0,0,1080,1920);
@@ -65,16 +87,23 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
  radial.addColorStop(0,'#14253288');radial.addColorStop(1,'#14253200');b.fillStyle=radial;b.fillRect(0,0,1080,1920);
  const header=b.createLinearGradient(88,258,912,480);
  header.addColorStop(0,'#15374bbf');header.addColorStop(.45,'#111d2bef');header.addColorStop(1,'#3b2a19bd');
- round(b,88,258,824,222,22,header,'#9ca8af30');
- circle(b,150,329,54,'#05090e','#efba6666');
- b.save();b.beginPath();b.arc(150,329,53,0,Math.PI*2);b.clip();imageFit(b,projectLogo,96,275,108,108);b.restore();
+ round(b,88,258,824,data.compactHeader?148:222,22,header,'#9ca8af30');
+ const brandY=data.compactHeader?319:329,brandRadius=data.compactHeader?46:54;
+ circle(b,150,brandY,brandRadius,'#05090e','#efba6666');
+ b.save();b.beginPath();b.arc(150,brandY,brandRadius-1,0,Math.PI*2);b.clip();imageFit(b,projectLogo,150-brandRadius,brandY-brandRadius,brandRadius*2,brandRadius*2);b.restore();
+ if(data.compactHeader){
+  text(b,222,294,34,data.headline,WHITE,'left',true,672);
+  text(b,222,365,16,'МИРОВОЙ ТОП-20 · LIQUIPEDIA VRS',MUTED,'left',false,440);
+ }else{
  text(b,222,282,22,'CS2 RESULTS');text(b,894,284,18,'@CS2RESULTS',MUTED,'right');
  text(b,222,329,34,data.headline||'ДОРОГА К MAJOR',WHITE,'left',true,672);
  text(b,222,381,19,data.subtitle||'COLOGNE → SINGAPORE · 2026','#bdc7cd','left',false,660);
  text(b,222,409,18,data.cohortLabel||`${data.regionLabel} · ${data.names.length} КОМАНД`,'#c3d4dd','left',false,660);
  text(b,222,440,16,data.sourceLabel,MUTED,'left',false,410);
  line(b,104,479,896,479,'#c0c8d740');
- for(const [x,label,align] of [[88,'ПОЗ.','left'],[140,data.rankMode==='absolute'?'МИРОВОЕ МЕСТО':`СРЕДИ ${data.names.length} КОМАНД`,'left'],[704,'ОЧКИ VRS','left'],[896,data.rankMode==='absolute'?'#МИР':'#РЕГ','right']])text(b,x,496,16,label,MUTED,align);
+ }
+ const tableHeaders=data.scoreOnly?[[896,'ОЧКИ VRS','right']]:data.stableTable?[[672,'КОМАНДА','left'],[896,'ОЧКИ VRS','right']]:[[704,'ОЧКИ VRS','left'],[896,data.rankMode==='absolute'?'#МИР':'#РЕГ','right']];
+ for(const [x,label,align] of [[88,'ПОЗ.','left'],[140,data.rankMode==='absolute'?'МИРОВОЕ МЕСТО':`СРЕДИ ${data.names.length} КОМАНД`,'left'],...tableHeaders])text(b,x,labelsTop,16,label,MUTED,align);
  b.save();b.globalAlpha=.12;
  circle(b,438,998,220,null,'#a8b5c0',3);circle(b,438,998,160,null,'#a8b5c0',2);
  line(b,180,998,690,998,'#a8b5c0',2);line(b,438,738,438,1254,'#a8b5c0',2);b.restore();
@@ -82,29 +111,34 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
  const gridStep=Math.max(5,Math.ceil(initial.rankMax/50)*5);
  const grid=data.rankMode==='absolute'?[...new Set([1,...Array.from({length:Math.floor(initial.rankMax/gridStep)},(_,i)=>(i+1)*gridStep),initial.rankMax])]:data.names.map((_,i)=>i+1);
  for(const rank of grid){
-  line(b,PLOT.left,initial.y(rank),650,initial.y(rank),'#39556a4d');
-  text(b,118,initial.y(rank)-11,22,rank,'#b8c4cd','right',false,36);
+  line(b,plot.left,initial.y(rank),plot.right+22,initial.y(rank),'#39556a4d');
+  text(b,118,initial.y(rank)-11,data.scoreOnly?24:22,rank,'#b8c4cd','right',false,36);
  }
  function table(index){
   if(tables.has(index))return tables.get(index);
   const canvas=makeCanvas(TABLE.width,TABLE.height),c=canvas.getContext('2d');
   c.fillStyle='#080d13';c.fillRect(0,0,TABLE.width,TABLE.height);
   const g=geometry(data,0);
-  const ordered=[...data.names].sort((a,b)=>g.ranks[index][a]-g.ranks[index][b]);
+  const ordered=data.stableTable?[...data.names]:[...data.names].sort((a,b)=>g.ranks[index][a]-g.ranks[index][b]);
   ordered.forEach((name,slot)=>{
    const row=g.row(index,name),y=g.rowY(slot+1)-TABLE.top,display=row?.displayName||name;
    const title=({'Natus Vincere':'NAVI','BETBOOM':'BetBoom','Ninjas in Pyjamas':'NIP',
     'Chinggis Warriors':'Chinggis W.','THUNDER dOWNUNDER':'THUNDER'})[display]||display;
-   badge(c,name,[{name:row?.logoName||name,alpha:1}],20,y,26);
-   text(c,44,y-(dense?20:23),dense?20:23,title,data.palette[name],'left',false,188);
-   text(c,44,y+2,dense?23:26,row?valueLabel(row.points):'—',row?WHITE:MUTED,'left',false,124);
-   text(c,232,y+5,20,row?`#${row.rank}`:'—','#bdcbd5','right',false,56);
+   if(data.stableTable){
+    text(c,8,y-10,20,title,data.palette[name],'left',false,140);
+    text(c,232,y-10,22,row?valueLabel(row.points):'—',row?WHITE:MUTED,'right',false,82);
+   }else{
+    badge(c,name,[{name:row?.logoName||name,alpha:1}],20,y,26);
+    text(c,44,y-(dense?20:23),dense?20:23,title,data.palette[name],'left',false,188);
+    text(c,44,y+2,dense?23:26,row?valueLabel(row.points):'—',row?WHITE:MUTED,'left',false,124);
+    text(c,232,y+5,20,row?`#${row.rank}`:'—','#bdcbd5','right',false,56);
+   }
   });tables.set(index,canvas);return canvas;
  }
  function date(index){
   if(dates.has(index))return dates.get(index);
   const canvas=makeCanvas(208,50),c=canvas.getContext('2d');
-  c.drawImage(base,690,426,208,50,0,0,208,50);
+  c.drawImage(base,690,dateTop,208,50,0,0,208,50);
   text(c,204,9,30,fullDate(data.snapshots[index].date),WHITE,'right');dates.set(index,canvas);return canvas;
  }
  // The cover occupies the initial hold; ranking movement still starts at 1.8 s.
@@ -117,22 +151,22 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
  c.save();c.beginPath();c.arc(500,596,71,0,Math.PI*2);c.clip();imageFit(c,projectLogo,428,524,144,144);c.restore();
  text(c,500,706,28,'CS2 RESULTS',MUTED,'center');
  text(c,500,810,72,data.headline?'VRS · ИТОГИ':'ДОРОГА К',WHITE,'center',true,744);
- text(c,500,916,88,data.headline?'МЕСЯЦА':'MAJOR','#efba66','center',true,744);
- text(c,500,1070,40,data.subtitle||data.regionLabel,WHITE,'center',true,744);
- text(c,500,1150,28,data.cohortLabel||`${data.regionLabel} · ${data.names.length} КОМАНД`,MUTED,'center',false,744);
+ text(c,500,916,88,data.headline?(data.titlePeriod||'МЕСЯЦА'):'MAJOR','#efba66','center',true,744);
+ text(c,500,1070,40,data.compactHeader?'МИРОВОЙ ТОП-20':data.subtitle||data.regionLabel,WHITE,'center',true,744);
+ if(!data.compactHeader)text(c,500,1150,28,data.cohortLabel||`${data.regionLabel} · ${data.names.length} КОМАНД`,MUTED,'center',false,744);
  text(c,500,1280,26,'@CS2RESULTS',MUTED,'center');
  return function paint(ctx,seconds){
   const g=geometry(data,seconds);ctx.save();ctx.globalAlpha=1;ctx.drawImage(base,0,0);
-  if(g.i>0&&g.labelMix<1){ctx.drawImage(date(g.i-1),690,426);ctx.globalAlpha=g.labelMix;}
-  ctx.drawImage(date(g.i),690,426);ctx.globalAlpha=1;
-  ctx.save();ctx.globalAlpha=Math.min(1,Math.max(0,(seconds-1.8)/.2),Math.max(0,(27-seconds)/.2));
-  text(ctx,894,465,12,`ПЕРЕХОД К ${shortDate(data.snapshots[g.after].date)}`,MUTED,'right');ctx.restore();
-  ctx.save();ctx.beginPath();ctx.rect(132,516,518,1028);ctx.clip();
-  for(const index of g.ticks){ctx.globalAlpha=.27*g.tickOpacity(g.days[index]);line(ctx,g.x(g.days[index]),524,g.x(g.days[index]),1540,'#39556a');}
-  ctx.globalAlpha=.18;line(ctx,g.x(g.day),524,g.x(g.day),1540,'#abc3d2');ctx.globalAlpha=1;
+  if(!data.hideCurrentDate&&g.i>0&&g.labelMix<1){ctx.drawImage(date(g.i-1),690,dateTop);ctx.globalAlpha=g.labelMix;}
+  if(!data.hideCurrentDate)ctx.drawImage(date(g.i),690,dateTop);ctx.globalAlpha=1;
+  ctx.save();ctx.globalAlpha=Math.min(1,Math.max(0,(seconds-1.8)/.2),Math.max(0,(duration(data)-(data.endHold??5.4)-seconds)/.2));
+  if(!data.compactHeader)text(ctx,894,465,12,`ПЕРЕХОД К ${shortDate(data.snapshots[g.after].date)}`,MUTED,'right');ctx.restore();
+  ctx.save();ctx.beginPath();ctx.rect(132,plot.top-24,plot.right+22-132,(data.dynamicTop20?1568:1544)-(plot.top-24));ctx.clip();
+  for(const index of g.ticks){ctx.globalAlpha=.27*g.tickOpacity(g.days[index]);line(ctx,g.x(g.days[index]),plot.top-16,g.x(g.days[index]),1540,'#39556a');}
+  ctx.globalAlpha=.18;line(ctx,g.x(g.day),plot.top-16,g.x(g.day),1540,'#abc3d2');ctx.globalAlpha=1;
   for(const name of data.names){
-   const d=trace(g,name);if(d){
-    const path=makePath(d),gradient=ctx.createLinearGradient(PLOT.left,0,430,0);
+   const d=trace(g,name)+boundaryTrace(g,name);if(d){
+    const path=makePath(d),gradient=ctx.createLinearGradient(plot.left,0,(plot.left+plot.right)/2,0);
     gradient.addColorStop(0,rgba(data.palette[name],.1));gradient.addColorStop(1,data.palette[name]);
     ctx.strokeStyle=gradient;ctx.lineJoin='round';ctx.lineCap='round';
     for(const [width,alpha] of [[12,.065],[8,.18],[4.5,1]]){ctx.lineWidth=width;ctx.globalAlpha=alpha;ctx.stroke(path);}
@@ -143,12 +177,21 @@ export function createPainter(data,{makeCanvas,makePath,images,projectLogo}){
   for(const head of g.endpoints){
    ctx.save();ctx.globalAlpha=head.alpha*Math.min(1,Math.abs(g.offsets.get(head.id)-head.x)/8);
    line(ctx,head.x,head.y,g.offsets.get(head.id),head.y,data.palette[head.name]);circle(ctx,head.x,head.y,3,data.palette[head.name]);ctx.restore();
-   badge(ctx,head.name,head.logoLayers,g.offsets.get(head.id),head.y,headSize,head.alpha);
+   if(data.graphMarkers==='dots'){
+    ctx.save();ctx.globalAlpha=head.alpha;circle(ctx,head.x,head.y,5,data.palette[head.name],WHITE,1);ctx.restore();
+   }else badge(ctx,head.name,head.logoLayers,g.offsets.get(head.id),head.y,headSize,head.alpha);
   }
-  if(g.i>0&&g.labelMix<1){ctx.drawImage(table(g.i-1),TABLE.left,TABLE.top);ctx.globalAlpha=g.labelMix;}
-  ctx.drawImage(table(g.i),TABLE.left,TABLE.top);ctx.globalAlpha=1;
+  if(!data.scoreOnly&&!data.stableTable&&g.i>0&&g.labelMix<1){ctx.drawImage(table(g.i-1),TABLE.left,TABLE.top);ctx.globalAlpha=g.labelMix;}
+  if(data.scoreOnly){
+   for(const head of g.endpoints){
+    ctx.save();ctx.globalAlpha=head.alpha;
+    text(ctx,896,head.y-9,24,Math.round(head.points),data.palette[head.name],'right',false,82);
+    ctx.restore();
+   }
+  }else ctx.drawImage(table(g.i),TABLE.left,TABLE.top);
+  ctx.globalAlpha=1;
   ctx.save();ctx.beginPath();ctx.rect(104,1544,548,26);ctx.clip();
-  for(const index of g.ticks){ctx.globalAlpha=g.tickOpacity(g.days[index]);text(ctx,g.x(g.days[index]),1546,17,shortDate(data.snapshots[index].date),MUTED,'center');}
+  if(!data.hideDateTicks)for(const index of g.ticks){ctx.globalAlpha=g.tickOpacity(g.days[index]);text(ctx,g.x(g.days[index]),1546,17,shortDate(data.snapshots[index].date),MUTED,'center');}
   ctx.restore();
   const coverAlpha=Math.max(0,Math.min(1,(COVER_HOLD+COVER_FADE-seconds)/COVER_FADE));
   if(coverAlpha>0){ctx.globalAlpha=coverAlpha;ctx.drawImage(cover,0,0);}
