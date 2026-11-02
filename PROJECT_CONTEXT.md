@@ -15,6 +15,9 @@
   monthly `d4emfnntuhrp3ie3d1gb`; профили, ACL, Gateway и 9 таймеров прежние,
   radar PAUSED. Октябрьский Reel опубликован 2 ноября в 12:38 МСК;
   подтверждены publisher `published`, journal `sent` и processed marker.
+  Этот же MP4 опубликован 2 ноября в Telegram (14:05 МСК) и Threads
+  (14:06 МСК), для обоих journal и processed подтверждены.
+  [Ссылки и подтверждения](docs/monthly-vrs-reels.md).
   [Протокол и оставшиеся риски](docs/release-vrs-beijing-2026-11-02.md).
 
 ## Рабочие копии

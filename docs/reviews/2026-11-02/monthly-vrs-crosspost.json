@@ -1,0 +1,39 @@
+{
+  "baseGitSha": "7bff77979bbe2b3dc052949a76d0e8f2d9f257a8",
+  "month": "2026-10",
+  "scope": "world",
+  "ownerAuthorized": true,
+  "mode": "one-off crosspost of existing approved Instagram MP4",
+  "runtimeDeploymentChanged": false,
+  "automaticFutureCrosspostConfigured": false,
+  "publications": [
+    {
+      "platform": "telegram",
+      "publicationUid": "telegram_vrs_monthly_world_2026-10",
+      "externalId": "425",
+      "destinationId": "-1002374453107",
+      "confirmedAt": "2026-11-02T11:05:17.590045+00:00",
+      "permalink": "https://t.me/cs2_results/425",
+      "videoSha256": "93a89b8255124663d988d40efc5abe122660ae2ffa2b74e7a52bbc8e1961c670",
+      "caption": "VRS — итоги октября 2026\n\nКак менялся мировой топ-20 за месяц: логотипы команд, места и очки VRS за 22 секунды.\n\nИсточник: LiquipediaDB. Последнее доступное обновление октября — 26.10.2026.\n\nCS2 Results · #CS2 #VRS",
+      "status": "sent",
+      "test": false,
+      "journalVerified": true,
+      "processedVerified": true
+    },
+    {
+      "platform": "threads",
+      "publicationUid": "threads_vrs_monthly_world_2026-10",
+      "externalId": "17921926287452720",
+      "destinationId": "28913873418216153",
+      "confirmedAt": "2026-11-02T11:06:53.508460+00:00",
+      "permalink": "https://www.threads.com/@cs2results/post/DfPKM91Eara",
+      "videoSha256": "93a89b8255124663d988d40efc5abe122660ae2ffa2b74e7a52bbc8e1961c670",
+      "caption": "VRS — итоги октября 2026\n\nКак менялся мировой топ-20 за месяц: логотипы команд, места и очки VRS за 22 секунды.\n\nИсточник: LiquipediaDB. Последнее доступное обновление октября — 26.10.2026.\n\nCS2 Results · #CS2 #VRS",
+      "status": "sent",
+      "test": false,
+      "journalVerified": true,
+      "processedVerified": true
+    }
+  ]
+}

@@ -1,5 +1,16 @@
 # CS2 Results Bot — production-состояние
 
+## Октябрьский месячный VRS дополнительно опубликован — 2 ноября 2026
+
+По прямому разрешению владельца готовый Instagram MP4 без повторного рендера
+опубликован в [Telegram](https://t.me/cs2_results/425) в 14:05 МСК и
+[Threads](https://www.threads.com/@cs2results/post/DfPKM91Eara) в 14:06 МСК.
+Подтверждены API-ответы, независимые journal `sent` и processed marker.
+В Threads дополнительно прочитаны `media_type=VIDEO` и permalink.
+Новых runtime-версий и таймеров нет; автоматический monthly worker по-прежнему
+публикует только в Instagram.
+[Машиночитаемые подтверждения](docs/reviews/2026-11-02/monthly-vrs-crosspost.json).
+
 ## VRS + Beijing выпущены — 2 ноября 2026, 12:33 МСК
 
 [PR #176](https://github.com/vovakorn/CS2Results/pull/176), runtime `28160a3`.

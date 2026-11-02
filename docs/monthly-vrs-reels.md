@@ -11,6 +11,16 @@ PR #156 слит 17 октября 2026; production и автопубликац�
 **2 ноября 2026 в 12:38 МСК**, media ID `18123106912905740`; подтверждены
 API publisher, journal `sent` и processed marker.
 Полные проверки: [production-состояние](../PROJECT_STATUS.md).
+
+2 ноября по отдельному разрешению владельца тот же готовый 22 s MP4 опубликован
+в [Telegram @cs2_results](https://t.me/cs2_results/425) в 14:05 МСК и
+[Threads @cs2results](https://www.threads.com/@cs2results/post/DfPKM91Eara)
+в 14:06 МСК. Для каждого канала независимые UID, claim, journal `sent`
+и processed marker; Threads readback подтверждает `VIDEO` и permalink.
+[Подтверждения](reviews/2026-11-02/monthly-vrs-crosspost.json). Это разовая
+отправка существующего видео: автоматический monthly worker остаётся
+Instagram-only; deploy и таймеры не менялись. Владелец одобрил этот формат
+для всех социальных сетей; остальные площадки этим действием не публиковались.
 Пользователь выбрал **один мировой Reel**, а не три региональных.
 
 Текущий runtime от `28160a3`: рендер `d4e8n07roso4762pf1h4` / production
