@@ -1,10 +1,30 @@
 # CS2 Results Bot — production-состояние
 
+## Месячный VRS-шаблон выпущен — 3 ноября 2026, 09:55 МСК
+
+[PR #178](https://github.com/vovakorn/CS2Results/pull/178), runtime `c4ae6b1`.
+Production Node `d4eh892r0koptunqed5i`, monthly `d4e16a3a96ii5bruumqg`:
+нейтральный CS2-хук для будущих месяцев и короткая подпись владельца.
+CI 1603 Python на 3.11/3.12 / 32 Node, full Linux render/decode успешны.
+После переключения прошли October source, reviewed regional, compatibility
+monthly candidate и production owner/source dry-run. Main, профили/refs/ACL,
+Gateway и девять таймеров сохранены; rollback закреплён, постов не было.
+Владелец отдельно разрешил этим двум точным версиям непроверенные startup-логи
+и прежний regional current-source `502 / prepare` вне месячного формата.
+`normalReleaseGatePassed=false`, `startupLogsChecked=false`, `startupErrorDetected=null`;
+выпуск принят с исключениями, проблема регионального источника не исправлена.
+Автоматизация Telegram/Threads monthly по-прежнему не подключена.
+[Точный протокол](docs/reviews/2026-11-03/vrs-template-promotion.json).
+
 ## Выпуск месячного шаблона разрешён — 2 ноября 2026
 
 Владелец разрешил PR/CI/merge и deploy согласованных Node renderer и monthly
 publisher. Нейтральный хук и короткая подпись готовы, финальный 22 s MP4
-декодирован. Кандидаты ещё не создавались; production прежний.
+декодирован. PR #178 слит (`c4ae6b1`), CI 1603 Python на 3.11/3.12 и 32 Node прошёл.
+Кандидаты: Node `d4eh892r0koptunqed5i`, monthly `d4e16a3a96ii5bruumqg`.
+Render/decode и October source/owner dry-run успешны. Обычный gate не пройден:
+startup-логи недоступны, regional current-source одинаково падает на старом
+и новом Node. Новое разовое решение владельца запрошено; production прежний.
 [Состав, проверки и gate](docs/release-vrs-template-2026-11-02.md).
 
 ## Будущие месячные VRS: нейтральный хук — 2 ноября 2026

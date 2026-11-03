@@ -50,3 +50,60 @@ Node → проверка совместимости monthly → monthly, produc
 не заменяет чтение логов. На этапе этой записи production не переключался.
 Реальный тестовый пост не требуется: текущий октябрь уже доставлен, подтверждён
 и защищён processed marker; проверка релиза выполняется без публикаций.
+
+## Фактическая готовность — 3 ноября 2026
+
+[PR #178](https://github.com/vovakorn/CS2Results/pull/178) слит в runtime SHA
+`c4ae6b119cad380b9f246fc3a4dbbc6622e7aa78`. Обязательный CI прошёл:
+1603 Python-теста на 3.11/3.12, 32 Node, аудит/сборки и полный Linux decode.
+Основная main чистая и синхронизирована. Пакеты собраны из чистого merge checkout;
+старый Xray сохранён по SHA. Профили, pinned references, ACL и таймеры проверены.
+
+| Компонент | Новый кандидат | Пока действующий production / будущий rollback |
+| --- | --- | --- |
+| Node VRS | `d4eh892r0koptunqed5i` | `d4eu39vter6ceq500d7b` |
+| Monthly publisher | `d4e16a3a96ii5bruumqg` | `d4ep0kssaoc2t9i648ru` |
+
+Полные cloud render/decode Americas и monthly прошли. October source нового
+Node, reviewed региональный период до 5 октября, оба dry-run monthly publisher
+(включая source/owner policy) прошли. Новая короткая подпись Node подтверждена.
+Main остаётся `d4eb6521dviu0ieufa5i`, Gateway и все девять таймеров прежние.
+Отправок и переключения production не выполнялось.
+
+Обычный gate не пройден: API чтения startup-логов обеих новых версий отвечает
+`Unavailable`; прямой Cloud Logging также недоступен на lookup default group.
+`startupLogsChecked=false`, `startupErrorDetected=null`, не «ошибок нет».
+Regional current-source на старом и новом Node возвращает один и тот же
+`502 / prepare`; точная причина внутри prepare не установлена. Эта проблема
+существовала до нового шаблона, October monthly ей не затронут.
+
+Владельцу предложено отдельное разовое решение для **этих двух версий**:
+непроверенные startup-логи и сохранение старого regional current-source отказа
+вне месячного формата. До ответа production не переключается, прежнее исключение
+не переиспользуется. Новые гарантии не объявляются успешными задним числом.
+[Проверяемый протокол](reviews/2026-11-03/vrs-template-readiness.json).
+Raw manifests/ответы сохранены в `/private/tmp/cs2-vrs-template-release-20261102`.
+
+## Production обновлён — 3 ноября 2026, 09:55 МСК
+
+Владелец отдельно разрешил оба исключения только версиям
+`d4eh892r0koptunqed5i` (Node) и `d4e16a3a96ii5bruumqg` (monthly).
+Они переведены на `production` из runtime SHA `c4ae6b1`; прежние версии
+`d4eu39vter6ceq500d7b` и `d4ep0kssaoc2t9i648ru` закреплены как rollback.
+Порядок: Node → October source/короткая подпись и reviewed regional dry-run →
+compatibility dry-run monthly candidate → monthly → production dry-run.
+Все четыре контрольных вызова успешны. Точные теги, профили, pinned references,
+ACL, Gateway и девять таймеров сверены до/после; main остался
+`d4eb6521dviu0ieufa5i`. Новых постов не отправлялось.
+
+Нормальный gate не переписан как успешный: `normalReleaseGatePassed=false`,
+`startupLogsChecked=false`, `startupErrorDetected=null`.
+`releaseAccepted=true`, `acceptedWithExceptions=true` отражают новое решение
+владельца; региональный current-source не исправлен. Следующие выпуски требуют
+обычных проверок, эти исключения не переносятся.
+
+Нейтральный хук и короткая подпись действуют для будущих вновь созданных
+месячных render/container. Существующие посты, prepared/pending и processed
+не менялись. Автоматизация Telegram/Threads всё ещё отдельная задача.
+Runtime source — `c4ae6b1`; более новая документация не требует нового deploy.
+[Фактическое переключение](reviews/2026-11-03/vrs-template-promotion.json).
