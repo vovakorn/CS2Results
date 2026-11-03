@@ -15,6 +15,9 @@
   monthly `d4emfnntuhrp3ie3d1gb`; профили, ACL, Gateway и 9 таймеров прежние,
   radar PAUSED. Октябрьский Reel опубликован 2 ноября в 12:38 МСК;
   подтверждены publisher `published`, journal `sent` и processed marker.
+  Этот же MP4 опубликован 2 ноября в Telegram (14:05 МСК) и Threads
+  (14:06 МСК), для обоих journal и processed подтверждены.
+  [Ссылки и подтверждения](docs/monthly-vrs-reels.md).
   [Протокол и оставшиеся риски](docs/release-vrs-beijing-2026-11-02.md).
 
 ## Рабочие копии
@@ -31,6 +34,28 @@
   Runtime-логотип карточек `cs2bot/assets/channel-logo.png` не менялся.
 
 ## Следующие задачи и источники
+
+- Владелец 2 ноября разрешил общий release-цикл нового месячного шаблона:
+  Node renderer + monthly publisher, нейтральный хук и короткая подпись.
+  [Состав и обязательные gates](docs/release-vrs-template-2026-11-02.md).
+  Production пока прежний; автодоставка Telegram/Threads вне этого diff.
+
+
+- Для будущих месячных выпусков утверждён стандартный хук:
+  «КАК ИЗМЕНИЛСЯ / РЕЙТИНГ CS2?». Шаблон обновлён локально,
+  32 Node-теста и safe-zone/crop проверки прошли; кадр 500 ms просмотрен.
+  [Правило и статус](docs/monthly-vrs-reels.md).
+  Ветка `codex/monthly-vrs-hook-20261102`; production renderer ещё прежний.
+  Опубликованный 2 ноября в 15:36 МСК [Instagram-пост](https://www.instagram.com/reel/DfPUcNDjhXZ/)
+  с прежним хуком «КТО ВЗЛЕТЕЛ» остаётся без изменений.
+
+- Правило владельца от 2 ноября: месячный VRS выходит в Telegram, Instagram
+  и Threads с [единой короткой подписью](docs/monthly-vrs-reels.md).
+  Это правило для будущих ежемесячных выпусков; текущие посты не менять.
+  Исходная Telegram-подпись восстановлена, Instagram/Threads не менялись.
+  Шаблон в коде подготовлен локально: 21 Python / 8 Node.
+  Подключить автоматическую месячную доставку Telegram/Threads; сейчас
+  production worker по-прежнему только Instagram. Новых deploy не было.
 
 - Октябрьский VRS опубликован, media ID `18123106912905740`; проверить
   отображение/звук в реальном Instagram UI отдельно при следующем просмотре.

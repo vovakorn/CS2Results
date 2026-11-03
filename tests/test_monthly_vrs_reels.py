@@ -127,7 +127,10 @@ def test_prepared_video_is_reused_after_container_creation_failure(monkeypatch):
     monkeypatch.setattr(monthly, "request_render", forbidden)
     monkeypatch.setattr(monthly, "_video", lambda r: b"video")
     monkeypatch.setattr(monthly.instagram, "upload_public_reel", lambda *a: "https://media/reel.mp4")
-    monkeypatch.setattr(monthly.instagram, "create_reel_container", lambda *a: "9876")
+    def create_container(url, caption, context):
+        assert caption == "VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB."
+        return "9876"
+    monkeypatch.setattr(monthly.instagram, "create_reel_container", create_container)
     monkeypatch.setattr(monthly, "_first_write", lambda key, state: state)
     assert monthly.prepare("2026-10", None, 0)["container_id"] == "9876"
 
@@ -234,3 +237,12 @@ def test_renderer_uses_private_iam_production_tag_and_read_only_source_probe(mon
         return Response()
     monkeypatch.setattr(monthly.requests, "post", post)
     assert monthly.request_render("2026-10", None, dry_run=True)["dry_run"] is True
+
+
+def test_new_caption_receipt_is_accepted_and_must_match_its_month():
+    data = receipt()
+    data["render"]["caption"] = monthly.monthly_caption("2026-10")
+    assert monthly._receipt(data, "2026-10")["caption"] == data["render"]["caption"]
+    data["render"]["caption"] = monthly.monthly_caption("2026-09")
+    with pytest.raises(ValueError, match="receipt"):
+        monthly._receipt(data, "2026-10")

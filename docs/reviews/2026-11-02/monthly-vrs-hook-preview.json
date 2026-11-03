@@ -1,0 +1,84 @@
+{
+  "status": "local_preview_not_deployed_or_published",
+  "worktree": "/private/tmp/cs2-monthly-vrs-hook-20261102",
+  "branch": "codex/monthly-vrs-hook-20261102",
+  "taskBaseGitSha": "7bff77979bbe2b3dc052949a76d0e8f2d9f257a8",
+  "priorOwnWorkCarriedForward": [
+    "e1ecb0e",
+    "3013c77",
+    "6d0a15b"
+  ],
+  "source": "reviewed October 2026 Liquipedia fixture; no live API or publishing calls",
+  "hook": {
+    "title": [
+      "КТО ВЗЛЕТЕЛ",
+      "В РЕЙТИНГЕ CS2?"
+    ],
+    "game": "COUNTER-STRIKE 2",
+    "holdSeconds": 0.9,
+    "fadeSeconds": 0.3,
+    "goneAtSeconds": 1.2,
+    "featuredLogos": "top three teams of the baseline, not winners or greatest monthly gainers",
+    "bounds": [
+      226,
+      600,
+      800,
+      1210
+    ],
+    "persistentHeader": "CS2 · МИРОВОЙ РЕЙТИНГ",
+    "headerHeightPx": 148
+  },
+  "render": {
+    "file": "/private/tmp/cs2-monthly-vrs-hook-20261102/build/monthly-hook/reel.mp4",
+    "preview": "/private/tmp/cs2-monthly-vrs-hook-20261102/build/monthly-hook/preview.png",
+    "sha256": "c68d00f8dc18c000f6202297d572a923dd7847c95f027d851930b60ed66f3666",
+    "bytes": 5430204,
+    "width": 1080,
+    "height": 1920,
+    "fps": 60,
+    "frames": 1320,
+    "duration": 22,
+    "audioPeakDb": -1.9,
+    "musicSha256": "6c5fbb29986398deacd0f3307113d9d3fa86305176aa1177790b1b7ccdc518a9",
+    "fullDecode": "passed",
+    "layoutVersion": "instagram-safe-v1",
+    "coverOffsetMs": 500
+  },
+  "checks": {
+    "nodeTestsPassed": 32,
+    "pythonMonthlyPublisherTestsPassed": 21,
+    "safeZoneAndVisibleRankingTestsPassed": 2,
+    "monthlyFixtures": [
+      "2026-09",
+      "2026-10"
+    ],
+    "allThreeRegionsChecked": true,
+    "actualDecodedFrames": [
+      0.5,
+      1.3
+    ],
+    "coverSquareCrop": [
+      0,
+      420,
+      1080,
+      1500
+    ],
+    "coverPortraitCrop": [
+      0,
+      285,
+      1080,
+      1635
+    ],
+    "rankingAndScoresUnobscuredAtSeconds": [
+      0,
+      0.5,
+      0.95,
+      1.05,
+      1.3
+    ],
+    "missingLogosPreviewReviewed": true,
+    "fullDecode": "passed"
+  },
+  "publicationChanged": false,
+  "productionChanged": false
+}

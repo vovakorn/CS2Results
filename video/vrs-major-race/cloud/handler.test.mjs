@@ -47,7 +47,7 @@ test('monthly dry run is one world ranking with a closed month and no side effec
  const response=await handle({job:'monthly',month:'2026-09'});assert.equal(response.statusCode,200);
  const body=JSON.parse(response.body);assert.equal(body.month,'2026-09');assert.equal(body.regions.length,1);
  assert.equal(body.regions[0].region,'world');assert.equal(body.regions[0].teams,20);
- assert.match(body.caption,/по итогам сентября 2026 года/);
+ assert.equal(body.caption,'VRS — итоги сентября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.');
  for(const event of [{job:'monthly',month:'2026-10'},{job:'monthly',month:'2026-09',region:'europe'},
   {job:'monthly',month:'2026-09',through:'2026-10-01'},
   {job:'monthly',month:'2026-09',source_key:`${PREFIX}sources/${'a'.repeat(64)}.json`}])assert.equal((await handle(event)).statusCode,400);

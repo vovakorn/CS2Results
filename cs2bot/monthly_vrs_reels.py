@@ -38,6 +38,15 @@ def validate_month(month: str, now: datetime) -> str:
     return month
 
 
+def monthly_caption(month: str) -> str:
+    if not isinstance(month, str) or not re.fullmatch(r"20\d{2}-(0[1-9]|1[0-2])", month):
+        raise ValueError("invalid month")
+    months = ("января", "февраля", "марта", "апреля", "мая", "июня",
+              "июля", "августа", "сентября", "октября", "ноября", "декабря")
+    label = f"{months[int(month[5:]) - 1]} {month[:4]}"
+    return f"VRS — итоги {label}\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB."
+
+
 def _uid(month: str) -> str:
     return f"instagram_vrs_monthly_world_{month}"
 
@@ -126,7 +135,9 @@ def _receipt(receipt: dict[str, Any], month: str) -> dict[str, Any]:
         or not re.fullmatch(r"[a-f0-9]{64}", media.get("sha256", ""))
         or key.split("/")[-2] != media["sha256"]
         or key.split("/")[-3] != result["sourceKey"].split("/")[-1][:-5]
-        or not isinstance(result.get("caption"), str) or not result["caption"].startswith("Изменения VRS по итогам ")):
+        or not isinstance(result.get("caption"), str)
+        or not (result["caption"] == monthly_caption(month)
+                or result["caption"].startswith("Изменения VRS по итогам "))):
         raise ValueError("invalid monthly render receipt")
     return result
 
@@ -175,7 +186,7 @@ def prepare(month: str, context: Any, generation: int) -> dict[str, Any] | None:
         if not allowed or receipt["generation"] != current:
             return None
         url = instagram.upload_public_reel(_uid(month), _video(result))
-        container = instagram.create_reel_container(url, result["caption"], context)
+        container = instagram.create_reel_container(url, monthly_caption(month), context)
         return _pending(_first_write(pending_key, {"month": month, "generation": receipt["generation"],
             "container_id": container, "created_at": datetime.now(timezone.utc).isoformat()}), month)
     finally:

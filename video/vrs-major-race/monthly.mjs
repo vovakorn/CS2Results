@@ -47,7 +47,9 @@ export function prepareMonthlyWorld(raw,{month,collectedOn,inputSha256}={}){
   names,snapshots,duplicateChoices,rankMode:'absolute',period,rankLimit:20,dynamicTop20:true,compactHeader:true,plotTop:454,
   graphMarkers:'logos',fixedViewport:true,stableTable:true,scoreOnly:true,hideDateTicks:true,hideCurrentDate:true,plotRight:760,
   soundtrack:'valve-cs2',zoomSeconds:0,endHold:2.8,
-  headline:`VRS · ИТОГИ ${GENITIVE[Number(month.slice(5))-1].toUpperCase()} ${month.slice(0,4)}`,
+  headline:'CS2 · МИРОВОЙ РЕЙТИНГ',introHook:true,
+  hookTitle:['КАК ИЗМЕНИЛСЯ','РЕЙТИНГ CS2?'],hookGame:'COUNTER-STRIKE 2',
+  hookPeriod:`${period.label.toUpperCase()} · МИРОВОЙ ТОП-20`,
   titlePeriod:`${GENITIVE[Number(month.slice(5))-1].toUpperCase()} ${month.slice(0,4)}`,
   subtitle:'ДИНАМИКА МИРОВОГО РЕЙТИНГА',
   cohortLabel:'МИРОВОЙ РЕЙТИНГ · ТОП-20',sourceLabel:'LIQUIPEDIA VRS',
@@ -56,13 +58,6 @@ export function prepareMonthlyWorld(raw,{month,collectedOn,inputSha256}={}){
   inputSha256,collectedOn,sourceType:'vrs_ranking_live',stepSeconds:17.4/(snapshots.length-1)};
 }
 export function monthlyCaptionFor(data){
- return `Изменения VRS по итогам ${data.period.captionLabel}.\n\n`+
-  `Мировой рейтинг: как менялся состав топ-20 в течение месяца. `+
-  `На графике — реальные мировые места, справа — очки VRS. `+
-  `Выпавшие команды исчезают, вошедшие появляются. Команды обозначены логотипами; очки округлены до целых.\n\n`+
-  `Календарный месяц: ${data.period.start} — ${data.period.end}. `+
-  `Начальный рейтинг: ${data.snapshots[0].date}; последний рейтинг месяца: ${data.snapshots.at(-1).date}. `+
-  `Показаны доступные датированные рейтинги; пропущенные обновления не восстановлены.\n\n`+
-  `Источник: LiquipediaDB vrs_ranking_live. Получено ${data.collectedOn}.\n`+
-  `CS2 Results · @cs2results\n#CS2 #VRS #CS2Results`;
+ const label=data.period.captionLabel.replace(/ года$/,'');
+ return `VRS — итоги ${label}\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.`;
 }

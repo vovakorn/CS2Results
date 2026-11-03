@@ -15,11 +15,12 @@ test('calendar boundaries handle leap years, December and reject open/invalid mo
 test('one world top-20 uses a real baseline and no rankings outside the reporting month',()=>{
  const data=prepareMonthlyWorld(fixture(),options);
  assert.equal(data.names.length,25);assert.equal(data.regionSlug,'world');
- assert.equal(data.headline,'VRS · ИТОГИ СЕНТЯБРЯ 2026');
+ assert.equal(data.headline,'CS2 · МИРОВОЙ РЕЙТИНГ');
+ assert.equal(data.hookPeriod,'СЕНТЯБРЬ 2026 · МИРОВОЙ ТОП-20');
  assert.deepEqual(data.snapshots.map(s=>s.date),['2026-08-31','2026-09-07','2026-09-14','2026-09-21','2026-09-28']);
  assert.deepEqual(data.snapshots.at(-1).rows.map(r=>r.rank),Array.from({length:20},(_,i)=>i+1));
  assert.equal(frameCount(data),1320);
- assert.match(monthlyCaptionFor(data),/^Изменения VRS по итогам сентября 2026 года\./);
+ assert.equal(monthlyCaptionFor(data),'VRS — итоги сентября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.');
  assert.ok(!monthlyCaptionFor(data).includes('#Major'));
 });
 test('every dated ranking contains exactly top 20 and the viewport never extends below place 20',()=>{
@@ -47,7 +48,10 @@ test('missing boundary coverage and unreviewed selected identities stop the mont
 test('October world top-20 includes reviewed 1w Team and 100 Thieves with their original ranks',()=>{
  const raw=JSON.parse(gunzipSync(fs.readFileSync(new URL('./fixtures/liquipedia-october-2026.json.gz',import.meta.url))));
  const data=prepareMonthlyWorld(raw,{month:'2026-10',collectedOn:'2026-11-01'});
- assert.equal(data.headline,'VRS · ИТОГИ ОКТЯБРЯ 2026');
+ assert.equal(data.headline,'CS2 · МИРОВОЙ РЕЙТИНГ');
+ assert.deepEqual(data.hookTitle,['КАК ИЗМЕНИЛСЯ','РЕЙТИНГ CS2?']);
+ assert.equal(data.hookGame,'COUNTER-STRIKE 2');
+ assert.equal(data.hookPeriod,'ОКТЯБРЬ 2026 · МИРОВОЙ ТОП-20');
  assert.equal(data.titlePeriod,'ОКТЯБРЯ 2026');
  assert.equal(data.snapshots.length,5);assert.equal(data.names.length,26);
  assert.equal(data.snapshots[0].date,'2026-09-28');assert.equal(data.snapshots.at(-1).date,'2026-10-26');
@@ -57,7 +61,7 @@ test('October world top-20 includes reviewed 1w Team and 100 Thieves with their 
   assert.match(data.palette[name],/^#[a-f0-9]{6}$/i);
   assert.match(data.logos[row.logoName],/^data:image\/png;base64,/);
  }
- assert.match(monthlyCaptionFor(data),/^Изменения VRS по итогам октября 2026 года\./);
+ assert.equal(monthlyCaptionFor(data),'VRS — итоги октября 2026\nКак менялся мировой топ-20 за месяц\n\nИсточник: LiquipediaDB.');
 });
 
 test('monthly logos stay on their traces and advance on a fixed time axis without dodging or rewind',()=>{

@@ -57,15 +57,21 @@ test('world and all regional frames keep measured labels inside safe bounds; cov
   const images=Object.fromEntries(await Promise.all(Object.entries(data.logos).map(async([k,v])=>[k,await loadImage(v)])));
   const paint=createPainter(data,{makeCanvas,makePath:d=>new Path2D(d),images,projectLogo});
   const canvas=makeCanvas(1080,1920),ctx=canvas.getContext('2d');
-  for(const seconds of [0,.5,1.2,1.4,1.6,1.8,2.3,17.1,17.7,21,21.983]){
+  for(const seconds of [0,.5,.95,1.05,1.2,1.3,1.4,1.6,1.8,2.3,17.1,17.7,21,21.983]){
    const g=geometry(data,seconds),radius=data.fixedViewport?17:data.names.length>20?18:21;
    assert.ok(g.endpoints.every(e=>inside([g.offsets.get(e.id)-radius,e.y-radius,
                                         g.offsets.get(e.id)+radius,e.y+radius])));
    const boxes=labels.get(canvas);boxes.length=0;paint(ctx,seconds);
    assert.ok(boxes.length);
-   if(data.compactHeader&&seconds>=1.8){
+   if(data.compactHeader){
     assert.ok(boxes.some(v=>v.value===data.headline));
     assert.ok(!boxes.some(v=>v.value===data.subtitle||v.value===data.cohortLabel));
+    const hookLabels=[...data.hookTitle,data.hookGame,data.hookPeriod];
+    for(const value of hookLabels){
+     assert.equal(boxes.some(v=>v.value===value),seconds<1.2,
+      `${value} must ${seconds<1.2?'remain visible':'disappear'} at ${seconds}s`);
+    }
+    assert.ok(!boxes.some(v=>v.value==='VRS · ИТОГИ'),'monthly frames must not draw the legacy cover');
    }
    if(data.scoreOnly){
     assert.ok(!boxes.some(v=>v.value==='КОМАНДА'||v.value==='#МИР'));
@@ -92,10 +98,35 @@ test('world and all regional frames keep measured labels inside safe bounds; cov
    }
    assert.deepEqual(boxes.filter(v=>!inside(v.box)),[],`${data.regionSlug} @ ${seconds}s`);
    if(seconds===.5){
-    for(const value of data.headline?['VRS · ИТОГИ',data.titlePeriod]:['ДОРОГА К','MAJOR']){
+    const coverLabels=data.compactHeader?[...data.hookTitle,data.hookGame,data.hookPeriod]:['ДОРОГА К','MAJOR'];
+    for(const value of coverLabels){
      const title=boxes.find(v=>v.value===value);assert.ok(title);
      assert.ok(inside(title.box,[80,420,920,1500]),value);
+     assert.ok(inside(title.box,[80,285,920,1635]),`${value} must survive the portrait crop`);
     }
+   }
+  }
+ }
+});
+
+test('monthly hook preserves the actual ranking logos and scores from the first frame',async()=>{
+ const october=JSON.parse(gunzipSync(fs.readFileSync(new URL('../fixtures/liquipedia-october-2026.json.gz',import.meta.url))));
+ for(const data of [prepareMonthlyWorld(october,{month:'2026-10',collectedOn:'2026-11-01'}),
+  prepareMonthlyWorld(raw,{month:'2026-09',collectedOn:'2026-10-16'})]){
+  const images=Object.fromEntries(await Promise.all(Object.entries(data.logos).map(async([k,v])=>[k,await loadImage(v)])));
+  const options={makeCanvas:createCanvas,makePath:d=>new Path2D(d),images,projectLogo};
+  const paint=createPainter(data,options);
+  // A monthly frame without a hook still paints the real ranking; it must not
+  // fall back to the opaque regional title screen.
+  const reference=createPainter({...data,introHook:false},options);
+  const canvas=createCanvas(1080,1920),ctx=canvas.getContext('2d');
+  const baseline=createCanvas(1080,1920),base=baseline.getContext('2d');
+  for(const seconds of [0,.5,.95,1.05,1.3]){
+   paint(ctx,seconds);reference(base,seconds);
+   for(const [label,x,y,w,h] of [['ranking',80,430,132,1138],['scores',814,430,98,1138]]){
+    const actual=Buffer.from(ctx.getImageData(x,y,w,h).data);
+    const expected=Buffer.from(base.getImageData(x,y,w,h).data);
+    assert.ok(actual.equals(expected),`${data.period.month} ${label} must remain unobscured at ${seconds}s`);
    }
   }
  }
