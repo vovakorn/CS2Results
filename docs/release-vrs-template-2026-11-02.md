@@ -83,3 +83,27 @@ Regional current-source на старом и новом Node возвращае�
 не переиспользуется. Новые гарантии не объявляются успешными задним числом.
 [Проверяемый протокол](reviews/2026-11-03/vrs-template-readiness.json).
 Raw manifests/ответы сохранены в `/private/tmp/cs2-vrs-template-release-20261102`.
+
+## Production обновлён — 3 ноября 2026, 09:55 МСК
+
+Владелец отдельно разрешил оба исключения только версиям
+`d4eh892r0koptunqed5i` (Node) и `d4e16a3a96ii5bruumqg` (monthly).
+Они переведены на `production` из runtime SHA `c4ae6b1`; прежние версии
+`d4eu39vter6ceq500d7b` и `d4ep0kssaoc2t9i648ru` закреплены как rollback.
+Порядок: Node → October source/короткая подпись и reviewed regional dry-run →
+compatibility dry-run monthly candidate → monthly → production dry-run.
+Все четыре контрольных вызова успешны. Точные теги, профили, pinned references,
+ACL, Gateway и девять таймеров сверены до/после; main остался
+`d4eb6521dviu0ieufa5i`. Новых постов не отправлялось.
+
+Нормальный gate не переписан как успешный: `normalReleaseGatePassed=false`,
+`startupLogsChecked=false`, `startupErrorDetected=null`.
+`releaseAccepted=true`, `acceptedWithExceptions=true` отражают новое решение
+владельца; региональный current-source не исправлен. Следующие выпуски требуют
+обычных проверок, эти исключения не переносятся.
+
+Нейтральный хук и короткая подпись действуют для будущих вновь созданных
+месячных render/container. Существующие посты, prepared/pending и processed
+не менялись. Автоматизация Telegram/Threads всё ещё отдельная задача.
+Runtime source — `c4ae6b1`; более новая документация не требует нового deploy.
+[Фактическое переключение](reviews/2026-11-03/vrs-template-promotion.json).

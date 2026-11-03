@@ -2,23 +2,26 @@
 
 ## Production
 
-- Runtime-код: `28160a3`, [PR #176](https://github.com/vovakorn/CS2Results/pull/176).
-- Main: `d4eb6521dviu0ieufa5i`; VRS: `d4eu39vter6ceq500d7b`;
-  monthly: `d4ep0kssaoc2t9i648ru`. Admin и Threads test не обновлялись.
-- Выпуск VRS + жёлтый Beijing завершён 2 ноября в 12:33 МСК. CI:
-  1 602 Python-теста на 3.11/3.12 и 31 Node; локальные/облачные render/decode,
-  October source/publisher/owner-policy и main dry-run прошли.
-- Владелец разрешил только этому выпуску недоступные startup-логи и сохранение
-  существующего отказа regional current-source вне October monthly. Обычный
-  gate остаётся непройденным; следующие релизы требуют обычной проверки.
-- Rollback: прежние main `d4etf4npp6b3un02k908`, VRS `d4er62kv5q46lc29a93n`,
-  monthly `d4emfnntuhrp3ie3d1gb`; профили, ACL, Gateway и 9 таймеров прежние,
-  radar PAUSED. Октябрьский Reel опубликован 2 ноября в 12:38 МСК;
-  подтверждены publisher `published`, journal `sent` и processed marker.
-  Этот же MP4 опубликован 2 ноября в Telegram (14:05 МСК) и Threads
-  (14:06 МСК), для обоих journal и processed подтверждены.
-  [Ссылки и подтверждения](docs/monthly-vrs-reels.md).
-  [Протокол и оставшиеся риски](docs/release-vrs-beijing-2026-11-02.md).
+- Main runtime `28160a3`, production `d4eb6521dviu0ieufa5i` (Beijing и бот);
+  в выпуске 3 ноября main, admin и Threads-функции не обновлялись.
+- VRS renderer / monthly publisher: runtime `c4ae6b1`,
+  [PR #178](https://github.com/vovakorn/CS2Results/pull/178).
+  Production Node `d4eh892r0koptunqed5i`, monthly `d4e16a3a96ii5bruumqg`.
+- Выпуск 3 ноября в 09:55 МСК: будущие месячные Reels используют
+  «КАК ИЗМЕНИЛСЯ / РЕЙТИНГ CS2?», Counter-Strike 2 и короткую подпись.
+  CI: 1603 Python на 3.11/3.12, 32 Node, Linux build/render/decode прошли;
+  production October source/owner policy и reviewed regional dry-run успешны.
+- Владелец разрешил обоим точным кандидатам недоступные startup-логи и
+  сохранение прежнего regional current-source `502 / prepare` вне monthly.
+  Обычный gate остаётся false; исключения не действуют для следующих выпусков.
+- Rollback Node `d4eu39vter6ceq500d7b`, monthly `d4ep0kssaoc2t9i648ru`.
+  Профили, pinned references, ACL, Gateway и 9 таймеров сохранены; radar PAUSED.
+  В этом выпуске постов не отправлялось. Автодоставка monthly пока только
+  Instagram; Telegram/Threads остаются отдельной задачей.
+  [Фактический протокол и ограничения](docs/release-vrs-template-2026-11-02.md).
+- Октябрь уже опубликован в Instagram/Telegram/Threads; отдельный Instagram
+  вариант с прежним хуком вышел 2 ноября в 15:36 МСК и сохранён.
+  [Ссылки на публикации](docs/monthly-vrs-reels.md).
 
 ## Рабочие копии
 
@@ -35,21 +38,14 @@
 
 ## Следующие задачи и источники
 
-- Владелец 2 ноября разрешил общий release-цикл нового месячного шаблона:
-  Node renderer + monthly publisher, нейтральный хук и короткая подпись.
-  [Состав и обязательные gates](docs/release-vrs-template-2026-11-02.md).
-  PR #178 слит (`c4ae6b1`), CI 1603 Python на 3.11/3.12 и 32 Node прошёл.
-  Два кандидата созданы, production прежний. Gate: недоступные startup-логи
-  и прежний regional current-source `502 / prepare` на старом/новом Node.
-  Для точных кандидатов запрошено новое разовое решение владельца.
-  Автодоставка Telegram/Threads вне этого diff.
-
+- Выпуск нейтрального месячного шаблона завершён 3 ноября;
+  [версии, проверки и согласованные исключения](docs/release-vrs-template-2026-11-02.md).
 
 - Для будущих месячных выпусков утверждён стандартный хук:
-  «КАК ИЗМЕНИЛСЯ / РЕЙТИНГ CS2?». Шаблон обновлён локально,
+  «КАК ИЗМЕНИЛСЯ / РЕЙТИНГ CS2?». Шаблон действует в production,
   32 Node-теста и safe-zone/crop проверки прошли; кадр 500 ms просмотрен.
   [Правило и статус](docs/monthly-vrs-reels.md).
-  Ветка `codex/monthly-vrs-hook-20261102`; production renderer ещё прежний.
+  Runtime `c4ae6b1`; отдельная документационная ветка новее runtime.
   Опубликованный 2 ноября в 15:36 МСК [Instagram-пост](https://www.instagram.com/reel/DfPUcNDjhXZ/)
   с прежним хуком «КТО ВЗЛЕТЕЛ» остаётся без изменений.
 
@@ -57,9 +53,9 @@
   и Threads с [единой короткой подписью](docs/monthly-vrs-reels.md).
   Это правило для будущих ежемесячных выпусков; текущие посты не менять.
   Исходная Telegram-подпись восстановлена, Instagram/Threads не менялись.
-  Шаблон в коде подготовлен локально: 21 Python / 8 Node.
+  Короткая подпись и обложка выпущены 3 ноября: CI 1603 Python / 32 Node.
   Подключить автоматическую месячную доставку Telegram/Threads; сейчас
-  production worker по-прежнему только Instagram. Новых deploy не было.
+  production worker по-прежнему только Instagram.
 
 - Октябрьский VRS опубликован, media ID `18123106912905740`; проверить
   отображение/звук в реальном Instagram UI отдельно при следующем просмотре.

@@ -23,7 +23,40 @@ Instagram-only; deploy и таймеры не менялись. Владелец
 для всех социальных сетей; остальные площадки этим действием не публиковались.
 Пользователь выбрал **один мировой Reel**, а не три региональных.
 
-Текущий runtime от `28160a3`: рендер `d4e8n07roso4762pf1h4` / production
+## Текущий production — 3 ноября 2026, 09:55 МСК
+
+Node VRS и месячный publisher выпущены из runtime-коммита
+`c4ae6b119cad380b9f246fc3a4dbbc6622e7aa78`:
+
+- Рендер `d4e8n07roso4762pf1h4` / production `d4eh892r0koptunqed5i`;
+  rollback `d4eu39vter6ceq500d7b`.
+- Publisher `d4es8uk4gjgioi5n7lek` / production `d4e16a3a96ii5bruumqg`;
+  rollback `d4ep0kssaoc2t9i648ru`.
+- Main не обновлялся: runtime `28160a3`, функция `d4e6e13rlrl7go01m2q2` /
+  production `d4eb6521dviu0ieufa5i`.
+
+Будущие месячные ролики получают нейтральный хук «КАК ИЗМЕНИЛСЯ / РЕЙТИНГ CS2?»
+и точную короткую подпись владельца. ACTIVE timer `a1sor39q8jmdl2vvleie`
+по-прежнему вызывает месячный publisher по `production`; девять таймеров
+и их настройки сохранены. Автоматизация Telegram/Threads не подключалась:
+production worker по-прежнему отправляет месячный Reel только в Instagram.
+
+CI: 1 603 Python-теста на 3.11/3.12, 32 Node, аудит/сборки и полные Linux
+render/decode прошли. После переключения подтверждены monthly source нового
+Node, reviewed региональный период до 5 октября и dry-run месячного publisher
+с source/owner policy. Новых публикаций при этом выпуске не выполнялось.
+
+Владелец отдельно разрешил недоступные startup-логи именно этим двум версиям
+и сохранение прежнего regional current-source `502 / prepare` вне месячного
+формата. `normalReleaseGatePassed=false`, `startupLogsChecked=false`,
+`startupErrorDetected=null`: исключения приняты владельцем, а не объявлены
+успешным чтением логов или исправлением regional source. Они не переносятся
+на следующие выпуски.
+[Фактический протокол переключения](reviews/2026-11-03/vrs-template-promotion.json).
+
+### Предыдущий выпуск — 2 ноября 2026
+
+Runtime от `28160a3`: рендер `d4e8n07roso4762pf1h4` / production
 `d4eu39vter6ceq500d7b`, publisher `d4es8uk4gjgioi5n7lek` / production
 `d4ep0kssaoc2t9i648ru`; ACTIVE timer `a1sor39q8jmdl2vvleie` вызывает
 publisher по `production`. CI (1 602 Python на 3.11/3.12, 31 Node), полные render/decode,
@@ -58,11 +91,13 @@ VRS — итоги [месяц в родительном падеже] [год]
 Изменённая Telegram-подпись возвращена к исходному тексту; Instagram и Threads
 не изменялись. Разблокировка Mac для этой задачи больше не требуется.
 [История и подтверждение возврата](reviews/2026-11-02/monthly-vrs-caption-edit.json).
-Новый шаблон подготовлен локально в Node renderer и Python publisher;
-старый receipt разрешено читать, но новый Instagram-контейнер получает актуальную
-подпись. Проверки: 8 Node monthly / 21 Python monthly passed.
-Новый код не выложен. Автоматическая доставка на все три площадки —
-утверждённое требование, пока production worker автоматизирует только Instagram.
+Короткий шаблон Node renderer и Python publisher находится в production
+с 3 ноября, 09:55 МСК (`c4ae6b1`). Старый receipt разрешено читать, но новый
+Instagram-контейнер получает актуальную подпись. Локальные профильные проверки
+перед выпуском: 8 Node monthly / 21 Python monthly passed; общий CI и production
+smokes указаны выше. Автоматическая доставка на все три площадки —
+утверждённое требование; Telegram/Threads не подключались, production worker
+по-прежнему автоматизирует только Instagram.
 
 ## Стандартный хук будущих выпусков — утверждён 2 ноября 2026
 
@@ -78,14 +113,17 @@ Counter-Strike 2, месяц/год, мировой топ-20, видимый с
 Месяц и год подставляются автоматически; короткая подпись поста остаётся
 утверждённой выше. «Кто взлетел?» не используется как ежемесячный default:
 нейтральный вопрос подходит и для спокойного изменения мест.
-Изменение сделано локально в шаблоне; 32 Node-теста прошли, включая measured
-safe-zone, square/4:5 crops и видимость логотипов/очков с первого кадра.
+Шаблон выпущен в production 3 ноября, 09:55 МСК. 32 Node-теста прошли,
+включая measured safe-zone, square/4:5 crops и видимость логотипов/очков
+с первого кадра.
 Кадр 500 ms просмотрен: текст целиком помещается без многоточий.
 Превью: `build/monthly-hook-future/frame-0.5.png` в рабочей копии задачи.
 После разрешения выпуска выполнена полная сборка и декодирование нейтрального
 MP4: 22 s / 1320 кадров; [проверки и границы](release-vrs-template-2026-11-02.md).
-Production renderer пока не обновлялся. Уже опубликованные MP4, подписи,
-UID/claims и исторические протоколы ниже не менялись.
+Production renderer `d4eh892r0koptunqed5i` и monthly publisher
+`d4e16a3a96ii5bruumqg` используют этот стандарт для будущих выпусков.
+Уже опубликованные MP4, подписи, UID/claims и исторические протоколы ниже
+не менялись; повторных публикаций при выпуске шаблона не выполнялось.
 
 ## Новая версия с хуком опубликована в Instagram — 2 ноября, 15:36 МСК
 
