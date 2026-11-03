@@ -1,0 +1,226 @@
+{
+  "status": "awaiting_exact_candidate_exception_decision",
+  "checkedAt": "2026-11-03T06:49:33.896222+00:00",
+  "releaseGitSha": "c4ae6b119cad380b9f246fc3a4dbbc6622e7aa78",
+  "pullRequest": "https://github.com/vovakorn/CS2Results/pull/178",
+  "ciRun": "https://github.com/vovakorn/CS2Results/actions/runs/41590652992",
+  "ciPassed": true,
+  "pythonTestsPerCiVersion": 1603,
+  "nodeTests": 32,
+  "normalReleaseGatePassed": false,
+  "startupLogsChecked": false,
+  "startupErrorDetected": null,
+  "monthlyBehaviorChecksPassed": true,
+  "productionPromoted": false,
+  "publicationAttempted": false,
+  "candidates": [
+    {
+      "target": "node",
+      "functionId": "d4e8n07roso4762pf1h4",
+      "version": "d4eh892r0koptunqed5i",
+      "previousVersion": "d4eu39vter6ceq500d7b",
+      "packageSha256": "6ba73c080b3c8e496d6fccea5e1231a5864cd0f2d79d64da1ec5680627a49d23",
+      "profileSha256": "6b2894bc054d6c5bf942fc448275e5d523635b3246ba53d637c4fa8b4e8d0dea",
+      "candidateTagVerified": true,
+      "probes": [
+        {
+          "payload": {
+            "job": "render",
+            "region": "americas",
+            "dry_run": true,
+            "render_probe": true
+          },
+          "statusCode": 200,
+          "invokePassed": true,
+          "startupLogsChecked": false,
+          "startupErrorDetected": null,
+          "render": {
+            "sha256": "3c3a168259092490034a7767fe74b84456ff415f73bb7b1e5a084ab785bd0377",
+            "bytes": 5458274,
+            "width": 1080,
+            "height": 1920,
+            "fps": 60,
+            "frames": 1944,
+            "duration": 32.4,
+            "audioPeakDb": -0.7,
+            "musicSha256": "26cb14efdd88ae891715b88718ec0becc8cb6636d990d5db45fb246fcc25843f",
+            "fullDecode": "passed",
+            "layoutVersion": "instagram-safe-v1",
+            "coverOffsetMs": 500,
+            "seconds": 99.97
+          },
+          "readiness": null,
+          "error": null,
+          "logReadError": "logs: exit=1; ERROR: rpc error: code = Unavailable desc = Unavailable"
+        },
+        {
+          "payload": {
+            "job": "monthly",
+            "month": "2026-09",
+            "dry_run": true,
+            "render_probe": true
+          },
+          "statusCode": 200,
+          "invokePassed": true,
+          "startupLogsChecked": false,
+          "startupErrorDetected": null,
+          "render": {
+            "sha256": "1ee6f2c5bd39a1066065e8ef91a3e3d167ed6d9d908ccf875a33264c4ab572e0",
+            "bytes": 5453704,
+            "width": 1080,
+            "height": 1920,
+            "fps": 60,
+            "frames": 1320,
+            "duration": 22,
+            "audioPeakDb": -1.9,
+            "musicSha256": "6c5fbb29986398deacd0f3307113d9d3fa86305176aa1177790b1b7ccdc518a9",
+            "fullDecode": "passed",
+            "layoutVersion": "instagram-safe-v1",
+            "coverOffsetMs": 500,
+            "seconds": 62.52
+          },
+          "readiness": null,
+          "error": null,
+          "logReadError": "logs: exit=1; ERROR: rpc error: code = Unavailable desc = Unavailable"
+        },
+        {
+          "payload": {
+            "job": "monthly",
+            "month": "2026-10",
+            "dry_run": true
+          },
+          "statusCode": 200,
+          "invokePassed": true,
+          "startupLogsChecked": false,
+          "startupErrorDetected": null,
+          "render": null,
+          "readiness": null,
+          "error": null,
+          "logReadError": "logs: exit=1; ERROR: rpc error: code = Unavailable desc = Unavailable"
+        },
+        {
+          "payload": {
+            "job": "capture",
+            "dry_run": true
+          },
+          "statusCode": 502,
+          "invokePassed": false,
+          "startupLogsChecked": false,
+          "startupErrorDetected": null,
+          "render": null,
+          "readiness": null,
+          "error": "Unexpected handler response",
+          "logReadError": "logs: exit=1; ERROR: rpc error: code = Unavailable desc = Unavailable"
+        },
+        {
+          "payload": {
+            "job": "capture",
+            "through": "2026-10-05",
+            "dry_run": true
+          },
+          "statusCode": 200,
+          "invokePassed": true,
+          "startupLogsChecked": false,
+          "startupErrorDetected": null,
+          "render": null,
+          "readiness": null,
+          "error": null,
+          "logReadError": "logs: exit=1; ERROR: rpc error: code = Unavailable desc = Unavailable"
+        }
+      ]
+    },
+    {
+      "target": "monthly",
+      "functionId": "d4es8uk4gjgioi5n7lek",
+      "version": "d4e16a3a96ii5bruumqg",
+      "previousVersion": "d4ep0kssaoc2t9i648ru",
+      "packageSha256": "379b6d228d419d92f1ce8e5f866f40e2ed62b0d3357880b313b13647253c2cd4",
+      "profileSha256": "062a918a64609e67d6a90c6fb3ec05157055569dddf6ede22131f55082805877",
+      "candidateTagVerified": true,
+      "probes": [
+        {
+          "payload": {
+            "job": "monthly_vrs",
+            "month": "2026-10",
+            "dry_run": true
+          },
+          "statusCode": 200,
+          "invokePassed": true,
+          "startupLogsChecked": false,
+          "startupErrorDetected": null,
+          "render": null,
+          "readiness": null,
+          "error": null,
+          "logReadError": "logs: exit=1; ERROR: rpc error: code = Unavailable desc = Unavailable"
+        },
+        {
+          "payload": {
+            "job": "monthly_vrs",
+            "month": "2026-10",
+            "dry_run": true,
+            "inspect_source": true
+          },
+          "statusCode": 200,
+          "invokePassed": true,
+          "startupLogsChecked": false,
+          "startupErrorDetected": null,
+          "render": null,
+          "readiness": {
+            "publishing_enabled": true,
+            "owner_allowed": true,
+            "generation": 0
+          },
+          "error": null,
+          "logReadError": "logs: exit=1; ERROR: rpc error: code = Unavailable desc = Unavailable"
+        }
+      ]
+    }
+  ],
+  "existingRegionalCurrentSource": {
+    "oldStatusCode": 502,
+    "newStatusCode": 502,
+    "sameErrorBody": true,
+    "body": {
+      "error": "vrs_major_failed",
+      "stage": "prepare"
+    },
+    "exactCauseWithinPrepare": "not established",
+    "reviewedThrough": "2026-10-05",
+    "reviewedSourcePassed": true
+  },
+  "directLoggingAlternative": {
+    "candidateId": "d4e16a3a96ii5bruumqg",
+    "logsChecked": false,
+    "stage": "default_log_group_lookup",
+    "error": "ERROR: rpc error: code = Unavailable desc = Unavailable\n\n\nclient-request-id: 1445ec6e-7434-4aee-aa15-1d2cc2a36da4\nclient-trace-id: 909c78de-3e1d-4aa6-9c48-f3bb81cadfe4\n\nUse client-request-id, client-trace-id for investigation of issues in cloud support\nIf you are going to ask for help of cloud support, please send the following trace file: /Users/user/.config/yandex-cloud/logs/2026-11-03T09-46-58.952-yc_logging_group_list.txt\n"
+  },
+  "productionBaseline": {
+    "checkedAt": "2026-11-03T06:36:44.507511+00:00",
+    "functions": [
+      {
+        "name": "main",
+        "functionId": "d4e6e13rlrl7go01m2q2",
+        "version": "d4eb6521dviu0ieufa5i",
+        "profileSha256": "c0cd4b70cad39c61041a811c1bc78052bf3e65e2308248c55173c6e7791f91a0",
+        "aclSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "node",
+        "functionId": "d4e8n07roso4762pf1h4",
+        "version": "d4eu39vter6ceq500d7b",
+        "profileSha256": "bf4d59207838363483e13f9c7bb53b8d5392bb0a98db0f687aa3bcd692fbecd0",
+        "aclSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "name": "monthly",
+        "functionId": "d4es8uk4gjgioi5n7lek",
+        "version": "d4ep0kssaoc2t9i648ru",
+        "profileSha256": "f029c5edbf1a1b058564ec041e3371520dba4cd4034bab9c05bba0123dbad94c",
+        "aclSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    ],
+    "timerCount": 9,
+    "timersSha256": "27c2e949decdd209d4ccbfa86d7ae3fc7282376c66fee90d00957b67e623d7c1",
+    "gatewaySha256": "0842642098ca863d675f6d2a573169ea81456ff7b1f9529cd7396f9c17f8bd49"
+  }
+}
