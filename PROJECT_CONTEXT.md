@@ -38,6 +38,12 @@
 
 ## Следующие задачи и источники
 
+- 9 ноября: локально исправлен recovery финала Beijing — точные PandaScore ID,
+  join разных написаний и scoped LP parent вместо зависимости от latest-N.
+  Production main сверена: `d4eb6521dviu0ieufa5i`; timeout state подтверждён,
+  before Beijing существует, after в event-папке отсутствует. Код не выложен,
+  постов не было; [факты, границы и восстановление](docs/beijing-final-incident-2026-11-09.md).
+
 - Выпуск нейтрального месячного шаблона завершён 3 ноября;
   [версии, проверки и согласованные исключения](docs/release-vrs-template-2026-11-02.md).
 

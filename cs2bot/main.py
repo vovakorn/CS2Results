@@ -367,6 +367,14 @@ def _match_diagnostic(match: MatchNormalized) -> Dict[str, Any]:
         "tournament_tier_type": match.tournament_tier_type,
         "publisher_tier": match.publisher_tier,
         "tournament_section": match.tournament_section,
+        "tournament_parent": match.tournament_parent,
+        "final_candidate_hint": match.final_candidate_hint,
+        "is_final": match.is_final,
+        "final_identity_confirmed": match.final_identity_confirmed,
+        "winner_prize_usd": match.winner_prize_usd,
+        "map_count": len(match.maps),
+        "placement_count": len(match.tournament_placements),
+        "placements_complete": match.tournament_placements_complete,
         "teams": [match.team1_name, match.team2_name],
         "score": [match.score1, match.score2],
         "date": match.date,
@@ -3478,6 +3486,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
     tournament_name = "Турнир"
     preview_key: str | None = None
     recovery_profile_key: str | None = None
+    recovery_liquipedia_page: str | None = None
     recovery_start: datetime | None = None
     recovery_end: datetime | None = None
     radar_card_variant = "auto"
@@ -3506,6 +3515,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                 if profile is None or not profile.approved:
                     raise ValueError("recovery profile is not approved")
                 recovery_profile_key = profile.key
+                recovery_liquipedia_page = profile.liquipedia_page
                 local_zone = ZoneInfo(DISPLAY_TIMEZONE)
                 recovery_day = max(stage.end for stage in profile.stages)
                 recovery_start = datetime.combine(recovery_day, datetime_time.min, tzinfo=local_zone)
@@ -3717,6 +3727,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
                     shadow_diagnostics=shadow_diagnostics,
                     start=recovery_start,
                     end=recovery_end,
+                    **({"liquipedia_parent": recovery_liquipedia_page} if recovery_liquipedia_page else {}),
                 )
             )
         except Exception as exc:

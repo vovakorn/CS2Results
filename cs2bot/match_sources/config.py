@@ -220,6 +220,7 @@ TEAM_EXCLUSION_PATTERNS = _list_setting(
     DEFAULT_TEAM_EXCLUSION_PATTERNS,
 )
 TEAM_ALIASES = _dict_setting("team_aliases", DEFAULT_TEAM_ALIASES)
+PROVIDER_TEAM_ALIASES = _dict_setting("provider_team_aliases", {"themongolz": "the mongolz"})
 POPULAR_TEAMS = _list_setting("popular_teams", DEFAULT_POPULAR_TEAMS)
 TIER1_AUTOPILOT_TIERS = _list_setting(
     "tier1_autopilot_tiers",

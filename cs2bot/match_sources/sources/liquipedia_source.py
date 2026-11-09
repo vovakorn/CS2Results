@@ -340,7 +340,8 @@ async def _fetch_tournament_placements(
     return placements, complete
 
 
-async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
+async def fetch_finished_matches(limit: int = 30, *, parent: str | None = None) -> list[MatchNormalized]:
+    requested_parent = parent
     api_key = source_config.LIQUIPEDIA_API_KEY
     if not api_key:
         raise SourceUnavailableError("Liquipedia credentials are not configured")
@@ -353,7 +354,7 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
     }
     params = {
         "wiki": source_config.LIQUIPEDIA_WIKI,
-        "conditions": "[[finished::1]]",
+        "conditions": "[[finished::1]]" + (f"[[parent::{parent}]]" if parent else ""),
         "query": LIQUIPEDIA_MATCH_QUERY,
         "order": "date DESC",
         "limit": min(max(limit, 1), 100),
@@ -385,10 +386,14 @@ async def fetch_finished_matches(limit: int = 30) -> list[MatchNormalized]:
                 parent = _optional_text(item.get("parent")) if item else None
                 if not parent:
                     continue
+                if requested_parent and parent != requested_parent:
+                    continue
                 match.tournament_parent = parent
                 parent_by_match[match.match_id or ""] = parent
-                if match.final_candidate_hint:
+                if match.final_candidate_hint or parent == requested_parent:
                     candidate_parents.add(parent)
+            if requested_parent:
+                matches = [match for match in matches if match.tournament_parent == requested_parent]
             placements_by_parent: dict[str, tuple[list[TournamentPlacement], bool]] = {}
             for parent in candidate_parents:
                 try:

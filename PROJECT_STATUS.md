@@ -1,5 +1,20 @@
 # CS2 Results Bot — production-состояние
 
+## Пропуск итогов Beijing — диагностика 9 ноября 2026
+
+Read-only: main по-прежнему `d4eb6521dviu0ieufa5i`, results/retry Active;
+в каталоге 10 таймеров (8 main), часового `vrs_baselines` нет. Для финала
+`1781486` найден timeout state; before Beijing сохранён 31 октября, after
+в event-папке отсутствует. Recovery получил два матча, оба отбросил из-за
+отсутствующих PandaScore ID профиля. Исторический LP-ответ и фактическая
+доставка обычного результата не проверены; startup-логи недоступны.
+Локальная правка добавляет ID, join без изменения canonical UID, exact-parent
+lookup и LP-обогащение recovery. Production, таймеры и посты не менялись.
+Python 3.12 и точные runtime-пины, pip check; **609 профильных тестов прошли**,
+JSON, ссылки документации и diff проверены. Полный release-набор — после
+отдельного разрешения на выкладку.
+[Подробности и оставшиеся проверки](docs/beijing-final-incident-2026-11-09.md).
+
 ## Месячный VRS-шаблон выпущен — 3 ноября 2026, 09:55 МСК
 
 [PR #178](https://github.com/vovakorn/CS2Results/pull/178), runtime `c4ae6b1`.

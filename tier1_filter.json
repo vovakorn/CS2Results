@@ -115,5 +115,8 @@
     "pain gaming academy": "pain academy",
     "pain academy": "pain academy"
   },
+  "provider_team_aliases": {
+    "themongolz": "the mongolz"
+  },
   "prize_pool_threshold_usd": 500000
 }
