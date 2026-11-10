@@ -105,6 +105,15 @@ def test_late_source_retries_without_a_recent_match_and_after_ordinary_result(mo
     assert sends == []  # Preparation never sends public content.
 
 
+def test_source_http_status_is_visible_without_exposing_remote_error_text(monkeypatch, lifecycle):
+    async def failed(*args, **kwargs):
+        raise jobs.SourceUnavailableError("Liquipedia returned HTTP 404; sensitive remote detail")
+
+    monkeypatch.setattr(jobs, "fetch_finished_matches", failed)
+    result = tasks(run())
+    assert {t["reason"] for t in result.values()} == {"final_source:SourceUnavailableError:HTTP_404"}
+
+
 def test_final_and_vrs_do_not_wait_for_cash_payouts(monkeypatch, lifecycle):
     _, _, final, _, _, _, _ = lifecycle
     final.winner_prize_usd = None
