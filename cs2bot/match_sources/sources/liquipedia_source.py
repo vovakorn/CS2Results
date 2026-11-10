@@ -355,7 +355,7 @@ async def fetch_finished_matches(limit: int = 30, *, parent: str | None = None) 
     }
     params = {
         "wiki": source_config.LIQUIPEDIA_WIKI,
-        "conditions": "[[finished::1]]" + (f"[[parent::{parent}]]" if parent else ""),
+        "conditions": "[[finished::1]]" + (f" AND [[parent::{parent}]]" if parent else ""),
         "query": LIQUIPEDIA_MATCH_QUERY,
         "order": "date DESC",
         "limit": min(max(limit, 1), 100),

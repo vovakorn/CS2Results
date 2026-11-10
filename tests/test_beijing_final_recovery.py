@@ -215,7 +215,9 @@ def test_scoped_source_queries_parent_and_reads_table_without_stage_hint(monkeyp
     monkeypatch.setattr(liquipedia_source.aiohttp, "ClientSession", Session)
     monkeypatch.setattr(liquipedia_source, "read_limited_response", read)
     matches = asyncio.run(liquipedia_source.fetch_finished_matches(100, parent=PAGE))
-    assert calls[0]["conditions"] == f"[[finished::1]][[parent::{PAGE}]]"
+    # Live LPDB rejects adjacent conditions with HTTP 404, even though both
+    # individual predicates are valid. Their explicit AND is part of the API contract.
+    assert calls[0]["conditions"] == f"[[finished::1]] AND [[parent::{PAGE}]]"
     assert calls[1]["conditions"] == f"[[parent::{PAGE}]]"
     assert len(matches) == 1 and matches[0].tournament_placements_complete
     assert matches[0].final_candidate_hint is False

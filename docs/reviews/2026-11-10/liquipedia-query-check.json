@@ -1,0 +1,18 @@
+{
+  "observed_on": "2026-11-10",
+  "source": "Live Liquipedia API v3, existing pinned connection, read-only query",
+  "page": "Intel_Extreme_Masters/2026/Beijing",
+  "checks": [
+    {
+      "conditions": "[[finished::1]][[parent::Intel_Extreme_Masters/2026/Beijing]]",
+      "http_status": 404,
+      "error": "Unrecognized input: unexpected character [ between adjacent predicates"
+    },
+    {
+      "conditions": "[[finished::1]] AND [[parent::Intel_Extreme_Masters/2026/Beijing]]",
+      "http_status": 200,
+      "rows": 1
+    }
+  ],
+  "credentials_stored": false
+}

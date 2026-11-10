@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -18,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .match_sources import storage
 from .match_sources.match_fetcher import confirm_liquipedia_final_candidates
 from .match_sources.filters import is_tier1_event, is_tier1_lan, is_valid_match
-from .match_sources.models import MatchNormalized, TournamentVRSImpact
+from .match_sources.models import MatchNormalized, SourceUnavailableError, TournamentVRSImpact
 from .match_sources.sources.liquipedia_source import fetch_finished_matches
 from .match_sources.sources.tournament_preview_source import fetch_preview_calendar
 from .match_sources.vrs import VRSDataError, calculate_impacts
@@ -368,7 +369,8 @@ def run_publications_job(dry_run, runtime, *, recovery_key=None, now=None, conte
                         reasons = sorted(set(rejected.values()))[:3]
                         record.source_error = "awaiting_confirmed_final" + (":" + ",".join(reasons) if reasons else "")
                 except Exception as exc:
-                    record.source_error = "final_source:" + type(exc).__name__
+                    status = re.search(r"\bHTTP ([1-5][0-9]{2})\b", str(exc)) if isinstance(exc, SourceUnavailableError) else None
+                    record.source_error = "final_source:" + type(exc).__name__ + (":HTTP_" + status[1] if status else "")
             impacts = None
             for task in pending:
                 if _processed(task, runtime, dry_run):
