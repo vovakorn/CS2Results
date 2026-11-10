@@ -414,7 +414,7 @@ async def _apply_liquipedia_final_card_selection(
             if scoped:
                 matches = [match for match in matches if match.tournament_parent != parent] + scoped
         if require_fresh:
-            matches = [match for match in matches if is_match_fresh(match)]
+            matches = [match for match in matches if is_match_fresh(match, now=reference)]
         finals, _ = confirm_liquipedia_final_candidates(matches)
         primaries = await _wait_for_liquipedia_final_cards(
             primary_matches, matches, finals,
