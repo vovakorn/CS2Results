@@ -25,7 +25,7 @@ def test_confirmed_telegram_album_records_journal_without_retrying_on_journal_er
             TournamentPlacement(placement="2", team_name="B", prize_usd=1),
         ],
     )
-    pending = SimpleNamespace(match=match, channel_id="global", generation=1,
+    pending = SimpleNamespace(match=match, channel_id="global", generation=1, content_uid=None,
                               vrs_impacts=[SimpleNamespace(source="offline-source")])
     replacements = {
         "_hold_unconfirmed_final_outbox": Mock(return_value=False),

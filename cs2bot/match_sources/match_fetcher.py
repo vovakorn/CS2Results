@@ -11,7 +11,7 @@ from typing import Literal
 
 from . import config as source_config
 from .filters import is_tier1_lan, is_valid_match
-from .final_wait import list_waits, observe_primary, observe_resolution
+from .final_wait import FinalWait, list_waits, observe_primary, observe_resolution
 from .models import MatchNormalized, SourceUnavailableError, confirmed_result_maps
 from .storage import StorageUnavailableError
 from .storage import (
@@ -23,6 +23,7 @@ from .storage import (
     mark_channel_processed,
     mark_pending_liquipedia_final_ready,
 )
+from ..tournament_identity import event_for_match
 
 ConcreteSourceName = Literal["pandascore", "liquipedia"]
 SourceName = Literal["auto", "pandascore", "liquipedia"]
@@ -41,12 +42,18 @@ FINAL_STAGE_TOKENS = {
 EVENT_NEUTRAL_TOKENS = FINAL_STAGE_TOKENS | {"starseries"}
 
 
+def _provider_team_identity(value: str) -> str:
+    # Provider spelling only: keep canonical UIDs and existing delivery markers stable.
+    identity = MatchNormalized._identity_part(value)
+    return source_config.PROVIDER_TEAM_ALIASES.get(identity, identity)
+
+
 def _shadow_match_teams(match: MatchNormalized) -> tuple[str, str]:
     return tuple(
         sorted(
             (
-                match._identity_part(match.team1_name),
-                match._identity_part(match.team2_name),
+                _provider_team_identity(match.team1_name),
+                _provider_team_identity(match.team2_name),
             )
         )
     )
@@ -59,8 +66,8 @@ def _shadow_match_datetime(match: MatchNormalized) -> datetime | None:
 
 def _score_by_team(match: MatchNormalized) -> dict[str, int | None]:
     return {
-        match._identity_part(match.team1_name): match.score1,
-        match._identity_part(match.team2_name): match.score2,
+        _provider_team_identity(match.team1_name): match.score1,
+        _provider_team_identity(match.team2_name): match.score2,
     }
 
 
@@ -69,8 +76,7 @@ def _has_complete_final_card(match: MatchNormalized) -> bool:
         match.source == "liquipedia"
         and match.is_final
         and match.final_identity_confirmed
-        and match.winner_prize_usd is not None
-        and 3 <= len(confirmed_result_maps(match)) <= 5
+        and 2 <= len(confirmed_result_maps(match)) <= 5
     )
 
 
@@ -115,7 +121,14 @@ def _same_final_match(left: MatchNormalized, right: MatchNormalized) -> bool:
         return False
     left_events = set(filter(None, map(_event_identity, (left.competition_key, left.tournament_name))))
     right_events = set(filter(None, map(_event_identity, (right.competition_key, right.tournament_name))))
-    return bool(left_events & right_events)
+    if left_events & right_events:
+        return True
+    try:
+        left_event = event_for_match(left, source_config.TOURNAMENT_PREVIEW_PROFILES_PATH)
+        right_event = event_for_match(right, source_config.TOURNAMENT_PREVIEW_PROFILES_PATH)
+    except (OSError, ValueError):
+        return False
+    return left_event is not None and right_event is not None and left_event.key == right_event.key
 
 
 def _placement_rank(value: str) -> int | None:
@@ -163,10 +176,9 @@ def confirm_liquipedia_final_candidates(
         table_complete = (
             standings_source is not None
             and len(standings) >= 4
-            and all(item.prize_usd is not None for item in standings)
         )
         for item in standings:
-            identity = MatchNormalized._identity_part(item.team_name)
+            identity = _provider_team_identity(item.team_name)
             rank = _placement_rank(item.placement)
             if rank in (1, 2) and item.placement.strip() != str(rank):
                 table_complete = False
@@ -202,7 +214,7 @@ def confirm_liquipedia_final_candidates(
                 reason = "missing_score"
             else:
                 winner = match.team1_name if match.score1 > match.score2 else match.team2_name
-                if MatchNormalized._identity_part(winner) != top_one[0]:
+                if _provider_team_identity(winner) != top_one[0]:
                     reason = "winner_not_first_place"
                 else:
                     timestamp = _parse_match_datetime(match.end_date or match.date or match.start_date)
@@ -286,8 +298,8 @@ def _replace_with_liquipedia_finals(
                     (
                         side
                         for side in (1, 2)
-                        if MatchNormalized._identity_part(getattr(primary, f"team{side}_name"))
-                        == MatchNormalized._identity_part(final_name)
+                        if _provider_team_identity(getattr(primary, f"team{side}_name"))
+                        == _provider_team_identity(final_name)
                     ),
                     None,
                 )
@@ -311,10 +323,11 @@ async def _wait_for_liquipedia_final_cards(
     primary_matches: list[MatchNormalized],
     liquipedia_matches: list[MatchNormalized],
     confirmed_finals: list[MatchNormalized],
-    *, now: datetime, dry_run: bool,
+    *, now: datetime, dry_run: bool, waits: list[FinalWait] | None = None,
 ) -> list[MatchNormalized]:
-    waits = await list_waits(now=now, max_age_hours=source_config.MAX_SOURCE_STALENESS_HOURS,
-                             dry_run=dry_run)
+    if waits is None:
+        waits = await list_waits(now=now, max_age_hours=source_config.MAX_SOURCE_STALENESS_HOURS,
+                                 dry_run=dry_run)
     by_uid = {match.match_uid: match for match in primary_matches}
     # Saved matches survive source pagination/limit changes during the grace period.
     for wait in waits:
@@ -363,6 +376,7 @@ async def _apply_liquipedia_final_card_selection(
     now: datetime | None = None,
     dry_run: bool = False,
     liquipedia_matches: list[MatchNormalized] | None = None,
+    liquipedia_parent: str | None = None,
 ) -> list[MatchNormalized]:
     if not source_config.ENABLE_LIQUIPEDIA_FINAL_CARDS:
         return primary_matches
@@ -372,12 +386,39 @@ async def _apply_liquipedia_final_card_selection(
     try:
         matches = (liquipedia_matches if liquipedia_matches is not None
                    else await _fetch_from_source("liquipedia", limit))
+        reference = now or datetime.now(timezone.utc)
+        waits = await list_waits(now=reference, max_age_hours=source_config.MAX_SOURCE_STALENESS_HOURS,
+                                 dry_run=dry_run)
+        # A reviewed final must not depend on remaining on the global latest-N page.
+        parents = {liquipedia_parent} if liquipedia_parent else set()
+        candidates = list(primary_matches)
+        if liquipedia_parent is None:
+            candidates.extend(wait.match for wait in waits if is_match_fresh(wait.match, now=reference))
+        for primary in candidates:
+            if primary.final_candidate_hint and is_valid_match(primary)[0] and is_tier1_lan(primary)[0]:
+                profile = event_for_match(primary, source_config.TOURNAMENT_PREVIEW_PROFILES_PATH)
+                if profile is not None:
+                    parents.add(profile.liquipedia_page)
+        known_finals, _ = confirm_liquipedia_final_candidates(matches)
+        for parent in sorted(parents):
+            if any(final.tournament_parent == parent and _has_complete_final_card(final)
+                   for final in known_finals):
+                continue
+            from .sources import liquipedia_source
+
+            try:
+                scoped = await liquipedia_source.fetch_finished_matches(limit=100, parent=parent)
+            except SourceUnavailableError as exc:
+                logger.warning("event=liquipedia_final_parent_unavailable error_type=%s", type(exc).__name__)
+                continue
+            if scoped:
+                matches = [match for match in matches if match.tournament_parent != parent] + scoped
         if require_fresh:
             matches = [match for match in matches if is_match_fresh(match)]
         finals, _ = confirm_liquipedia_final_candidates(matches)
         primaries = await _wait_for_liquipedia_final_cards(
             primary_matches, matches, finals,
-            now=now or datetime.now(timezone.utc), dry_run=dry_run,
+            now=reference, dry_run=dry_run, waits=waits,
         )
         selected = _replace_with_liquipedia_finals(primaries, finals)
         for final in finals:
@@ -805,6 +846,7 @@ async def get_new_finished_matches(
     shadow_diagnostics: dict[str, int] | None = None,
     start: datetime | None = None,
     end: datetime | None = None,
+    liquipedia_parent: str | None = None,
 ) -> list[MatchNormalized]:
     selected_source = source or source_config.MATCH_SOURCE
     if selected_source not in {"auto", "pandascore", "liquipedia"}:
@@ -816,6 +858,8 @@ async def get_new_finished_matches(
         raise ValueError("historical match query has invalid range")
     if (start is not None or end is not None) and selected_source != "pandascore":
         raise ValueError("historical match query requires PandaScore")
+    if liquipedia_parent is not None and (selected_source != "pandascore" or start is None):
+        raise ValueError("scoped final recovery requires historical PandaScore results")
     logger.info("match_fetcher start source=%s limit=%s dry_run=%s historical=%s", selected_source, limit, dry_run, start is not None)
     fetch_limit = min(max(limit * 3, limit), 100)
     require_fresh = start is None and not (dry_run and source_config.ALLOW_STALE_IN_DRY_RUN)
@@ -834,10 +878,10 @@ async def get_new_finished_matches(
             except Exception as exc:
                 shadow_due = False
                 logger.warning("event=liquipedia_shadow_skipped reason=hour_claim_unavailable error_type=%s", type(exc).__name__)
-        final_cards_enabled = bool(selected_source == "auto" and source_config.ENABLE_LIQUIPEDIA_FINAL_CARDS
+        final_cards_enabled = bool((selected_source == "auto" or liquipedia_parent is not None) and source_config.ENABLE_LIQUIPEDIA_FINAL_CARDS
                                    and source_config.LIQUIPEDIA_API_KEY)
         shared_matches: list[MatchNormalized] | None = None
-        if shadow_due or final_cards_enabled:
+        if (shadow_due or final_cards_enabled) and liquipedia_parent is None:
             try:
                 # Finals retain the source's normal HTTP budget. The optional
                 # diagnostic timeout must not cancel a required final lookup.
@@ -880,6 +924,7 @@ async def get_new_finished_matches(
                 require_fresh=require_fresh,
                 dry_run=dry_run,
                 liquipedia_matches=shared_matches if shared_matches is not None else [],
+                **({"liquipedia_parent": liquipedia_parent} if liquipedia_parent else {}),
             )
     elif used_source == "liquipedia":
         confirmed, _ = confirm_liquipedia_final_candidates(fetched)

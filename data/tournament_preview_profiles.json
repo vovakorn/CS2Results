@@ -45,6 +45,8 @@
   {
     "key": "iem-beijing-2026",
     "liquipedia_page": "Intel_Extreme_Masters/2026/Beijing",
+    "pandascore_serie_id": 11136,
+    "pandascore_tournament_ids": [22333],
     "approved": true,
     "verified_at": "2026-10-24T07:35:58.081Z",
     "publication_approval_until": "2026-11-01T20:59:59Z",

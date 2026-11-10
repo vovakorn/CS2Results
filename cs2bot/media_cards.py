@@ -1534,8 +1534,7 @@ def can_render_final_card(match: MatchNormalized) -> bool:
     return (
         match.is_final
         and (match.source != "liquipedia" or match.final_identity_confirmed)
-        and match.winner_prize_usd is not None
-        and 3 <= len(confirmed_result_maps(match)) <= 5
+        and 2 <= len(confirmed_result_maps(match)) <= 5
     )
 
 
@@ -1570,7 +1569,7 @@ def _branded_tournament_header(canvas, draw, tournament_name, branding, accent, 
 def render_final_card(match: MatchNormalized, *, branding=None, card_format: StaticCardFormat = "portrait") -> bytes:
     """Render a deterministic 1080px final card with map scores and champion payout."""
     if not can_render_final_card(match):
-        raise MediaCardError("Final card requires confirmed final maps and winner payout")
+        raise MediaCardError("Final card requires confirmed final maps and identity")
 
     from .tournament_visuals import accent_color
     from .tournament_theme_patterns import panel_color
@@ -1587,7 +1586,7 @@ def render_final_card(match: MatchNormalized, *, branding=None, card_format: Sta
         header_foil=branding is None,
     ).convert("RGBA")
     width = canvas.width
-    row_height = ({3: 112, 4: 84, 5: 68} if square else {3: 128, 4: 98, 5: 78})[len(match.maps)]
+    row_height = ({2: 140, 3: 112, 4: 84, 5: 68} if square else {2: 152, 3: 128, 4: 98, 5: 78})[len(match.maps)]
     table_top = 510 if square else 620
     table = (190, table_top, 890, table_top + row_height * len(match.maps))
     prize_top = table[3] + 30
@@ -1598,7 +1597,8 @@ def render_final_card(match: MatchNormalized, *, branding=None, card_format: Sta
         outline = tuple(round(channel * .65 + background * .35)
                         for channel, background in zip(accent, panel))
         _chamfered_panel(ImageDraw.Draw(canvas, "RGBA"), table, accent=outline, background=panel)
-    _draw_final_foil_panel(canvas, prize, background=panel)
+    if match.winner_prize_usd is not None:
+        _draw_final_foil_panel(canvas, prize, background=panel)
 
     draw = ImageDraw.Draw(canvas, "RGBA")
     if branding is None:
@@ -1624,8 +1624,8 @@ def render_final_card(match: MatchNormalized, *, branding=None, card_format: Sta
     x0, y0, x1, _ = table
     divider_x = (x0 + x1) // 2
     draw.line((divider_x, y0 + 16, divider_x, table[3] - 16), fill=(*accent, 180), width=2)
-    map_size = {3: 44, 4: 40, 5: 36}[len(match.maps)]
-    score_size = {3: 46, 4: 42, 5: 38}[len(match.maps)]
+    map_size = {2: 44, 3: 44, 4: 40, 5: 36}[len(match.maps)]
+    score_size = {2: 46, 3: 46, 4: 42, 5: 38}[len(match.maps)]
     for index, item in enumerate(match.maps):
         row_y = y0 + index * row_height
         if index:
@@ -1639,8 +1639,8 @@ def render_final_card(match: MatchNormalized, *, branding=None, card_format: Sta
             _fit_font(draw, item.name, 280, map_size, 16),
             WHITE,
         )
-    draw.line((divider_x, prize_top + 16, divider_x, prize_top + 70), fill=(*FINAL_GOLD, 180), width=2)
-    amount = _format_usd(match.winner_prize_usd)
+    if match.winner_prize_usd is not None:
+        draw.line((divider_x, prize_top + 16, divider_x, prize_top + 70), fill=(*FINAL_GOLD, 180), width=2)
     _card_footer(draw, "LIQUIPEDIA", accent=accent if branding is not None else CYAN)
 
     # Logos and names occupy separate rows and share the same team-column centre.
@@ -1678,17 +1678,16 @@ def render_final_card(match: MatchNormalized, *, branding=None, card_format: Sta
             f"{item.score1}:{item.score2}",
             _font(score_size),
         )
-    prize_center_y = (prize[1] + prize[3]) // 2
-    _draw_text_block(ImageDraw.Draw(canvas, "RGBA"), (prize[0] + divider_x) // 2,
-                     prize_center_y, "ПРИЗОВЫЕ ПОБЕДИТЕЛЯ", 300, 28,
-                     display=True, fill=FINAL_GOLD)
-    _centered_foil_text_on_point(
-        canvas,
-        (divider_x + prize[2]) // 2,
-        prize_center_y,
-        amount,
-        _fit_font(draw, amount, 300, 58, 22, display=True),
-    )
+    if match.winner_prize_usd is not None:
+        amount = _format_usd(match.winner_prize_usd)
+        prize_center_y = (prize[1] + prize[3]) // 2
+        _draw_text_block(ImageDraw.Draw(canvas, "RGBA"), (prize[0] + divider_x) // 2,
+                         prize_center_y, "ПРИЗОВЫЕ ПОБЕДИТЕЛЯ", 300, 28,
+                         display=True, fill=FINAL_GOLD)
+        _centered_foil_text_on_point(
+            canvas, (divider_x + prize[2]) // 2, prize_center_y,
+            amount, _fit_font(draw, amount, 300, 58, 22, display=True),
+        )
     return _as_png(canvas)
 
 

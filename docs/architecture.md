@@ -49,6 +49,8 @@ flowchart LR
 | `cs2bot/match_sources/filters.py` | Валидация, Tier-1 и upcoming-отбор | Хранить состояние доставки |
 | `cs2bot/match_sources/match_fetcher.py` | Выбор источника, freshness gate, shadow-сравнение | Смешивать источники в одной выдаче |
 | `cs2bot/match_sources/storage.py` | Delivery state machine, outbox, processed keys, cooldown и Object Storage | Решать, какой контент публиковать |
+| `cs2bot/tournament_publications.py` | Durable обязательства финала, призовых и VRS; discovery, scoped preparation, before и алерты | Выполнять публичную отправку |
+| `cs2bot/tournament_final_delivery.py` | Доставка финальной карточки с отдельным claim/UID через существующие publishers | Считать обычный result marker финалом |
 | `cs2bot/media_cards.py` | Детерминированный рендер PNG и безопасная загрузка логотипов | Выполнять Telegram-доставку |
 | `cs2bot/match_sources/sources/vrs_source.py` | Получение и нормализация versioned VRS snapshots | Смешивать источники или публиковать неполные данные |
 | `cs2bot/analytics.py` | Запись событий постов, подписчиков и кампаний | Блокировать основную публикацию при своей ошибке |
@@ -75,7 +77,12 @@ Immutable `initial` привязан к SHA-256 точной LP page, поэто
 провайдера/стадии может прочитать его через `tournament_parent`. Прежние event
 и legacy baseline имеют приоритет; анонс переиспользует календарный снимок.
 Диагностические latest/per-event отчёты сохраняются независимо от delivery state.
-Часовой таймер ещё не создан, production не обновлён.
+Часовой таймер не создан. Новый `tournament_publications` объединяет его функцию
+с независимым повтором финала/призовых/VRS: durable event registry → существующий
+outbox → retry worker. Подготовка по точной LP page не зависит от latest-N,
+денег для финала/VRS или отправки другого формата. Планируется один 15-минутный
+private timer вместо дополнительного часового. Production ещё не обновлён.
+[Состояния, лимиты, алерты и rollout](tournament-publications.md).
 [Поток, ограничения и включение](vrs-baselines.md).
 
 `tournament_branding.py` валидирует bundled JSON-реестр тем отдельно от
@@ -169,6 +176,11 @@ first writer wins; повтор не запускает выбор/рендер.
    платформы claim освобождается; при неопределённом исходе он переходит в
    `uncertain`, сохраняется для диагностики и алерта и не повторяется
    автоматически. У неоднозначного результата outbox удаляется.
+   Локальная правка 9 ноября: при отсутствии полного финала в общей LP-ленте
+   кандидат/сохранённое ожидание известного события запрашивает точную LP page
+   профиля; historical recovery использует тот же источник финальных данных.
+   Exact provider ID связывает разные названия события; отдельные provider
+   aliases не изменяют canonical UID. [Диагностика и rollout](beijing-final-incident-2026-11-09.md).
 10. Отдельный `retry_only` trigger раз в пять минут обрабатывает result outbox
     без повторного поиска результатов и Liquipedia shadow. Очередь читается
     один раз: все страницы, до четырёх объектов одновременно, затем глобальная
