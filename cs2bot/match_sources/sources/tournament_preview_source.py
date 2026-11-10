@@ -232,7 +232,7 @@ async def fetch_tournament_preview(profile: PreviewProfile, *, now: datetime | N
     )
 
 
-CALENDAR_QUERY = "pagename,name,startdate,enddate,prizepool,liquipediatier,liquipediatiertype,type,status"
+CALENDAR_QUERY = "pagename,name,startdate,enddate,prizepool,participantsnumber,liquipediatier,liquipediatiertype,type,status"
 CALENDAR_PAGE_SIZE = 100
 CALENDAR_MAX_PAGES = 5
 
@@ -243,7 +243,7 @@ class PreviewCalendarScan:
     row_issues: list[dict]
 
 
-def _calendar_event(row, today, *, require_prize_pool=True):
+def _calendar_event(row, today, *, require_prize_pool=True, lookback_days=0):
     if not {"liquipediatier", "type"}.issubset(row):
         raise PreviewUnavailable("preview_calendar_invalid")
     if (str(row.get("liquipediatier", "")) not in {"1", "2"}
@@ -253,7 +253,7 @@ def _calendar_event(row, today, *, require_prize_pool=True):
             or str(row.get("status") or "").strip()):
         return None
     start = _date(row.get("startdate"))
-    if not today <= start <= today + timedelta(days=7):
+    if not today - timedelta(days=lookback_days) <= start <= today + timedelta(days=7):
         return None
     if require_prize_pool:
         pool = _integer(row.get("prizepool"), "preview_calendar_prize_invalid")
@@ -265,15 +265,19 @@ def _calendar_event(row, today, *, require_prize_pool=True):
             or not isinstance(page_name, str) or not page_name.strip()
             or len(page_name) > 300 or end < start):
         raise PreviewUnavailable("preview_calendar_invalid")
-    return {"pagename": page_name, "name": name, "start": start.isoformat(),
-            "end": end.isoformat(), "source_url": liquipedia_url(page_name)}
+    event = {"pagename": page_name, "name": name, "start": start.isoformat(),
+             "end": end.isoformat(), "source_url": liquipedia_url(page_name)}
+    if lookback_days and row.get("participantsnumber") not in (None, "", "0", 0):
+        event["participant_count"] = _integer(row["participantsnumber"], "participant_count_invalid", 128)
+    return event
 
 
-async def fetch_preview_calendar(now: datetime, *, require_prize_pool: bool = True) -> PreviewCalendarScan:
-    """Audit today and the next seven Moscow dates, including unscheduled events."""
+async def fetch_preview_calendar(now: datetime, *, require_prize_pool: bool = True,
+                                 lookback_days: int = 0) -> PreviewCalendarScan:
+    """Audit the requested lookback and next seven Moscow start dates."""
     today = now.astimezone(ZoneInfo("Europe/Moscow")).date()
     conditions = (
-        f"[[startdate::>{today - timedelta(days=1)}]] AND "
+        f"[[startdate::>{today - timedelta(days=lookback_days + 1)}]] AND "
         f"[[startdate::<{today + timedelta(days=8)}]] AND "
         "([[liquipediatier::1]] OR [[liquipediatier::2]]) AND [[type::Offline]] AND "
         "[[liquipediatiertype::!Qualifier]] AND [[status::]]"
@@ -290,7 +294,8 @@ async def fetch_preview_calendar(now: datetime, *, require_prize_pool: bool = Tr
             raise PreviewUnavailable("preview_calendar_invalid")
         for index, row in enumerate(rows):
             try:
-                event = _calendar_event(row, today, require_prize_pool=require_prize_pool)
+                event = _calendar_event(row, today, require_prize_pool=require_prize_pool,
+                                        lookback_days=lookback_days)
             except PreviewUnavailable as exc:
                 row_issues.append({"row": page * CALENDAR_PAGE_SIZE + index,
                                    "reason": str(exc)})

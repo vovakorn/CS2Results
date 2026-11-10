@@ -27,6 +27,10 @@
 не менялись; последующие релизы требуют штатной проверки журналов.
 [Production/rollback, Git, hashes и фактические проверки](reels-safe-zone-release-2026-10-25.md).
 
+Preflight читает `yc serverless trigger v2 list`: старый API не показывает все
+действующие триггеры. Проверка числа timer и тега `production` применяется ко всем
+function actions нового формата; прежняя форма payload поддержана в валидаторе.
+
 ## 1. Bucket состояния
 
 Создайте Object Storage bucket, например:
@@ -157,11 +161,13 @@ yc storage bucket update \
 
 ## 5. Настройка функции
 
-Локально подготовленный job `vrs_baselines` требует отдельного часового
-private timer на main tag `production` после согласованного релиза.
-Dry-run, создание ровно одного таймера и проверка immutable before описаны
-в [порядке включения](vrs-baselines.md#включение-после-согласованного-релиза).
-В этой задаче функция и инфраструктура production не изменялись.
+Системный job `tournament_publications` требует одного 15-минутного private
+timer на main tag `production`. Он также сохраняет immutable before, поэтому
+отдельный hourly `vrs_baselines` не нужен. Флаг передаётся в candidate через
+`YC_ENABLE_TOURNAMENT_PUBLICATIONS=1`, граница миграции через
+`YC_TOURNAMENT_PUBLICATIONS_START_DATE=2026-11-10`; остальные env и pinned
+Lockbox references сохраняются. [Dry-run, gates, timer, recovery и rollback](tournament-publications.md).
+Job `vrs_baselines` остаётся доступен отдельно для диагностики.
 
 Параметры:
 

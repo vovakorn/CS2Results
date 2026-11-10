@@ -247,7 +247,7 @@ def _winner_prize_from_placements(match: MatchNormalized, data: Any) -> int | No
 
 
 def _tournament_placements_from_response(data: Any) -> list[TournamentPlacement]:
-    """Return a complete, payout-confirmed standings table or no table at all."""
+    """Read sporting places independently of the availability of cash payouts."""
     if not isinstance(data, dict) or not isinstance(data.get("result"), list):
         return []
 
@@ -262,8 +262,10 @@ def _tournament_placements_from_response(data: Any) -> list[TournamentPlacement]
             continue
         team_name = _optional_text(item.get("opponentname")) or _optional_text(item.get("opponenttemplate"))
         prize_usd = _optional_int(item.get("prizemoney"))
-        if not team_name or prize_usd is None or prize_usd < 0:
+        if not team_name:
             return []
+        if prize_usd is not None and prize_usd < 0:
+            prize_usd = None
         identity = MatchNormalized._identity_part(team_name)
         if not identity or identity in team_identities:
             return []
@@ -294,7 +296,6 @@ def _has_complete_tournament_placements(
         and len(data["result"]) < 100
         and len(data["result"]) == len(placements)
         and 4 <= len(placements) <= 64
-        and all(item.prize_usd is not None for item in placements)
     )
 
 

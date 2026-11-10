@@ -23,6 +23,8 @@ LIQUIPEDIA_SHADOW_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_SHADOW:-}"
 LIQUIPEDIA_FINAL_CARDS_OVERRIDE="${YC_ENABLE_LIQUIPEDIA_FINAL_CARDS:-}"
 VRS_OVERRIDE="${YC_ENABLE_VRS:-}"
 TOURNAMENT_PREVIEWS_OVERRIDE="${YC_ENABLE_TOURNAMENT_PREVIEWS:-}"
+TOURNAMENT_PUBLICATIONS_OVERRIDE="${YC_ENABLE_TOURNAMENT_PUBLICATIONS:-}"
+TOURNAMENT_PUBLICATIONS_START_OVERRIDE="${YC_TOURNAMENT_PUBLICATIONS_START_DATE:-}"
 PUBLICATION_CONTROL_OVERRIDE="${YC_PUBLICATION_CONTROL_ENABLED:-}"
 TELEGRAM_PROXY_SECRET_ID="${YC_TELEGRAM_PROXY_SECRET_ID:-}"
 TELEGRAM_PROXY_SECRET_VERSION_ID="${YC_TELEGRAM_PROXY_SECRET_VERSION_ID:-}"
@@ -361,7 +363,8 @@ validate_required_configuration() {
     (.environment // {}) as $environment
     | [($environment.ENABLE_LIQUIPEDIA_FALLBACK // "0"),
        ($environment.ENABLE_LIQUIPEDIA_SHADOW // "0"),
-       ($environment.ENABLE_LIQUIPEDIA_FINAL_CARDS // "0")]
+       ($environment.ENABLE_LIQUIPEDIA_FINAL_CARDS // "0"),
+       ($environment.ENABLE_TOURNAMENT_PUBLICATIONS // "0")]
     | any(. == "1" or (ascii_downcase == "true") or (ascii_downcase == "yes"))
   ' >/dev/null; then
     printf '%s' "${version_json}" | "${JQ_BIN}" -e \
@@ -421,7 +424,18 @@ validate_liquipedia_override() {
     esac
   fi
 
-  if [[ "${LIQUIPEDIA_SHADOW_OVERRIDE}" == "1" || "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" == "1" ]] && [[ -z "${LIQUIPEDIA_SECRET_ID}" ]]; then
+  case "${TOURNAMENT_PUBLICATIONS_OVERRIDE}" in
+    "") ;;
+    1|true|TRUE|yes|YES) TOURNAMENT_PUBLICATIONS_OVERRIDE="1" ;;
+    0|false|FALSE|no|NO) TOURNAMENT_PUBLICATIONS_OVERRIDE="0" ;;
+    *) die "YC_ENABLE_TOURNAMENT_PUBLICATIONS must be a boolean" ;;
+  esac
+  if [[ -n "${TOURNAMENT_PUBLICATIONS_START_OVERRIDE}" ]]; then
+    [[ "${TOURNAMENT_PUBLICATIONS_START_OVERRIDE}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
+      || die "YC_TOURNAMENT_PUBLICATIONS_START_DATE must be YYYY-MM-DD"
+  fi
+
+  if [[ "${LIQUIPEDIA_SHADOW_OVERRIDE}" == "1" || "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" == "1" || "${TOURNAMENT_PUBLICATIONS_OVERRIDE}" == "1" ]] && [[ -z "${LIQUIPEDIA_SECRET_ID}" ]]; then
     printf '%s' "${PRODUCTION_JSON}" | "${JQ_BIN}" -e \
       'any((.secrets // [])[]; .environment_variable == "LIQUIPEDIA_API_KEY")' >/dev/null \
       || die "Enabling Liquipedia requires a pinned LIQUIPEDIA_API_KEY Lockbox reference"
@@ -523,7 +537,7 @@ validate_trigger_tags() {
   local matching_count
 
   matching_count="$(printf '%s' "${triggers_json}" | "${JQ_BIN}" -r --arg function_id "${FUNCTION_ID}" '
-    [ .[] | select(any((.rule.timer // {}) | .. | objects; .function_id? == $function_id)) ] | length
+    [ .[] | select((.source.timer // .rule.timer) != null) | select(any((.action // .rule.timer // {}) | .. | objects; .function_id? == $function_id)) ] | length
   ')"
   [[ "${matching_count}" == "${EXPECTED_TRIGGER_COUNT}" ]] \
     || die "Expected ${EXPECTED_TRIGGER_COUNT} timer triggers for function ${FUNCTION_ID}, found ${matching_count}"
@@ -532,7 +546,7 @@ validate_trigger_tags() {
     --arg function_id "${FUNCTION_ID}" \
     --arg production_tag "${PRODUCTION_TAG}" '
       .[]
-      | select(any((.rule.timer // {}) | .. | objects; .function_id? == $function_id and ((.function_tag? // "") != $production_tag)))
+      | select((.source.timer // .rule.timer) != null) | select(any((.action // .rule.timer // {}) | .. | objects; .function_id? == $function_id and ((.function_tag? // "") != $production_tag)))
       | .name
     ')"
 
@@ -583,12 +597,14 @@ build_create_arguments() {
   value="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r '.concurrency // empty')"
   [[ -z "${value}" ]] || CREATE_ARGS+=(--concurrency "${value}")
 
-  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" --arg final_cards "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" --arg vrs "${VRS_OVERRIDE}" --arg previews "${TOURNAMENT_PREVIEWS_OVERRIDE}" --arg publication_control "${PUBLICATION_CONTROL_OVERRIDE}" --arg instagram_enabled "${INSTAGRAM_PUBLISHING_OVERRIDE}" --arg instagram_reels "${INSTAGRAM_REELS_OVERRIDE}" --arg instagram_bucket "${INSTAGRAM_MEDIA_BUCKET_OVERRIDE}" --arg instagram_public_base "${INSTAGRAM_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg instagram_lockbox "${INSTAGRAM_LOCKBOX_SECRET_ID_OVERRIDE}" --arg threads_enabled "${THREADS_PUBLISHING_OVERRIDE}" --arg threads_bucket "${THREADS_MEDIA_BUCKET_OVERRIDE}" --arg threads_public_base "${THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg threads_lockbox "${THREADS_LOCKBOX_SECRET_ID_OVERRIDE}" '
+  environment_csv="$(printf '%s' "${version_json}" | "${JQ_BIN}" -r --arg shadow "${LIQUIPEDIA_SHADOW_OVERRIDE}" --arg final_cards "${LIQUIPEDIA_FINAL_CARDS_OVERRIDE}" --arg vrs "${VRS_OVERRIDE}" --arg previews "${TOURNAMENT_PREVIEWS_OVERRIDE}" --arg tournament_publications "${TOURNAMENT_PUBLICATIONS_OVERRIDE}" --arg tournament_start "${TOURNAMENT_PUBLICATIONS_START_OVERRIDE}" --arg publication_control "${PUBLICATION_CONTROL_OVERRIDE}" --arg instagram_enabled "${INSTAGRAM_PUBLISHING_OVERRIDE}" --arg instagram_reels "${INSTAGRAM_REELS_OVERRIDE}" --arg instagram_bucket "${INSTAGRAM_MEDIA_BUCKET_OVERRIDE}" --arg instagram_public_base "${INSTAGRAM_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg instagram_lockbox "${INSTAGRAM_LOCKBOX_SECRET_ID_OVERRIDE}" --arg threads_enabled "${THREADS_PUBLISHING_OVERRIDE}" --arg threads_bucket "${THREADS_MEDIA_BUCKET_OVERRIDE}" --arg threads_public_base "${THREADS_MEDIA_PUBLIC_BASE_URL_OVERRIDE}" --arg threads_lockbox "${THREADS_LOCKBOX_SECRET_ID_OVERRIDE}" '
     (.environment // {})
     | if $shadow == "" then . else . + {"ENABLE_LIQUIPEDIA_SHADOW": $shadow} end
     | if $final_cards == "" then . else . + {"ENABLE_LIQUIPEDIA_FINAL_CARDS": $final_cards} end
     | if $vrs == "" then . else . + {"ENABLE_VRS": $vrs} end
     | if $previews == "" then . else . + {"ENABLE_TOURNAMENT_PREVIEWS": $previews} end
+    | if $tournament_publications == "" then . else . + {"ENABLE_TOURNAMENT_PUBLICATIONS": $tournament_publications} end
+    | if $tournament_start == "" then . else . + {"TOURNAMENT_PUBLICATIONS_START_DATE": $tournament_start} end
     | if $publication_control == "" then . else . + {"PUBLICATION_CONTROL_ENABLED": $publication_control} end
     | if $instagram_enabled == "" then . else . + {"ENABLE_INSTAGRAM_PUBLISHING": $instagram_enabled} end
     | if $instagram_reels == "" then . else . + {"ENABLE_INSTAGRAM_REELS": $instagram_reels} end
@@ -727,7 +743,7 @@ preflight() {
   validate_instagram_reels_override
   validate_threads_override
 
-  triggers_json="$("${YC_BIN}" serverless trigger list \
+  triggers_json="$("${YC_BIN}" serverless trigger v2 list \
     --folder-id "${EXPECTED_FOLDER_ID}" \
     --format json)"
   validate_trigger_tags "${triggers_json}"
@@ -1048,7 +1064,7 @@ perform_rollback() {
   fi
   verify_tag_points_to "${PRODUCTION_TAG}" "${previous_id}" && tag_restored="true"
   if [[ "${tag_restored}" == "true" ]] \
-    && trigger_json="$("${YC_BIN}" serverless trigger list --folder-id "${EXPECTED_FOLDER_ID}" --format json)" \
+    && trigger_json="$("${YC_BIN}" serverless trigger v2 list --folder-id "${EXPECTED_FOLDER_ID}" --format json)" \
     && (validate_trigger_tags "${trigger_json}") \
     && run_version_smoke "${PRODUCTION_TAG}" "${previous_id}"; then
     rollback_status="rolled_back"
@@ -1150,7 +1166,7 @@ run_promote() {
 
   verify_tag_points_to "${PRODUCTION_TAG}" "${candidate_id}" || promotion_failed="true"
   if [[ "${promotion_failed}" == "false" ]]; then
-    if trigger_json="$("${YC_BIN}" serverless trigger list --folder-id "${EXPECTED_FOLDER_ID}" --format json)"; then
+    if trigger_json="$("${YC_BIN}" serverless trigger v2 list --folder-id "${EXPECTED_FOLDER_ID}" --format json)"; then
       (validate_trigger_tags "${trigger_json}") || promotion_failed="true"
     else
       promotion_failed="true"
@@ -1204,7 +1220,7 @@ run_smoke() {
   candidate_id="$("${JQ_BIN}" -er '.candidate_version_id' "${manifest_path}")"
   verify_tag_points_to "${PRODUCTION_TAG}" "${candidate_id}" \
     || die "Production does not point to manifest candidate ${candidate_id}"
-  trigger_json="$("${YC_BIN}" serverless trigger list --folder-id "${EXPECTED_FOLDER_ID}" --format json)"
+  trigger_json="$("${YC_BIN}" serverless trigger v2 list --folder-id "${EXPECTED_FOLDER_ID}" --format json)"
   validate_trigger_tags "${trigger_json}"
   if run_version_smoke "${PRODUCTION_TAG}" "${candidate_id}"; then
     write_manifest "${manifest_path}" \

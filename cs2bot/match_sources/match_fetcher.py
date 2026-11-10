@@ -76,8 +76,7 @@ def _has_complete_final_card(match: MatchNormalized) -> bool:
         match.source == "liquipedia"
         and match.is_final
         and match.final_identity_confirmed
-        and match.winner_prize_usd is not None
-        and 3 <= len(confirmed_result_maps(match)) <= 5
+        and 2 <= len(confirmed_result_maps(match)) <= 5
     )
 
 
@@ -177,7 +176,6 @@ def confirm_liquipedia_final_candidates(
         table_complete = (
             standings_source is not None
             and len(standings) >= 4
-            and all(item.prize_usd is not None for item in standings)
         )
         for item in standings:
             identity = _provider_team_identity(item.team_name)

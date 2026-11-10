@@ -50,6 +50,8 @@ from .tournament_preview import load_profiles
 from .tournament_preview_job import run_preview_job
 from .tournament_identity import event_for_match, event_key, find_event
 from .tournament_visuals import branding_for_match
+from .tournament_publications import register_match as register_tournament_match, run_publications_job
+from .tournament_final_delivery import deliver_final
 from .media_cards import (
     MAX_RESULT_MATCHES,
     MAX_SCHEDULE_TOTAL_MATCHES,
@@ -70,6 +72,8 @@ from .match_sources.config import (
     ENABLE_TOURNAMENT_PREVIEWS,
     TOURNAMENT_PREVIEW_PROFILES_PATH,
     ENABLE_VRS,
+    ENABLE_TOURNAMENT_PUBLICATIONS,
+    TOURNAMENT_PUBLICATIONS_START_DATE,
     ENABLE_LIQUIPEDIA_FALLBACK,
     LIQUIPEDIA_API_KEY,
     MATCH_SOURCE,
@@ -176,8 +180,11 @@ def _group_threads_content(job: str, matches: Sequence[Any], day_key: str) -> di
 
 
 def _publish_threads_chain(tournament_key: str, publication_key: str,
-                           cards: Sequence[bytes], caption: str, context: Any, *, is_root: bool = False) -> str:
+                           cards: Sequence[bytes], caption: str, context: Any, *, is_root: bool = False,
+                           allow_missing_root: bool = False) -> str:
     options = {"require_root": True, "is_root": is_root} if tournament_key.startswith("threads:event:") else {}
+    if allow_missing_root:
+        options["allow_missing_root"] = True
     append = asyncio.run(reserve_threads_chain_append(tournament_key, **options))
     if append is None:
         raise ThreadsChainBusyError("Threads tournament chain is blocked or another append is active")
@@ -260,7 +267,7 @@ RUSSIAN_MONTHS = (
     "декабря",
 )
 CONTENT_JOBS = {"results", "schedule", "schedule_reel", "digest", "radar", "radar_discovery", "analytics",
-                "tournament_preview", "preview_discovery", "tournament_recovery", "vrs_baselines"}
+                "tournament_preview", "preview_discovery", "tournament_recovery", "vrs_baselines", "tournament_publications"}
 TEST_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 MAX_SCHEDULE_DAYS_AHEAD = 7
 
@@ -317,7 +324,7 @@ def publication_delivery_allowed(destination_id: str, publication_type: str) -> 
 
 
 def _pending_publication_type(content_type: str) -> str:
-    return {"result": "results"}.get(content_type, content_type)
+    return {"result": "results", "tournament_final": "results"}.get(content_type, content_type)
 
 
 async def _load_result_retry_targets() -> list[PendingDelivery]:
@@ -1055,6 +1062,9 @@ def _tournament_standings_content_uid(match: MatchNormalized, channel_id: str) -
 
 def _enqueue_tournament_standings(match: MatchNormalized, channel_id: str, channel_name: str) -> bool:
     """Queue one standings post after the platform's final-result marker exists."""
+    if ENABLE_TOURNAMENT_PUBLICATIONS and match.final_identity_confirmed:
+        if register_tournament_match(match, sys.modules[__name__]):
+            return False  # The durable registry prepares each output independently.
     created = False
     allowed, generation = publication_delivery_allowed(channel_id, "tournament_standings")
     if allowed and _can_publish_tournament_standings(match):
@@ -1190,8 +1200,9 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
             log_event(logger, logging.WARNING, "vrs_outbox_discarded",
                       match_uid=pending.match.match_uid, reason="incomplete_data")
             return "duplicate"
-        content_uid = f"tournament-vrs-v1:{pending.channel_id}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
-        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_vrs_standings")):
+        content_uid = pending.content_uid or f"tournament-vrs-v1:{pending.channel_id}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
+        if ((pending.content_uid and asyncio.run(is_processed("content_" + safe_storage_part(content_uid))))
+                or asyncio.run(reconcile_content_delivery(content_uid, "tournament_vrs_standings"))):
             asyncio.run(delete_result_delivery(pending))
             return "reconciled"
         claim = asyncio.run(claim_content_delivery(content_uid))
@@ -1207,7 +1218,7 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
             format_tournament_vrs(pending.match.tournament_name, impacts), MAX_TELEGRAM_MESSAGE_LENGTH,
         )
         cards: list[bytes] = []
-        if TELEGRAM_MEDIA_CARDS:
+        if TELEGRAM_MEDIA_CARDS or ENABLE_TOURNAMENT_PUBLICATIONS:
             try:
                 cards = render_tournament_vrs_cards(
                     pending.match.tournament_name, impacts, impacts[0].source,
@@ -1216,6 +1227,8 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
                     card_format="square",
                 )
             except Exception as exc:
+                if ENABLE_TOURNAMENT_PUBLICATIONS:
+                    raise TelegramDeliveryError("vrs_card_render_failed") from exc
                 log_event(logger, logging.WARNING, "vrs_card_fallback",
                           match_uid=pending.match.match_uid, error_type=type(exc).__name__,
                           error=_safe_error_message(exc))
@@ -1234,6 +1247,8 @@ def _deliver_tournament_vrs(pending: PendingDelivery, channel: dict[str, Any], c
             except TelegramDeliveryUncertainError:
                 raise
             except TelegramDeliveryError:
+                if ENABLE_TOURNAMENT_PUBLICATIONS:
+                    raise
                 send_to_telegram(channel["chat_id"], text)
         else:
             send_to_telegram(channel["chat_id"], text)
@@ -1298,9 +1313,10 @@ def _deliver_tournament_standings(
             reason="incomplete_data",
         )
         return "duplicate"
-    content_uid = _tournament_standings_content_uid(match, channel_id)
+    content_uid = pending.content_uid or _tournament_standings_content_uid(match, channel_id)
     try:
-        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_standings")):
+        if ((pending.content_uid and asyncio.run(is_processed("content_" + safe_storage_part(content_uid))))
+                or asyncio.run(reconcile_content_delivery(content_uid, "tournament_standings"))):
             asyncio.run(delete_result_delivery(pending))
             return "reconciled"
         claim = asyncio.run(claim_content_delivery(content_uid))
@@ -1325,7 +1341,7 @@ def _deliver_tournament_standings(
             MAX_TELEGRAM_MESSAGE_LENGTH,
         )
         cards: list[bytes] = []
-        if TELEGRAM_MEDIA_CARDS:
+        if TELEGRAM_MEDIA_CARDS or ENABLE_TOURNAMENT_PUBLICATIONS:
             try:
                 cards = render_tournament_standings_cards(
                     match.tournament_name,
@@ -1335,6 +1351,10 @@ def _deliver_tournament_standings(
                     card_format="square",
                 )
             except Exception as exc:
+                if ENABLE_TOURNAMENT_PUBLICATIONS:
+                    _notify_admin("tournament_standings_card_render_failed",
+                        f"Не отрисована таблица призовых {match.tournament_name}; карточка остаётся в очереди.")
+                    raise TelegramDeliveryError("standings_card_render_failed") from exc
                 log_event(
                     logger,
                     logging.WARNING,
@@ -1373,6 +1393,8 @@ def _deliver_tournament_standings(
             except TelegramDeliveryUncertainError:
                 raise
             except TelegramDeliveryError as exc:
+                if ENABLE_TOURNAMENT_PUBLICATIONS:
+                    raise
                 log_event(
                     logger,
                     logging.WARNING,
@@ -2100,11 +2122,12 @@ def _deliver_social_tournament_standings(
     if not _can_publish_tournament_standings(match):
         asyncio.run(delete_result_delivery(pending))
         return "duplicate"
-    content_uid = _tournament_standings_content_uid(match, platform)
+    content_uid = pending.content_uid or _tournament_standings_content_uid(match, platform)
     claim = None
     confirmed = False
     try:
-        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_standings")):
+        if ((pending.content_uid and asyncio.run(is_processed("content_" + safe_storage_part(content_uid))))
+                or asyncio.run(reconcile_content_delivery(content_uid, "tournament_standings"))):
             asyncio.run(delete_result_delivery(pending))
             return "reconciled"
         claim = asyncio.run(claim_content_delivery(content_uid))
@@ -2121,6 +2144,7 @@ def _deliver_social_tournament_standings(
                 cards,
                 _instagram_caption(format_tournament_standings(match.tournament_name, match.tournament_placements)),
                 context,
+                **({"allow_missing_root": True} if ENABLE_TOURNAMENT_PUBLICATIONS else {}),
             )
         else:
             publisher(
@@ -2202,11 +2226,12 @@ def _deliver_social_tournament_vrs(
     if not can_render_tournament_vrs(impacts):
         asyncio.run(delete_result_delivery(pending))
         return "duplicate"
-    content_uid = f"tournament-vrs-v1:{platform}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
+    content_uid = pending.content_uid or f"tournament-vrs-v1:{platform}:{_vrs_tournament_id(pending.match) or pending.match.match_uid}"
     claim = None
     confirmed = False
     try:
-        if asyncio.run(reconcile_content_delivery(content_uid, "tournament_vrs_standings")):
+        if ((pending.content_uid and asyncio.run(is_processed("content_" + safe_storage_part(content_uid))))
+                or asyncio.run(reconcile_content_delivery(content_uid, "tournament_vrs_standings"))):
             asyncio.run(delete_result_delivery(pending))
             return "reconciled"
         claim = asyncio.run(claim_content_delivery(content_uid))
@@ -2223,6 +2248,7 @@ def _deliver_social_tournament_vrs(
                 cards,
                 _instagram_caption(format_tournament_vrs(pending.match.tournament_name, impacts)),
                 context,
+                **({"allow_missing_root": True} if ENABLE_TOURNAMENT_PUBLICATIONS else {}),
             )
         else:
             publisher(
@@ -3598,7 +3624,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         analytics_snapshot = job == "analytics" and (
             not isinstance(event, dict) or event.get("analytics_operation", "snapshot") == "snapshot"
         )
-        if (job != "analytics" or analytics_snapshot) and job not in {"schedule_reel", "vrs_baselines"}:
+        if (job != "analytics" or analytics_snapshot) and job not in {"schedule_reel", "vrs_baselines", "tournament_publications"}:
             if not TELEGRAM_TOKEN:
                 missing_config.append("telegram_credentials")
             if not any(True for _ in _iter_channels()):
@@ -3607,7 +3633,7 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             missing_config.append("object_storage_bucket")
         if job == "analytics":
             pass
-        elif job in {"tournament_preview", "preview_discovery", "vrs_baselines"}:
+        elif job in {"tournament_preview", "preview_discovery", "vrs_baselines", "tournament_publications"}:
             if not LIQUIPEDIA_API_KEY:
                 missing_config.append("preview_source_credentials")
         elif retry_only:
@@ -3634,6 +3660,12 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
 
     if job == "vrs_baselines":
         return run_vrs_baseline_job(dry_run, sys.modules[__name__])
+
+    if job == "tournament_publications":
+        key = event.get("recovery_profile_key") if isinstance(event, dict) else None
+        if key is not None and (not isinstance(key, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,99}", key)):
+            return _error_response(400, "recovery_profile_invalid")
+        return run_publications_job(dry_run, sys.modules[__name__], recovery_key=key, context=context)
 
     if job in {"tournament_preview", "preview_discovery"}:
         return run_preview_job(preview_key, dry_run, sys.modules[__name__], context=context)
@@ -3830,6 +3862,12 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
             skipped_filtered += 1
             continue
         eligible_matches.append(match)
+        if ENABLE_TOURNAMENT_PUBLICATIONS and not dry_run:
+            try:
+                register_tournament_match(match, sys.modules[__name__])
+            except Exception as exc:
+                log_event(logger, logging.ERROR, "tournament_registration_failed", error_type=type(exc).__name__)
+                _notify_admin("tournament_registration_failed", "Не сохранена обязанность выпуска итогов; проверьте реестр турниров.")
 
     if dry_run:
         for match in eligible_matches:
@@ -4067,6 +4105,25 @@ def handler(event: Dict[str, Any] | None, context: Any) -> Dict[str, Any]:
         if not _delivery_is_current(channel_id, pending.content_type, pending.generation):
             log_event(logger, logging.INFO, "publication_held_by_owner_policy", destination=channel_id,
                       publication_type=_pending_publication_type(pending.content_type), generation=pending.generation)
+            continue
+
+        managed_final = pending.content_type == "tournament_final"
+        if managed_final and not ENABLE_TOURNAMENT_PUBLICATIONS:
+            held_messages += 1
+            continue
+        if ENABLE_TOURNAMENT_PUBLICATIONS and pending.content_type == "result" and can_render_final_card(pending.match):
+            managed_final = register_tournament_match(pending.match, sys.modules[__name__])
+        if managed_final:
+            outcome = deliver_final(pending, channel, sys.modules[__name__], context)
+            if outcome == "sent":
+                channel_stats[name] += 1
+                sent_messages += 1
+            elif outcome in {"duplicate", "reconciled"}:
+                skipped_duplicates += 1
+            elif outcome == "held":
+                held_messages += 1
+            else:
+                failed_messages += 1
             continue
 
         if pending.content_type == "tournament_standings":

@@ -98,6 +98,8 @@ Job не принимает произвольные даты и всегда о
 | `VRS_REGION` | Регион рейтинга, по умолчанию `global`. |
 | `VRS_SOURCE_NAME` | Стабильная метка источника, по умолчанию `Valve VRS live/global`. |
 | `ENABLE_VRS` | Начальный снимок перед анонсом и итоговый VRS-альбом; по умолчанию `0`. Ошибка начального снимка блокирует анонс. |
+| `ENABLE_TOURNAMENT_PUBLICATIONS` | Durable задачи финала, призовых и VRS; независимая подготовка и повторы. По умолчанию `0`; [контракт и выпуск](docs/tournament-publications.md). |
+| `TOURNAMENT_PUBLICATIONS_START_DATE` | Нижняя дата окончания для автоматического подключения новых турниров; по умолчанию `2026-11-10`. Целевой recovery и уже сохранённые задачи не ограничивает. |
 | `LIQUIPEDIA_API_KEY` или `LPDB_API_KEY` | Ключ LiquipediaDB API, выдаваемый после одобрения заявки. |
 | `ENABLE_TOURNAMENT_PREVIEWS` | Превью в Telegram/Instagram/Threads; `0` по умолчанию. Нужен проверенный профиль. |
 | `TOURNAMENT_PREVIEW_CALENDAR_PATH` | План объявленных турниров и контроль подготовки от D-14; по умолчанию `data/tournament_preview_calendar.json`. Запись не разрешает публикацию. |
@@ -257,7 +259,7 @@ delivery-uncertain. Для неоднозначного результата out
 
 | Параметр | Где применяется | Правило |
 |---|---|---|
-| `job` | все вызовы | `results` по умолчанию; также `schedule`, `digest`, `radar`, `radar_discovery`, `analytics`, `vrs_baselines` |
+| `job` | все вызовы | `results` по умолчанию; также `schedule`, `digest`, `radar`, `radar_discovery`, `analytics`, `vrs_baselines`, `tournament_publications` |
 | `retry_only` | результаты | `true` обрабатывает durable result outbox, Reel и ожидающую подготовку digest. Поиск новых результатов не выполняется; PandaScore вызывается только для поставленного digest за исходную дату. |
 | `source` | результаты | `auto`, `pandascore` или `liquipedia` |
 | `limit` | результаты | целое число от 1 до 30; значения вне диапазона ограничиваются границами |
@@ -282,7 +284,9 @@ delivery-uncertain. Для неоднозначного результата out
 подтверждённом after-снимке Valve. Подготовленный локально `vrs_baselines`
 сохраняет before независимо от анонса: сначала проверьте
 `{"job":"vrs_baselines","dry_run":true}`. Для production-повторов потребуется
-часовой timer после согласованного релиза. [Охват, диагностика и включение](docs/vrs-baselines.md).
+один 15-минутный `tournament_publications` timer, включающий before capture.
+Отдельный hourly timer не нужен. [Охват и диагностика](docs/vrs-baselines.md),
+[системный повтор финала/призовых/VRS](docs/tournament-publications.md).
 
 `tournament_tier` PandaScore виден в dry-run как `tier1_autopilot_selected` и
 `tier1_autopilot_reason`. Для расписания tier `S`/`A` участвует в настоящем

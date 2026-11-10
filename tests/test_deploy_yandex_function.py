@@ -78,6 +78,16 @@ def _triggers(tag: str | None = "production", count: int = 6) -> list[dict[str, 
     return triggers
 
 
+@pytest.mark.parametrize("tag,success", [("production", True), ("$latest", False), (None, False)])
+def test_preflight_checks_every_v2_timer_action(fake_cloud, tag, success):
+    triggers = [{"name": "v2-only", "source": {"timer": {"cron_expression": "*/15 * * * ? *"}},
+                 "action": [{"invoke_function": {"function_id": FUNCTION_ID,
+                                                  **({"function_tag": tag} if tag else {})}}]}]
+    fake_cloud.update(FAKE_TRIGGERS=json.dumps(triggers), YC_EXPECTED_TRIGGER_COUNT="1")
+    result = _run("check", fake_cloud)
+    assert (result.returncode == 0) == success, result.stderr
+
+
 @pytest.fixture
 def fake_cloud(tmp_path: Path) -> dict[str, str]:
     yc_path = tmp_path / "yc"
@@ -124,7 +134,7 @@ elif args[:4] == ["serverless", "function", "version", "get-by-tag"]:
     print(json.dumps(version(state[tag])))
 elif args[:4] == ["serverless", "function", "version", "get"]:
     print(json.dumps(version(args[4])))
-elif args[:3] == ["serverless", "trigger", "list"]:
+elif args[:4] == ["serverless", "trigger", "v2", "list"]:
     print(os.environ["FAKE_TRIGGERS"])
 elif args[:4] == ["serverless", "function", "version", "create"]:
     state["candidate"] = "candidate-version"
@@ -717,3 +727,17 @@ def test_existing_candidate_final_cards_override_and_required_binding(fake_cloud
     })
     fake_cloud["FAKE_BASE_VERSION"] = json.dumps(version)
     assert _run("candidate", fake_cloud).returncode == 0
+
+
+def test_tournament_publication_candidate_keeps_pins_and_sets_explicit_rollout_date(fake_cloud):
+    version = json.loads(json.dumps(BASE_VERSION))
+    version["secrets"].append({"environment_variable": "LIQUIPEDIA_API_KEY", "id": "lp-secret",
+                               "version_id": "pinned-lp", "key": "LIQUIPEDIA_API_KEY"})
+    fake_cloud.update({"FAKE_BASE_VERSION": json.dumps(version), "YC_ENABLE_TOURNAMENT_PUBLICATIONS": "1",
+                       "YC_TOURNAMENT_PUBLICATIONS_START_DATE": "2026-11-10"})
+    assert _run("candidate", fake_cloud).returncode == 0
+    create = next(c for c in _calls(fake_cloud) if c[:4] == ["serverless", "function", "version", "create"])
+    environment = dict(item.split("=", 1) for item in next(csv.reader([create[create.index("--environment") + 1]])))
+    assert environment["ENABLE_TOURNAMENT_PUBLICATIONS"] == "1"
+    assert environment["TOURNAMENT_PUBLICATIONS_START_DATE"] == "2026-11-10"
+    assert environment["VALUE_WITH_COMMA"] == "one,two"

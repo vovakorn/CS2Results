@@ -50,6 +50,7 @@ class PendingDelivery:
     content_type: str = "result"
     generation: int = 0
     vrs_impacts: tuple[TournamentVRSImpact, ...] = ()
+    content_uid: str | None = None
 
 
 @dataclass(frozen=True)
@@ -298,6 +299,7 @@ def _pending_delivery_payload(
     content_type: str,
     generation: int = 0,
     vrs_impacts: tuple[TournamentVRSImpact, ...] = (),
+    content_uid: str | None = None,
 ) -> bytes:
     return json.dumps(
         {
@@ -311,6 +313,7 @@ def _pending_delivery_payload(
             "generation": generation,
             "vrs_impacts": [item.model_dump(mode="json") for item in vrs_impacts],
             "match": match.model_dump(mode="json"),
+            **({"content_uid": content_uid} if content_uid else {}),
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -327,11 +330,12 @@ async def enqueue_result_delivery(
     content_type: str = "result",
     vrs_impacts: tuple[TournamentVRSImpact, ...] = (),
     generation: int = 0,
+    content_uid: str | None = None,
 ) -> bool:
     """Create a durable result outbox item without resetting existing retry state."""
     s3 = client or _client()
     bucket_name = bucket or _bucket()
-    if content_type not in {"result", "tournament_standings", "tournament_vrs_standings"}:
+    if content_type not in {"result", "tournament_final", "tournament_standings", "tournament_vrs_standings"}:
         raise ValueError("unsupported result outbox content type")
     key = result_outbox_key(match, channel_id, content_type)
     created_at = (now or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
@@ -345,6 +349,7 @@ async def enqueue_result_delivery(
         content_type=content_type,
         generation=generation,
         vrs_impacts=vrs_impacts,
+        content_uid=content_uid,
     )
 
     try:
@@ -484,6 +489,7 @@ async def list_pending_result_deliveries(
                     content_type=str(payload.get("content_type", "result")),
                     generation=int(payload.get("generation", 0)),
                     vrs_impacts=tuple(TournamentVRSImpact.model_validate(item) for item in payload.get("vrs_impacts", [])),
+                    content_uid=payload.get("content_uid"),
                 )
             except ClientError as exc:
                 if _is_not_found(exc):
@@ -571,6 +577,7 @@ async def record_result_delivery_attempt(
         content_type=pending.content_type,
         generation=pending.generation,
         vrs_impacts=pending.vrs_impacts,
+        content_uid=pending.content_uid,
     )
     body = _pending_delivery_payload(
         updated.match,
@@ -582,6 +589,7 @@ async def record_result_delivery_attempt(
         content_type=updated.content_type,
         generation=updated.generation,
         vrs_impacts=updated.vrs_impacts,
+        content_uid=updated.content_uid,
     )
     try:
         await asyncio.to_thread(
@@ -1731,7 +1739,8 @@ def _threads_chain_key(tournament_key: str) -> str:
 
 
 async def reserve_threads_chain_append(tournament_key: str, client: Any | None = None, bucket: str | None = None,
-                                      *, require_root: bool = False, is_root: bool = False) -> ThreadsChainAppend | None:
+                                      *, require_root: bool = False, is_root: bool = False,
+                                      allow_missing_root: bool = False) -> ThreadsChainAppend | None:
     """Atomically lock one tournament chain and return its confirmed parent ID."""
     s3, bucket_name = client or _client(), bucket or _bucket()
     key, append_id = _threads_chain_key(tournament_key), uuid.uuid4().hex
@@ -1748,9 +1757,10 @@ async def reserve_threads_chain_append(tournament_key: str, client: Any | None =
             raise StorageUnavailableError("Threads chain state is invalid") from exc
         if state.get("blocked") or state.get("reservation"):
             return None
+        make_root = is_root or (allow_missing_root and not state.get("root_id") and not state.get("tail_id"))
         if is_root and (state.get("root_id") or state.get("tail_id")):
             return None
-        if require_root and not is_root and not state.get("root_id"):
+        if require_root and not make_root and not state.get("root_id"):
             return None
         reply_to_id = state.get("tail_id")
         state["reservation"] = append_id
@@ -1762,7 +1772,7 @@ async def reserve_threads_chain_append(tournament_key: str, client: Any | None =
         put_kwargs["IfNoneMatch" if etag is None else "IfMatch"] = "*" if etag is None else etag
         try:
             response = await asyncio.to_thread(s3.put_object, **put_kwargs)
-            return ThreadsChainAppend(tournament_key, append_id, reply_to_id, response.get("ETag") or "", is_root)
+            return ThreadsChainAppend(tournament_key, append_id, reply_to_id, response.get("ETag") or "", make_root)
         except ClientError as exc:
             if _is_precondition_failed(exc):
                 continue
