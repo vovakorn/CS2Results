@@ -38,12 +38,17 @@ def _matches_trusted_phase(
 
 def is_tier1_candidate(match: MatchNormalized) -> bool:
     """Return whether the event looks Tier-1 independently of its LAN evidence."""
+    return is_tier1_event(match.tournament_name, match.prize_pool_usd)
+
+
+def is_tier1_event(tournament_name: str, prize_pool_usd: int | None = None) -> bool:
+    """Apply the same event selection to calendar metadata and match results."""
     return bool(
         (
-            match.prize_pool_usd is not None
-            and match.prize_pool_usd >= TIER1_PRIZE_POOL_THRESHOLD_USD
+            prize_pool_usd is not None
+            and prize_pool_usd >= TIER1_PRIZE_POOL_THRESHOLD_USD
         )
-        or _contains_pattern(match.tournament_name, TIER1_TOURNAMENT_PATTERNS)
+        or _contains_pattern(tournament_name, TIER1_TOURNAMENT_PATTERNS)
     )
 
 

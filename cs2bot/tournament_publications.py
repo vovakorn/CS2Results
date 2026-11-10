@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .match_sources import storage
 from .match_sources.match_fetcher import confirm_liquipedia_final_candidates
+from .match_sources.filters import is_tier1_event, is_tier1_lan, is_valid_match
 from .match_sources.models import MatchNormalized, TournamentVRSImpact
 from .match_sources.sources.liquipedia_source import fetch_finished_matches
 from .match_sources.sources.tournament_preview_source import fetch_preview_calendar
@@ -52,6 +53,7 @@ class TournamentPublication(BaseModel):
     end: date
     event_id: str
     participant_count: int | None = None
+    editorial_admitted: bool = False
     registered_at: datetime
     checked_at: datetime | None = None
     completed_observed_at: datetime | None = None
@@ -147,7 +149,7 @@ def publication_policy(runtime):
     return runtime.publication_delivery_allowed
 
 
-def _new_event(row, runtime, targets, now, policy):
+def _new_event(row, runtime, targets, now, policy, editorial_admitted=False):
     page = row["pagename"]
     profile = next((p for p in load_profiles(runtime.TOURNAMENT_PREVIEW_PROFILES_PATH)
                     if p.liquipedia_page == page), None)
@@ -155,6 +157,10 @@ def _new_event(row, runtime, targets, now, policy):
     record = TournamentPublication(page=page, name=row["name"], start=row["start"], end=row["end"],
         participant_count=row.get("participant_count") or (profile.expected_participant_count if profile else None),
         event_id=event_id, registered_at=now)
+    record.editorial_admitted = bool(editorial_admitted or (profile and profile.approved)
+                                     or is_tier1_event(row["name"], row.get("prize_pool_usd")))
+    if not record.editorial_admitted:
+        return record  # Calendar-only event: preserve a before, do not broaden publishing.
     for destination in targets:
         for kind in KINDS:
             allowed, generation = policy(destination, policy_kind(kind))
@@ -168,13 +174,14 @@ def _new_event(row, runtime, targets, now, policy):
     return record
 
 
-def register_event(row, runtime, *, now, dry_run=False, store=None, targets=None, policy=None):
+def register_event(row, runtime, *, now, dry_run=False, store=None, targets=None, policy=None,
+                   editorial_admitted=False):
     store = store or Store()
     current, etag = store.read(event_storage_key(row["pagename"]))
     if current is not None:
         return TournamentPublication.model_validate(current)
     record = _new_event(row, runtime, targets if targets is not None else destinations(runtime), now,
-                        policy or publication_policy(runtime))
+                        policy or publication_policy(runtime), editorial_admitted)
     if not dry_run:
         store.write(event_storage_key(record.page), record.model_dump(mode="json"))
     return record
@@ -183,6 +190,8 @@ def register_event(row, runtime, *, now, dry_run=False, store=None, targets=None
 def register_match(match, runtime, *, now=None):
     """Track known primary events and exact LP finals, without enrolling old history."""
     now = now or datetime.now(timezone.utc)
+    if not is_valid_match(match)[0] or not is_tier1_lan(match)[0]:
+        return False
     profile = event_for_match(match, runtime.TOURNAMENT_PREVIEW_PROFILES_PATH)
     if not profile and not (match.source == "liquipedia" and match.final_identity_confirmed):
         return False
@@ -190,15 +199,23 @@ def register_match(match, runtime, *, now=None):
     if not page:
         return False
     store = Store()
-    existing, _ = store.read(event_storage_key(page))
+    existing, etag = store.read(event_storage_key(page))
     if existing is not None:
+        record = TournamentPublication.model_validate(existing)
+        if not record.editorial_admitted:
+            enrolled = _new_event({"pagename": page, "name": record.name, "start": record.start,
+                "end": record.end, "participant_count": record.participant_count}, runtime,
+                destinations(runtime), now, publication_policy(runtime), editorial_admitted=True)
+            record.editorial_admitted = True
+            record.tasks = record.tasks or enrolled.tasks
+            store.write(event_storage_key(page), record.model_dump(mode="json"), etag)
         return True
     end = max(s.end for s in profile.stages) if profile else date.fromisoformat((match.end_date or match.date or match.start_date)[:10])
     if end < date.fromisoformat(runtime.TOURNAMENT_PUBLICATIONS_START_DATE):
         return False
     start = min(s.start for s in profile.stages) if profile else end
     register_event({"pagename": page, "name": match.tournament_name, "start": start, "end": end},
-                   runtime, now=now, store=store)
+                   runtime, now=now, store=store, editorial_admitted=True)
     return True
 
 
@@ -282,7 +299,13 @@ def run_publications_job(dry_run, runtime, *, recovery_key=None, now=None, conte
                 record, etag = records[row["pagename"]]
                 start, end = date.fromisoformat(str(row["start"])), date.fromisoformat(str(row["end"]))
                 count = row.get("participant_count") or record.participant_count
-                if (record.start, record.end, record.participant_count) != (start, end, count):
+                admission_changed = False
+                if not record.editorial_admitted:
+                    enrolled = _new_event(row, runtime, targets, now, policy)
+                    if enrolled.editorial_admitted:
+                        record.editorial_admitted = admission_changed = True
+                        record.tasks = record.tasks or enrolled.tasks
+                if admission_changed or (record.start, record.end, record.participant_count) != (start, end, count):
                     record.start, record.end, record.participant_count = start, end, count
                     if not dry_run:
                         store.write(event_storage_key(record.page), record.model_dump(mode="json"), etag)
@@ -365,6 +388,12 @@ def run_publications_job(dry_run, runtime, *, recovery_key=None, now=None, conte
                     task.reason = record.source_error or "awaiting_final"
                     continue
                 match = record.match
+                valid, reason = is_valid_match(match)
+                admitted, admission_reason = is_tier1_lan(match)
+                if not valid or (not admitted and not (record.editorial_admitted
+                        and admission_reason in {"not_tier1", "lan_unconfirmed"})):
+                    task.status, task.reason = "disabled", "outside_editorial_scope:" + str(reason or admission_reason)
+                    continue
                 if task.kind == KINDS[0]:
                     ready = runtime.can_render_final_card(match)
                     task.reason = "awaiting_played_maps" if not ready else "ready"

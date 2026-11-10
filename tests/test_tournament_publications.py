@@ -238,7 +238,8 @@ def test_registry_conflict_does_not_overwrite_newer_state(lifecycle):
 
 
 def test_calendar_registration_does_not_require_a_reviewed_profile(monkeypatch, lifecycle):
-    row = {"pagename": "Independent/2026", "name": "Independent", "start": "2026-11-12", "end": "2026-11-15"}
+    row = {"pagename": "Independent/2026", "name": "Independent", "prize_pool_usd": 1000000,
+           "start": "2026-11-12", "end": "2026-11-15"}
 
     async def scan(*args, **kwargs):
         return PreviewCalendarScan([row], [])
@@ -249,6 +250,48 @@ def test_calendar_registration_does_not_require_a_reviewed_profile(monkeypatch, 
     record, _ = jobs.Store().read(jobs.event_storage_key(row["pagename"]))
     assert record["event_id"] == row["pagename"]
     assert len(record["tasks"]) == 3
+
+
+def test_calendar_scope_captures_tier2_before_without_publishing_it(monkeypatch, lifecycle):
+    row = {"pagename": "Small/2026", "name": "Small regional cup", "prize_pool_usd": 10000,
+           "start": "2026-11-12", "end": "2026-11-15"}
+
+    async def scan(*args, **kwargs):
+        return PreviewCalendarScan([row], [])
+
+    monkeypatch.setattr(jobs, "fetch_preview_calendar", scan)
+    response = jobs.run_publications_job(False, main, now=NOW)
+    assert response["statusCode"] == 200
+    record, _ = jobs.Store().read(jobs.event_storage_key(row["pagename"]))
+    assert record["tasks"] == [] and record["editorial_admitted"] is False
+    baseline = asyncio.run(storage.read_vrs_snapshot(jobs.calendar_baseline_id(row["pagename"]), "before", "initial"))
+    assert baseline is not None
+    assert {p.match.tournament_parent for p in asyncio.run(storage.list_pending_result_deliveries())} == {PAGE}
+
+
+def test_calendar_can_admit_a_previously_baseline_only_event_after_verified_pool(monkeypatch, lifecycle):
+    row = {"pagename": "Independent/2026", "name": "Independent", "start": "2026-11-12", "end": "2026-11-15"}
+    assert jobs.register_event(row, main, now=NOW).tasks == []
+
+    async def scan(*args, **kwargs):
+        return PreviewCalendarScan([{**row, "prize_pool_usd": 1000000}], [])
+
+    monkeypatch.setattr(jobs, "fetch_preview_calendar", scan)
+    assert jobs.run_publications_job(False, main, now=NOW)["statusCode"] == 200
+    record, _ = jobs.Store().read(jobs.event_storage_key(row["pagename"]))
+    assert record["editorial_admitted"] is True
+    assert len(record["tasks"]) == 3
+
+
+@pytest.mark.parametrize("change", [{"is_lan": False}, {"is_lan": None, "location": "Online"}])
+def test_registered_major_does_not_override_final_hard_exclusions(lifecycle, change):
+    final = lifecycle[2]
+    for key, value in change.items():
+        setattr(final, key, value)
+    result = tasks(run())
+    assert {task["status"] for task in result.values()} == {"disabled"}
+    assert all(task["reason"].startswith("outside_editorial_scope:") for task in result.values())
+    assert asyncio.run(storage.list_pending_result_deliveries()) == []
 
 
 def test_worker_route_accepts_only_a_known_recovery_profile(monkeypatch, lifecycle):

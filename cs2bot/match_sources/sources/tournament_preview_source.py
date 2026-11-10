@@ -269,6 +269,11 @@ def _calendar_event(row, today, *, require_prize_pool=True, lookback_days=0):
              "end": end.isoformat(), "source_url": liquipedia_url(page_name)}
     if lookback_days and row.get("participantsnumber") not in (None, "", "0", 0):
         event["participant_count"] = _integer(row["participantsnumber"], "participant_count_invalid", 128)
+    if lookback_days:
+        try:
+            event["prize_pool_usd"] = _integer(row.get("prizepool"), "prize_pool_unconfirmed")
+        except PreviewUnavailable:
+            pass
     return event
 
 

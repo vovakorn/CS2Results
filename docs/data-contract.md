@@ -441,7 +441,10 @@ processed/content_radar_{tournament_id}_auto_{channel_id}.json
 `tournament-publications/events/<sha256 LP page>.json` сохраняет финал, призовые
 и VRS отдельно для каждого назначения. `tournament_final` имеет собственный
 content UID, не равный обычному результату, и использует owner policy `results`.
-Существующие prize/VRS UID совместимы. Перечень полей, переходы состояний,
+Существующие prize/VRS UID совместимы. Поле `editorial_admitted` фиксирует
+подтверждённый допуск события; календарные записи вне охвата содержат пустой
+список задач и сохраняют только before. Перед enqueue действуют прежние
+проверки счёта, исключений и online-признаков. Перечень полей, переходы состояний,
 граница миграции, before/after и диагностика: [полный контракт](tournament-publications.md).
 
 ## Подтверждение финала Liquipedia
