@@ -454,8 +454,19 @@ def run_publications_job(dry_run, runtime, *, recovery_key=None, now=None, conte
 def _report(record, now):
     calendar_end = datetime.combine(record.end + timedelta(days=1), time.min, tzinfo=MOSCOW)
     due = min(record.completed_observed_at or calendar_end, calendar_end)
+    # Valve's observed releases are monthly, on the first Monday. Allow three
+    # full days after that date before calling an absent after snapshot overdue.
+    first = record.end.replace(day=1)
+    first_monday = first + timedelta(days=(-first.weekday()) % 7)
+    if first_monday <= record.end:
+        first = (first + timedelta(days=32)).replace(day=1)
+        first_monday = first + timedelta(days=(-first.weekday()) % 7)
+    vrs_due = datetime.combine(first_monday + timedelta(days=4), time.min, tzinfo=MOSCOW)
     overdue = [f"{t.destination}/{t.kind}: {t.reason}" for t in record.tasks
-               if t.status not in {"sent", "disabled"} and now >= due + timedelta(hours=ALERT_HOURS[t.kind])]
+               if t.status not in {"sent", "disabled"} and now >= (
+                   vrs_due if t.kind == KINDS[2] and t.status == "waiting"
+                   and t.reason == "awaiting_after_snapshot"
+                   else due + timedelta(hours=ALERT_HOURS[t.kind]))]
     return {"page": record.page, "name": record.name, "start": str(record.start), "end": str(record.end),
             "source_error": record.source_error, "overdue": overdue,
             "tasks": [t.model_dump() for t in record.tasks]}

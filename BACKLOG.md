@@ -9,6 +9,9 @@
 
 ## Now
 
+- [ ] После согласования выпустить локальное исправление VRS-алертов и
+  проверить статус Beijing и BLAST в production.
+
 - [x] Локально исправить пропуск финала Beijing: ID PandaScore, сопоставление
   названий без смены canonical UID, scoped LP lookup и обогащение recovery.
   609 профильных тестов прошли; production не обновлялся.
