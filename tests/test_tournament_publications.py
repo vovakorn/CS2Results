@@ -140,6 +140,48 @@ def test_after_snapshot_is_retried_without_blocking_final_or_prizes(lifecycle):
     assert tasks(run(NOW + timedelta(hours=1)))["tournament_vrs_standings"]["status"] == "queued"
 
 
+def test_vrs_waits_for_monthly_release_without_alert_then_retries(lifecycle):
+    _, _, _, record, notices, _, snapshots = lifecycle
+    for task in record.tasks:
+        if task.kind != "tournament_vrs_standings":
+            asyncio.run(storage.mark_content_processed(task.uid, task.kind))
+    snapshots["after"].effective_at = "2026-11-02T00:00:00Z"
+
+    waiting = run(datetime(2026, 12, 10, 20, 59, tzinfo=timezone.utc))
+    assert tasks(waiting)["tournament_vrs_standings"]["reason"] == "awaiting_after_snapshot"
+    assert waiting["events"][0]["overdue"] == []
+    assert notices == []
+
+    overdue = run(datetime(2026, 12, 10, 21, 0, tzinfo=timezone.utc))
+    assert "awaiting_after_snapshot" in overdue["events"][0]["overdue"][0]
+    assert notices
+    snapshots["after"].effective_at = "2026-12-07T00:00:00Z"
+    assert tasks(run(datetime(2026, 12, 10, 21, 15, tzinfo=timezone.utc)))["tournament_vrs_standings"]["status"] == "queued"
+
+
+@pytest.mark.parametrize("end, before, after", [
+    (date(2026, 11, 1), datetime(2026, 11, 5, 20, 59, tzinfo=timezone.utc), datetime(2026, 11, 5, 21, 0, tzinfo=timezone.utc)),
+    (date(2026, 11, 8), datetime(2026, 12, 10, 20, 59, tzinfo=timezone.utc), datetime(2026, 12, 10, 21, 0, tzinfo=timezone.utc)),
+    (date(2026, 12, 31), datetime(2027, 1, 7, 20, 59, tzinfo=timezone.utc), datetime(2027, 1, 7, 21, 0, tzinfo=timezone.utc)),
+])
+def test_vrs_alert_deadline_uses_next_first_monday(lifecycle, end, before, after):
+    record = lifecycle[3].model_copy(deep=True)
+    record.end = end
+    record.tasks = [record.tasks[2]]
+    record.tasks[0].reason = "awaiting_after_snapshot"
+    assert jobs._report(record, before)["overdue"] == []
+    assert len(jobs._report(record, after)["overdue"]) == 1
+
+
+def test_vrs_source_and_delivery_failures_keep_the_original_alert(lifecycle):
+    record = lifecycle[3].model_copy(deep=True)
+    record.tasks = [record.tasks[2]]
+    for status, reason in (("waiting", "vrs_source_unavailable:TimeoutError"),
+                           ("queued", "delivery_retry:1"), ("review", "delivery_outcome_unknown")):
+        record.tasks[0].status, record.tasks[0].reason = status, reason
+        assert reason in jobs._report(record, NOW)["overdue"][0]
+
+
 def test_registry_uses_persistent_processed_markers_without_reopening_sent_posts(lifecycle):
     _, _, _, record, _, _, _ = lifecycle
     for task in record.tasks:
